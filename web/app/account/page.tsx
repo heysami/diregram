@@ -5,7 +5,7 @@ import { useAuth } from '@/hooks/use-auth';
 
 export default function AccountPage() {
   const router = useRouter();
-  const { supabase, ready, user, signOut } = useAuth();
+  const { configured, supabase, ready, user, signOut } = useAuth();
 
   return (
     <main className="mac-desktop flex h-screen flex-col">
@@ -27,8 +27,10 @@ export default function AccountPage() {
             <div className="mac-title">Profile</div>
           </div>
           <div className="p-4 space-y-3 text-xs">
-            {!supabase ? (
+            {!configured ? (
               <div>Supabase auth is not configured.</div>
+            ) : !supabase ? (
+              <div>Loading…</div>
             ) : !ready ? (
               <div>Loading…</div>
             ) : !user ? (

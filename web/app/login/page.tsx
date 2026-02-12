@@ -1,18 +1,24 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useSearchParams } from 'next/navigation';
-import { createClient } from '@/lib/supabase';
+import { createClient, isSupabaseConfigured } from '@/lib/supabase';
 
 export default function LoginPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const supabase = createClient();
+  const configured = isSupabaseConfigured();
+  const [supabase, setSupabase] = useState<ReturnType<typeof createClient>>(null);
   const [email, setEmail] = useState('');
   const [sent, setSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!configured) return;
+    setSupabase(createClient());
+  }, [configured]);
 
   return (
     <main className="mac-desktop flex h-screen flex-col">
@@ -34,10 +40,12 @@ export default function LoginPage() {
             <div className="mac-title">Sign in</div>
           </div>
           <div className="p-4 space-y-3">
-            {!supabase ? (
+            {!configured ? (
               <div className="text-xs">
                 Supabase auth is not configured. Set `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
               </div>
+            ) : !supabase ? (
+              <div className="text-xs opacity-80">Loading…</div>
             ) : sent ? (
               <div className="text-xs">
                 Check your email for a magic link. After signing in, you’ll be redirected back automatically (or you can go Home).

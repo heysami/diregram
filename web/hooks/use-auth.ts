@@ -2,19 +2,33 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import type { User, Session } from '@supabase/supabase-js';
-import { createClient } from '@/lib/supabase';
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { createClient, isSupabaseConfigured } from '@/lib/supabase';
 
 export function useAuth() {
-  const supabase = useMemo(() => createClient(), []);
+  const configured = useMemo(() => isSupabaseConfigured(), []);
+  const [supabase, setSupabase] = useState<SupabaseClient | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    if (!supabase) {
+    if (!configured) {
       setReady(true);
       return;
     }
+    // Create the browser client after mount to avoid build-time prerender issues.
+    const client = createClient();
+    setSupabase(client);
+    if (!client) {
+      // Misconfigured or non-browser environment (shouldn't happen in normal client runtime).
+      setReady(true);
+    }
+  }, [configured]);
+
+  useEffect(() => {
+    if (!configured) return;
+    if (!supabase) return;
 
     let mounted = true;
     supabase.auth.getSession().then(({ data }) => {
@@ -34,9 +48,10 @@ export function useAuth() {
       mounted = false;
       sub.subscription.unsubscribe();
     };
-  }, [supabase]);
+  }, [configured, supabase]);
 
   return {
+    configured,
     supabase,
     ready,
     session,

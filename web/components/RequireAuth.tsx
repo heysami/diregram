@@ -19,18 +19,18 @@ export function RequireAuth({ children }: Props) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const { supabase, ready, user } = useAuth();
+  const { configured, supabase, ready, user } = useAuth();
 
   const returnTo = `${pathname}${searchParams?.toString() ? `?${searchParams.toString()}` : ''}`;
 
   useEffect(() => {
-    if (!supabase) return; // local-only mode
+    if (!configured) return; // local-only mode
     if (!ready) return;
     if (user) return;
     router.replace(`/login?next=${encodeURIComponent(returnTo)}`);
-  }, [supabase, ready, user, router, returnTo]);
+  }, [configured, ready, user, router, returnTo]);
 
-  if (!supabase) return <>{children}</>;
+  if (!configured) return <>{children}</>;
 
   if (!ready) {
     return <div className="flex h-screen items-center justify-center text-xs opacity-80">Checking session…</div>;

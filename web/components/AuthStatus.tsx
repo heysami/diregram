@@ -5,10 +5,15 @@ import { useAuth } from '@/hooks/use-auth';
 
 export function AuthStatus() {
   const router = useRouter();
-  const { supabase, ready, user, signOut } = useAuth();
+  const { configured, supabase, ready, user, signOut } = useAuth();
 
-  if (!supabase) {
+  if (!configured) {
     return <div className="text-[11px] opacity-70">Auth: not configured</div>;
+  }
+
+  // Supabase is configured, but the client may not be ready yet (created after mount).
+  if (!supabase) {
+    return <div className="text-[11px] opacity-70">Auth: …</div>;
   }
 
   if (!ready) {
