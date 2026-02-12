@@ -1,0 +1,19 @@
+{
+  "name": "collab-server",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@hocuspocus/server": "^3.4.4",
+    "yjs": "^13.6.29"
+  }
+}

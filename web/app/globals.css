@@ -1,0 +1,559 @@
+@import "tailwindcss";
+
+/* ============================================================
+   Classic Macintosh System 3-inspired theme (monochrome + bevel)
+   ============================================================ */
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+}
+
+html[data-theme="mac3"] {
+  /* Palette */
+  --mac-black: #000000;
+  --mac-white: #ffffff;
+  --mac-desktop: #ffffff;
+  --mac-surface: #ffffff; /* window/paper surface */
+  --mac-control: #ffffff; /* keep controls white; use patterns for variation */
+  --mac-border: #000000;
+  --mac-inset: #6b6b6b;
+  --mac-accent: #000000; /* selection + primary actions (classic mono) */
+
+  /* Fonts (best-effort fallbacks; “Chicago” is rarely installed) */
+  --mac-font: Chicago, Geneva, "Lucida Grande", "Helvetica Neue", Helvetica, Arial, system-ui, sans-serif;
+  --mac-mono: Monaco, "SFMono-Regular", ui-monospace, Menlo, Consolas, "Courier New", monospace;
+
+  /* Map app tokens */
+  --background: var(--mac-desktop);
+  --foreground: var(--mac-black);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--mac-font, Arial, Helvetica, sans-serif);
+}
+
+/* Desktop background (subtle 1-bit-ish grid) */
+html[data-theme="mac3"] .mac-desktop {
+  background-color: var(--mac-desktop);
+  /* Plus pattern (arms don’t touch) */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M6 3v6M3 6h6' stroke='%23000' stroke-opacity='0.12' stroke-width='1' stroke-linecap='square' shape-rendering='crispEdges'/%3E%3C/svg%3E");
+  background-repeat: repeat;
+  background-position: 0 0;
+}
+
+/* Main-canvas “plus paper” background */
+html[data-theme="mac3"] .mac-canvas-bg {
+  background-color: var(--mac-white);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M6 3v6M3 6h6' stroke='%23000' stroke-opacity='0.12' stroke-width='1' stroke-linecap='square' shape-rendering='crispEdges'/%3E%3C/svg%3E");
+  background-repeat: repeat;
+  background-position: 0 0;
+}
+
+/* 1-bit pattern fills (use instead of shaded backgrounds) */
+html[data-theme="mac3"] .mac-fill--dots-1 {
+  background-color: var(--mac-white);
+  background-image: radial-gradient(circle at 1px 1px, rgba(0, 0, 0, 0.14) 0.8px, transparent 0.9px);
+  background-size: 8px 8px; /* dot spacing baseline */
+}
+
+html[data-theme="mac3"] .mac-fill--dots-2 {
+  background-color: var(--mac-white);
+  background-image: radial-gradient(circle at 1px 1px, rgba(0, 0, 0, 0.14) 0.8px, transparent 0.9px);
+  background-size: 6px 6px;
+}
+
+html[data-theme="mac3"] .mac-fill--dots-3 {
+  background-color: var(--mac-white);
+  background-image: radial-gradient(circle at 1px 1px, rgba(0, 0, 0, 0.12) 0.7px, transparent 0.8px);
+  background-size: 4px 4px; /* dense dots, slightly lower opacity */
+}
+
+html[data-theme="mac3"] .mac-fill--hatch {
+  background-color: var(--mac-white);
+  background-image: repeating-linear-gradient(
+    45deg,
+    rgba(0, 0, 0, 0.14) 0 1px,
+    transparent 1px 6px /* ~6px spacing to match dot lightness */
+  );
+}
+
+html[data-theme="mac3"] .mac-fill--hatch2 {
+  background-color: var(--mac-white);
+  background-image: repeating-linear-gradient(
+    135deg,
+    rgba(0, 0, 0, 0.14) 0 1px,
+    transparent 1px 6px
+  );
+}
+
+html[data-theme="mac3"] .mac-fill--stripes-h {
+  background-color: var(--mac-white);
+  background-image: repeating-linear-gradient(
+    0deg,
+    rgba(0, 0, 0, 0.14) 0 1px,
+    transparent 1px 6px
+  );
+}
+
+html[data-theme="mac3"] .mac-fill--stripes-v {
+  background-color: var(--mac-white);
+  background-image: repeating-linear-gradient(
+    90deg,
+    rgba(0, 0, 0, 0.14) 0 1px,
+    transparent 1px 6px
+  );
+}
+
+html[data-theme="mac3"] .mac-fill--checker {
+  background-color: var(--mac-white);
+  background-image:
+    linear-gradient(45deg, rgba(0,0,0,0.14) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(0,0,0,0.14) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(0,0,0,0.14) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(0,0,0,0.14) 75%);
+  background-size: 10px 10px;
+  background-position: 0 0, 0 5px, 5px -5px, -5px 0px;
+}
+
+/* Selection rings: force monochrome even if components still use Tailwind ring-* */
+html[data-theme="mac3"] .ring-blue-500,
+html[data-theme="mac3"] .ring-blue-400,
+html[data-theme="mac3"] .ring-blue-200,
+html[data-theme="mac3"] .ring-red-100,
+html[data-theme="mac3"] .ring-red-200 {
+  --tw-ring-color: #000 !important;
+}
+
+html[data-theme="mac3"] .ring-2 {
+  --tw-ring-offset-shadow: 0 0 #0000;
+  --tw-ring-shadow: 0 0 0 2px var(--tw-ring-color);
+}
+
+/* Monochrome remap for common Tailwind utility colors (keeps the app cohesive) */
+html[data-theme="mac3"] .border-gray-100,
+html[data-theme="mac3"] .border-gray-200,
+html[data-theme="mac3"] .border-gray-300,
+html[data-theme="mac3"] .border-slate-100,
+html[data-theme="mac3"] .border-slate-200,
+html[data-theme="mac3"] .border-slate-300,
+html[data-theme="mac3"] .border-blue-200,
+html[data-theme="mac3"] .border-blue-300,
+html[data-theme="mac3"] .border-blue-500,
+html[data-theme="mac3"] .border-emerald-200,
+html[data-theme="mac3"] .border-emerald-300,
+html[data-theme="mac3"] .border-green-200,
+html[data-theme="mac3"] .border-green-300,
+html[data-theme="mac3"] .border-red-200,
+html[data-theme="mac3"] .border-red-300,
+html[data-theme="mac3"] .border-amber-200,
+html[data-theme="mac3"] .border-amber-300,
+html[data-theme="mac3"] .border-purple-200,
+html[data-theme="mac3"] .border-purple-300,
+html[data-theme="mac3"] .border-purple-400,
+html[data-theme="mac3"] .border-purple-500,
+html[data-theme="mac3"] .border-pink-200,
+html[data-theme="mac3"] .border-pink-300,
+html[data-theme="mac3"] .border-cyan-200,
+html[data-theme="mac3"] .border-cyan-300,
+html[data-theme="mac3"] .border-yellow-200,
+html[data-theme="mac3"] .border-yellow-300 {
+  border-color: var(--mac-border) !important;
+}
+
+html[data-theme="mac3"] .bg-gray-50,
+html[data-theme="mac3"] .bg-slate-50,
+html[data-theme="mac3"] .bg-emerald-50,
+html[data-theme="mac3"] .bg-red-50 {
+  /* “Light” surface: sparse dots */
+  background-color: var(--mac-white) !important;
+  background-image: radial-gradient(circle at 1px 1px, rgba(0, 0, 0, 0.18) 1px, transparent 1.1px) !important;
+  background-size: 14px 14px !important;
+}
+
+html[data-theme="mac3"] .bg-gray-100 {
+  /* “Medium” surface: denser dots */
+  background-color: var(--mac-white) !important;
+  background-image: radial-gradient(circle at 1px 1px, rgba(0, 0, 0, 0.2) 1px, transparent 1.1px) !important;
+  background-size: 10px 10px !important;
+}
+
+html[data-theme="mac3"] .bg-gray-200,
+html[data-theme="mac3"] .bg-slate-200 {
+  /* “Darker” surface: densest dots */
+  background-color: var(--mac-white) !important;
+  background-image: radial-gradient(circle at 1px 1px, rgba(0, 0, 0, 0.22) 1px, transparent 1.1px) !important;
+  background-size: 7px 7px !important;
+}
+
+html[data-theme="mac3"] .bg-blue-50,
+html[data-theme="mac3"] .bg-blue-100 {
+  /* “Selected / highlighted” surface: diagonal hatch */
+  background-color: var(--mac-white) !important;
+  background-image: repeating-linear-gradient(
+    45deg,
+    rgba(0, 0, 0, 0.14) 0 1px,
+    transparent 1px 6px
+  ) !important;
+}
+
+html[data-theme="mac3"] .bg-amber-50,
+html[data-theme="mac3"] .bg-amber-100,
+html[data-theme="mac3"] .bg-purple-50,
+html[data-theme="mac3"] .bg-purple-100,
+html[data-theme="mac3"] .bg-green-50,
+html[data-theme="mac3"] .bg-green-100,
+html[data-theme="mac3"] .bg-red-100,
+html[data-theme="mac3"] .bg-pink-50,
+html[data-theme="mac3"] .bg-pink-100,
+html[data-theme="mac3"] .bg-cyan-50,
+html[data-theme="mac3"] .bg-cyan-100,
+html[data-theme="mac3"] .bg-yellow-50,
+html[data-theme="mac3"] .bg-yellow-100 {
+  background-color: var(--mac-white) !important;
+  background-image: radial-gradient(circle at 1px 1px, rgba(0, 0, 0, 0.14) 0.8px, transparent 0.9px) !important;
+  background-size: 6px 6px !important;
+}
+
+html[data-theme="mac3"] .bg-blue-500,
+html[data-theme="mac3"] .bg-blue-600,
+html[data-theme="mac3"] .bg-blue-700,
+html[data-theme="mac3"] .bg-slate-900,
+html[data-theme="mac3"] .bg-red-500,
+html[data-theme="mac3"] .bg-red-600,
+html[data-theme="mac3"] .bg-red-700 {
+  background-color: var(--mac-black) !important;
+  background-image: none !important;
+}
+
+/* Text hierarchy without “color”: black + opacity */
+html[data-theme="mac3"] .text-gray-900,
+html[data-theme="mac3"] .text-slate-900 { color: rgba(0,0,0,1) !important; }
+html[data-theme="mac3"] .text-gray-800,
+html[data-theme="mac3"] .text-slate-800 { color: rgba(0,0,0,0.92) !important; }
+html[data-theme="mac3"] .text-gray-700,
+html[data-theme="mac3"] .text-slate-700 { color: rgba(0,0,0,0.85) !important; }
+html[data-theme="mac3"] .text-gray-600,
+html[data-theme="mac3"] .text-slate-600 { color: rgba(0,0,0,0.78) !important; }
+html[data-theme="mac3"] .text-gray-500,
+html[data-theme="mac3"] .text-slate-500 { color: rgba(0,0,0,0.68) !important; }
+html[data-theme="mac3"] .text-gray-400,
+html[data-theme="mac3"] .text-slate-400 { color: rgba(0,0,0,0.54) !important; }
+html[data-theme="mac3"] .text-blue-600,
+html[data-theme="mac3"] .text-blue-700,
+html[data-theme="mac3"] .text-blue-800 { color: rgba(0,0,0,0.85) !important; }
+html[data-theme="mac3"] .text-purple-600,
+html[data-theme="mac3"] .text-purple-700,
+html[data-theme="mac3"] .text-purple-800,
+html[data-theme="mac3"] .text-amber-600,
+html[data-theme="mac3"] .text-amber-700,
+html[data-theme="mac3"] .text-amber-800,
+html[data-theme="mac3"] .text-green-600,
+html[data-theme="mac3"] .text-green-700,
+html[data-theme="mac3"] .text-green-800,
+html[data-theme="mac3"] .text-red-600,
+html[data-theme="mac3"] .text-red-700,
+html[data-theme="mac3"] .text-red-800,
+html[data-theme="mac3"] .text-pink-600,
+html[data-theme="mac3"] .text-pink-700,
+html[data-theme="mac3"] .text-cyan-600,
+html[data-theme="mac3"] .text-cyan-700,
+html[data-theme="mac3"] .text-yellow-600,
+html[data-theme="mac3"] .text-yellow-700 {
+  color: rgba(0,0,0,0.85) !important;
+}
+
+html[data-theme="mac3"] .text-white {
+  color: var(--mac-white) !important;
+}
+
+html[data-theme="mac3"] ::selection {
+  background: var(--mac-black);
+  color: var(--mac-white);
+}
+
+/* Square everything off + remove modern drop shadows */
+html[data-theme="mac3"] .rounded,
+html[data-theme="mac3"] .rounded-sm,
+html[data-theme="mac3"] .rounded-md,
+html[data-theme="mac3"] .rounded-lg,
+html[data-theme="mac3"] .rounded-xl,
+html[data-theme="mac3"] .rounded-2xl,
+html[data-theme="mac3"] .rounded-full {
+  border-radius: 0 !important;
+}
+
+html[data-theme="mac3"] .shadow,
+html[data-theme="mac3"] .shadow-sm,
+html[data-theme="mac3"] .shadow-md,
+html[data-theme="mac3"] .shadow-lg,
+html[data-theme="mac3"] .shadow-xl,
+html[data-theme="mac3"] .shadow-2xl {
+  box-shadow: none !important;
+}
+
+/* Core window chrome */
+html[data-theme="mac3"] .mac-window {
+  background: var(--mac-surface);
+  border: 2px solid var(--mac-border);
+  box-shadow: 4px 4px 0 var(--mac-black);
+}
+
+/* Double outline: black / white / black (classic 1-bit chrome) */
+html[data-theme="mac3"] .mac-double-outline {
+  border: 1px solid var(--mac-black);
+  box-shadow:
+    inset 0 0 0 1px var(--mac-white),
+    inset 0 0 0 2px var(--mac-black);
+}
+
+/* Diamonds (clip-path) need an explicit border to read as an outline */
+html[data-theme="mac3"] .mac-diamond-outline {
+  position: relative;
+}
+
+/* SVG overlay used for diamond outlines (reliable across browsers). */
+.mac-diamond-outline-svg {
+  display: none;
+  pointer-events: none;
+}
+
+html[data-theme="mac3"] .mac-diamond-outline-svg {
+  display: block;
+}
+
+/* Node text readability plate */
+html[data-theme="mac3"] .mac-label-plate {
+  background: var(--mac-white);
+  padding: 0 4px;
+}
+
+/* Hard shadow used for selection emphasis */
+html[data-theme="mac3"] .mac-shadow-hard {
+  box-shadow: 4px 4px 0 var(--mac-black) !important;
+}
+
+/* Ensure generic Tailwind border utilities still render black outlines in mac3 */
+html[data-theme="mac3"] .border {
+  border-color: var(--mac-black) !important;
+}
+
+/* Icon-only buttons (match bottom tool button bevel) */
+html[data-theme="mac3"] button.h-6.w-6.border,
+html[data-theme="mac3"] button.h-5.w-5.border,
+html[data-theme="mac3"] button.h-8.w-8.border,
+html[data-theme="mac3"] button.p-2.border,
+html[data-theme="mac3"] button.border[class~="p-1.5"],
+html[data-theme="mac3"] button.p-1.border {
+  background: var(--mac-control) !important;
+  border-color: var(--mac-border) !important;
+  box-shadow:
+    inset 1px 1px 0 var(--mac-white),
+    inset -1px -1px 0 var(--mac-inset);
+  color: var(--mac-black) !important;
+}
+
+html[data-theme="mac3"] button.h-6.w-6.border:active,
+html[data-theme="mac3"] button.h-5.w-5.border:active,
+html[data-theme="mac3"] button.h-8.w-8.border:active,
+html[data-theme="mac3"] button.p-2.border:active,
+html[data-theme="mac3"] button.border[class~="p-1.5"]:active,
+html[data-theme="mac3"] button.p-1.border:active {
+  box-shadow:
+    inset -1px -1px 0 var(--mac-white),
+    inset 1px 1px 0 var(--mac-inset);
+}
+
+html[data-theme="mac3"] .mac-titlebar {
+  border-bottom: 2px solid var(--mac-border);
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  /* zebra stripes */
+  background:
+    repeating-linear-gradient(
+      90deg,
+      rgba(0, 0, 0, 0.8) 0 1px,
+      rgba(255, 255, 255, 1) 1px 4px
+    );
+}
+
+html[data-theme="mac3"] .mac-titlebar .mac-title {
+  background: var(--mac-surface);
+  padding: 0 8px;
+  font-size: 12px;
+  line-height: 1;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+
+html[data-theme="mac3"] .mac-menubar {
+  background: var(--mac-surface);
+  border-bottom: 2px solid var(--mac-border);
+  height: 32px;
+  display: flex;
+  align-items: center;
+}
+
+/* Bevel controls */
+html[data-theme="mac3"] .mac-btn {
+  background: var(--mac-control);
+  color: var(--mac-black);
+  border: 1px solid var(--mac-border);
+  box-shadow:
+    inset 1px 1px 0 var(--mac-white),
+    inset -1px -1px 0 var(--mac-inset);
+  padding: 4px 10px;
+  font-size: 12px;
+  line-height: 1.1;
+  user-select: none;
+}
+
+html[data-theme="mac3"] .mac-btn:active {
+  box-shadow:
+    inset -1px -1px 0 var(--mac-white),
+    inset 1px 1px 0 var(--mac-inset);
+}
+
+html[data-theme="mac3"] .mac-btn--primary {
+  background: var(--mac-accent);
+  color: var(--mac-white);
+  box-shadow: none;
+}
+
+html[data-theme="mac3"] .mac-btn--danger {
+  background: var(--mac-black);
+  color: var(--mac-white);
+  box-shadow: none;
+}
+
+/* Segmented controls */
+html[data-theme="mac3"] .mac-segmented {
+  display: inline-flex;
+  border: 1px solid var(--mac-border);
+  background: var(--mac-control);
+}
+
+html[data-theme="mac3"] .mac-segmented .mac-seg-btn {
+  padding: 4px 10px;
+  font-size: 12px;
+  border-right: 1px solid var(--mac-border);
+  background: transparent;
+  color: var(--mac-black);
+}
+
+html[data-theme="mac3"] .mac-segmented .mac-seg-btn:last-child {
+  border-right: 0;
+}
+
+html[data-theme="mac3"] .mac-segmented .mac-seg-btn.is-active {
+  background: var(--mac-black);
+  color: var(--mac-white);
+}
+
+/* Tool buttons */
+html[data-theme="mac3"] .mac-toolstrip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+  background: var(--mac-surface);
+  background-image: radial-gradient(circle at 1px 1px, rgba(0, 0, 0, 0.18) 1px, transparent 1.1px);
+  background-size: 14px 14px;
+}
+
+html[data-theme="mac3"] .mac-toolbtn {
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--mac-control);
+  border: 1px solid var(--mac-border);
+  box-shadow:
+    inset 1px 1px 0 var(--mac-white),
+    inset -1px -1px 0 var(--mac-inset);
+  color: var(--mac-black);
+}
+
+html[data-theme="mac3"] .mac-toolbtn.is-active {
+  background: var(--mac-black);
+  color: var(--mac-white);
+  box-shadow: none;
+}
+
+html[data-theme="mac3"] .mac-sep {
+  width: 1px;
+  height: 26px;
+  background: var(--mac-border);
+  margin: 0 4px;
+}
+
+html[data-theme="mac3"] .mac-tooltip {
+  background: var(--mac-surface);
+  color: var(--mac-black);
+  border: 1px solid var(--mac-border);
+  padding: 2px 6px;
+  font-size: 11px;
+  box-shadow: 2px 2px 0 var(--mac-black);
+}
+
+html[data-theme="mac3"] .mac-popover {
+  background: var(--mac-surface);
+  color: var(--mac-black);
+  border: 1px solid var(--mac-border);
+  box-shadow: 2px 2px 0 var(--mac-black);
+}
+
+html[data-theme="mac3"] .mac-field {
+  background: var(--mac-surface);
+  color: var(--mac-black);
+  border: 1px solid var(--mac-border);
+  padding: 4px 8px;
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+/* Inputs */
+html[data-theme="mac3"] input,
+html[data-theme="mac3"] textarea,
+html[data-theme="mac3"] select {
+  font-family: inherit;
+}
+
+html[data-theme="mac3"] input,
+html[data-theme="mac3"] textarea {
+  background: var(--mac-surface);
+  border: 1px solid var(--mac-border);
+}
+
+html[data-theme="mac3"] input:focus,
+html[data-theme="mac3"] textarea:focus,
+html[data-theme="mac3"] select:focus {
+  outline: 2px dotted var(--mac-black);
+  outline-offset: 2px;
+}
+
+@keyframes shake {
+  0% { transform: translateX(0); }
+  25% { transform: translateX(-5px); }
+  50% { transform: translateX(5px); }
+  75% { transform: translateX(-5px); }
+  100% { transform: translateX(0); }
+}
+
+.animate-shake {
+  animation: shake 0.4s ease-in-out;
+}
