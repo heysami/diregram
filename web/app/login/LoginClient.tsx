@@ -75,7 +75,12 @@ export default function LoginClient() {
                         const next = searchParams?.get('next') || '/';
                         const { error: err } = await supabase.auth.signInWithOtp({
                           email: email.trim(),
-                          options: { emailRedirectTo: `${window.location.origin}${next.startsWith('/') ? next : '/'}` },
+                          options: {
+                            // Route handler exchanges the code for a session cookie.
+                            emailRedirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(
+                              next.startsWith('/') ? next : '/',
+                            )}`,
+                          },
                         });
                         if (err) setError(err.message);
                         else setSent(true);
