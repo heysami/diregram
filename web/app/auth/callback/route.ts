@@ -21,7 +21,7 @@ export async function GET(request: Request) {
   }
 
   // In Next route handlers, we can set cookies directly on the response.
-  const cookieStore = cookies();
+  const cookieStore = await cookies();
 
   if (code) {
     const supabase = createServerClient(url, anon, {
