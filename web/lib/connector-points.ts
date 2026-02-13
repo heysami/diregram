@@ -1,4 +1,5 @@
 import type { FlowNodeType } from '@/components/DimensionFlowEditor';
+import type { LayoutDirection } from '@/lib/layout-direction';
 
 export type Point = { x: number; y: number };
 
@@ -49,7 +50,22 @@ export function getOutgoingConnectionPoint(
   width: number,
   height: number,
   childIndex: number = 0,
+  layoutDirection: LayoutDirection = 'horizontal',
 ): Point {
+  if (layoutDirection === 'vertical') {
+    // Vertical-down layout: default outgoing is bottom.
+    if (nodeType === 'validation') {
+      // Validation: split Yes/No horizontally (left/right) when children stack left→right.
+      return childIndex === 0
+        ? getDiamondCorner(nodeType, 'left', x, y, width, height)
+        : getDiamondCorner(nodeType, 'right', x, y, width, height);
+    }
+    if (nodeType === 'branch') {
+      return getDiamondCorner(nodeType, 'bottom', x, y, width, height);
+    }
+    return getDiamondCorner(nodeType, 'bottom', x, y, width, height);
+  }
+
   if (nodeType === 'validation') {
     return childIndex === 0
       ? getDiamondCorner(nodeType, 'top', x, y, width, height)
@@ -69,7 +85,16 @@ export function getIncomingConnectionPoint(
   y: number,
   width: number,
   height: number,
+  layoutDirection: LayoutDirection = 'horizontal',
 ): Point {
+  if (layoutDirection === 'vertical') {
+    // Vertical-down layout: default incoming is top.
+    if (nodeType === 'validation' || nodeType === 'branch') {
+      return getDiamondCorner(nodeType, 'top', x, y, width, height);
+    }
+    return getDiamondCorner(nodeType, 'top', x, y, width, height);
+  }
+
   if (nodeType === 'validation' || nodeType === 'branch') {
     return getDiamondCorner(nodeType, 'left', x, y, width, height);
   }

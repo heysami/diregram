@@ -38,12 +38,13 @@ import { useExpandedMainDataObjectInheritance } from '@/hooks/use-expanded-main-
 import { useChangeViewWithSelectionReset } from '@/hooks/use-change-view-with-selection-reset';
 import type { TagViewState } from '@/types/tagging';
 import { ImportMarkdownModal } from '@/components/ImportMarkdownModal';
-import { ensureLocalFileStore, type LocalFile } from '@/lib/local-file-store';
+import { ensureLocalFileStore, saveLocalFileStore, setLocalFileLayoutDirection, type LocalFile } from '@/lib/local-file-store';
 import { loadFileSnapshot, saveFileSnapshot } from '@/lib/local-doc-snapshots';
 import { useAuth } from '@/hooks/use-auth';
 import { usePinnedTags } from '@/hooks/use-pinned-tags';
 import { useToolbarPinnedTags } from '@/hooks/use-toolbar-pinned-tags';
 import { Database, FlaskConical, LayoutDashboard, Network, Workflow } from 'lucide-react';
+import { normalizeLayoutDirection, type LayoutDirection } from '@/lib/layout-direction';
 
 type ActiveFileMeta = {
   id: string;
@@ -74,6 +75,7 @@ export function EditorApp() {
 
   const [activeFile, setActiveFile] = useState<ActiveFileMeta | null>(null);
   const activeRoomName = activeFile?.roomName || 'nexus-demo';
+  const [layoutDirection, setLayoutDirection] = useState<LayoutDirection>('horizontal');
 
   const { doc, provider, status, presence, undo, redo, canUndo, canRedo } = useYjs(activeRoomName);
   const presenceRef = useRef<typeof presence>(null);
@@ -208,6 +210,7 @@ export function EditorApp() {
         router.replace('/workspace');
         return;
       }
+      setLayoutDirection(normalizeLayoutDirection(file.layoutDirection));
       setActiveFile({
         id: file.id,
         name: file.name,
@@ -231,10 +234,33 @@ export function EditorApp() {
         // Fetch file row; RLS ensures only allowed files are returned.
         const { data: fileRow, error: fileErr } = await supabase
           .from('files')
-          .select('id,name,folder_id,room_name,content,access,owner_id')
+          .select('id,name,folder_id,room_name,content,access,owner_id,layout_direction')
           .eq('id', fileIdFromUrl)
           .single();
         if (fileErr || !fileRow) throw fileErr || new Error('File not found');
+
+        // Compute effective layout direction: per-file override, else per-account default, else horizontal.
+        const fileLayoutRaw = (fileRow as { layout_direction?: string | null }).layout_direction;
+        let effectiveLayoutDirection: LayoutDirection = normalizeLayoutDirection(fileLayoutRaw);
+        if (!fileLayoutRaw) {
+          const uid = user?.id;
+          if (!uid) {
+            setLayoutDirection(effectiveLayoutDirection);
+          } else {
+          try {
+            const { data: profileRow } = await supabase
+              .from('profiles')
+              .select('default_layout_direction')
+              .eq('id', uid)
+              .maybeSingle();
+            const raw = (profileRow as { default_layout_direction?: string | null } | null)?.default_layout_direction;
+            effectiveLayoutDirection = normalizeLayoutDirection(raw);
+          } catch {
+            // ignore
+          }
+          }
+        }
+        setLayoutDirection(effectiveLayoutDirection);
 
         const folderId = fileRow.folder_id as string | null;
         const { data: folderRow } = folderId
@@ -280,6 +306,32 @@ export function EditorApp() {
       cancelled = true;
     };
   }, [searchParams, supabaseMode, ready, user?.id, user?.email, router]);
+
+  const persistLayoutDirectionForActiveFile = useCallback(
+    async (next: LayoutDirection) => {
+      setLayoutDirection(next);
+      if (!activeFile) return;
+
+      // Local mode persistence
+      if (!supabaseMode) {
+        const store = ensureLocalFileStore();
+        const updated = setLocalFileLayoutDirection(store, activeFile.id, next);
+        saveLocalFileStore(updated);
+        return;
+      }
+
+      // Supabase persistence (best-effort; keep UI responsive even if offline)
+      try {
+        const { createClient } = await import('@/lib/supabase');
+        const supabase = createClient();
+        if (!supabase) return;
+        await supabase.from('files').update({ layout_direction: next }).eq('id', activeFile.id);
+      } catch {
+        // ignore
+      }
+    },
+    [activeFile?.id, supabaseMode],
+  );
 
   // Persistence:
   // - Local-only mode: localStorage snapshot
@@ -1113,6 +1165,7 @@ export function EditorApp() {
               doc={doc}
               activeTool={activeTool}
               onToolUse={() => setActiveTool('select')}
+              layoutDirection={layoutDirection}
               mainLevel={mainLevel}
               tagView={tagView}
               pinnedTagIds={pinnedTagIds}
@@ -1176,6 +1229,7 @@ export function EditorApp() {
               presenceView="main"
               activeTool={activeTool}
               onToolUse={() => setActiveTool('select')}
+              layoutDirection={layoutDirection}
               mainLevel={mainLevel}
               viewportResetTick={viewportResetTick}
               focusTick={mainCanvasFocusTick}
@@ -1327,6 +1381,8 @@ export function EditorApp() {
             doc={doc}
             activeTool={activeTool}
             onToolChange={handleToolChange}
+            layoutDirection={layoutDirection}
+            onLayoutDirectionChange={persistLayoutDirectionForActiveFile}
             mainLevel={mainLevel}
             onMainLevelChange={setMainLevel}
             tagView={tagView}

@@ -11,6 +11,9 @@ create table if not exists public.profiles (
   email text,
   full_name text,
   avatar_url text,
+  -- Default canvas layout for newly created/opened files when no per-file override exists.
+  -- 'horizontal' = grow to the right; 'vertical' = grow downward.
+  default_layout_direction text default 'horizontal',
   created_at timestamptz default now()
 );
 
@@ -32,10 +35,16 @@ create table if not exists public.files (
   room_name text,
   last_opened_at timestamptz,
   access jsonb,
+  -- Per-file override for canvas layout direction. When null, fall back to profiles.default_layout_direction.
+  layout_direction text,
   thumbnail_url text,
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );
+
+-- Ensure columns exist on existing projects
+alter table public.profiles add column if not exists default_layout_direction text default 'horizontal';
+alter table public.files add column if not exists layout_direction text;
 
 -- 2) Profiles: allow inserting your own profile row
 alter table public.profiles enable row level security;

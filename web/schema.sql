@@ -7,6 +7,9 @@ create table public.profiles (
   email text,
   full_name text,
   avatar_url text,
+  -- Default canvas layout for newly created/opened files when no per-file override exists.
+  -- 'horizontal' = grow to the right; 'vertical' = grow downward.
+  default_layout_direction text default 'horizontal',
   created_at timestamptz default now()
 );
 
@@ -103,6 +106,8 @@ create table public.files (
   content text default '', -- Snapshot of the NexusMarkdown
   room_name text, -- Hocuspocus/Yjs doc name
   last_opened_at timestamptz,
+  -- Per-file override for canvas layout direction. When null, fall back to profiles.default_layout_direction.
+  layout_direction text,
   -- Sharing ACL: { "people": [ { "email": "...", "role": "view" | "edit" } ] }
   access jsonb,
   thumbnail_url text,

@@ -45,6 +45,12 @@ import { saveNodeAnnotation } from '@/lib/node-annotations';
 import { buildNexusNodeCommentTargetKey, getAllThreads, getThread, observeComments } from '@/lib/node-comments';
 import { ensureRunningNumberTagsForNodes, extractRunningNumbersFromMarkdown } from '@/lib/node-running-numbers';
 import {
+  buildJumpBezierBetweenBoxes,
+  buildJumpBezierToPoint,
+  buildStandardConnectorBezier,
+  buildValidationConnectorBezier,
+} from '@/lib/canvas-link-routing';
+import {
   computeSwimlaneLayoutOverride,
   type SwimlaneBandMetrics,
 } from '@/lib/flowtab-swimlane-layout';
@@ -65,11 +71,14 @@ import { useFlowlikeGlobalEnterTab } from '@/hooks/use-flowlike-global-enter-tab
 import type { PresenceController, PresenceView } from '@/lib/presence';
 import { computeSafeViewport } from '@/lib/safe-viewport';
 import { useTagStore } from '@/hooks/use-tag-store';
+import type { LayoutDirection } from '@/lib/layout-direction';
 
 interface Props {
   doc: Y.Doc;
   activeTool?: ToolType;
   onToolUse?: () => void;
+  /** Layout direction for this file (children grow right vs down). */
+  layoutDirection?: LayoutDirection;
   mainLevel?: number;
   tagView?: { activeGroupId: string; visibleTagIds: string[]; highlightedTagIds: string[] };
   /** Ordered list of pinned tag ids (controls which tags show above nodes, and in what order). */
@@ -195,6 +204,7 @@ interface PendingAction {
 
 export function NexusCanvas({ 
     doc, activeTool, onToolUse, mainLevel = 1,
+    layoutDirection = 'horizontal',
     tagView,
     pinnedTagIds = [],
     showComments = true,
@@ -1323,7 +1333,16 @@ export function NexusCanvas({
   }, [expandedNodeGhostResize?.nodeId, expandedNodeResizeConfig, scale, setExpandedNodeSize]);
 
   useEffect(() => {
-      let newLayout = calculateTreeLayout(visualTree, expandedNodes, doc, getRunningNumber, processFlowModeNodes, nodeMap, processNodeTypes);
+      let newLayout = calculateTreeLayout(
+        visualTree,
+        expandedNodes,
+        doc,
+        getRunningNumber,
+        processFlowModeNodes,
+        nodeMap,
+        processNodeTypes,
+        layoutDirection,
+      );
       const isSameLayout = (a: Record<string, NodeLayout>, b: Record<string, NodeLayout>) => {
         const aKeys = Object.keys(a);
         const bKeys = Object.keys(b);
@@ -1630,7 +1649,21 @@ export function NexusCanvas({
               }
           }
       }
-  }, [visualTree, expandedNodesArray, processNodeTypes, nodeMap, doc, getRunningNumber, processFlowModeNodes, swimlaneLayout, flattenedNodes, hubNotesExpandedIds, scale, conditionalHubNoteIndex]); 
+  }, [
+    visualTree,
+    expandedNodesArray,
+    processNodeTypes,
+    nodeMap,
+    doc,
+    getRunningNumber,
+    processFlowModeNodes,
+    swimlaneLayout,
+    flattenedNodes,
+    hubNotesExpandedIds,
+    scale,
+    conditionalHubNoteIndex,
+    layoutDirection,
+  ]); 
 
   // If viewport math ever produces non-finite values (NaN/Infinity), reset to a safe state.
   useEffect(() => {
@@ -1829,17 +1862,12 @@ export function NexusCanvas({
     const node = nodeMap.get(effectiveSelectedId);
     if (!node) return;
     suppressAnimation();
-    // Flow tab renders a focused subtree (`rootFocusId`). If the focused root is selected,
-    // creating a "sibling" would insert a node OUTSIDE the focused subtree (and can leave
-    // selection/pending actions in a broken state). Treat Enter as "add child" in this case.
-    const isFocusedRoot = !!rootFocusId && effectiveSelectedId === rootFocusId;
-    const action = isFocusedRoot
-      ? structure.createChild(node, rawNodeMap, node.activeVariantId)
-      : structure.createSibling(node, rawNodeMap, node.activeVariantId);
+    // Enter = new child
+    const action = structure.createChild(node, rawNodeMap, node.activeVariantId);
     if (action) {
       lastCreateRef.current = {
         lineIndex: action.lineIndex,
-        kind: isFocusedRoot ? 'child' : 'sibling',
+        kind: 'child',
         fromNodeId: node.id,
       };
       setPendingAction(action);
@@ -1852,9 +1880,19 @@ export function NexusCanvas({
     const node = nodeMap.get(effectiveSelectedId);
     if (!node) return;
     suppressAnimation();
-    const action = structure.createChild(node, rawNodeMap, node.activeVariantId);
+    // Tab = new sibling. However, when Flow tab focuses a subtree (`rootFocusId`),
+    // creating a sibling for the focused root would insert OUTSIDE the focused subtree.
+    // In that edge case, treat Tab as "add child" to keep interaction stable.
+    const isFocusedRoot = !!rootFocusId && effectiveSelectedId === rootFocusId;
+    const action = isFocusedRoot
+      ? structure.createChild(node, rawNodeMap, node.activeVariantId)
+      : structure.createSibling(node, rawNodeMap, node.activeVariantId);
     if (action) {
-      lastCreateRef.current = { lineIndex: action.lineIndex, kind: 'child', fromNodeId: node.id };
+      lastCreateRef.current = {
+        lineIndex: action.lineIndex,
+        kind: isFocusedRoot ? 'child' : 'sibling',
+        fromNodeId: node.id,
+      };
       setPendingAction(action);
     }
   }, [nodeMap, rawNodeMap, rootFocusId, selectedNodeId, structure, suppressAnimation]);
@@ -3483,14 +3521,16 @@ export function NexusCanvas({
                   parentY,
                   parentIsDiamond ? parentDiamondSize : parentLayout.width,
                   parentIsDiamond ? parentDiamondSize : parentLayout.height,
-                  childIndex
+                  childIndex,
+                  layoutDirection,
                 );
                 const endPoint = getIncomingConnectionPoint(
                   childType,
                   childX,
                   childY,
                   childIsDiamond ? childDiamondSize : childLayout.width,
-                  childIsDiamond ? childDiamondSize : childLayout.height
+                  childIsDiamond ? childDiamondSize : childLayout.height,
+                  layoutDirection,
                 );
                 let startX = startPoint.x;
                 let startY = startPoint.y;
@@ -3515,34 +3555,21 @@ export function NexusCanvas({
                   startY = reattached.y;
                 }
                 
-                // For validation nodes, use vertical bezier at origin and horizontal at target
-                let pathD: string;
-                if (parentType === 'validation') {
-                  // Vertical curve at origin (diamond corner), horizontal at target
-                  const verticalDistance = Math.abs(endY - startY);
-                  const horizontalDistance = Math.abs(endX - startX);
-                  const curveDistance = Math.max(Math.min(verticalDistance, horizontalDistance) * 0.5, 40);
-                  
-                  // Control point 1: extend vertically from start
-                  const c1x = startX;
-                  // Deterministic direction at origin:
-                  // - childIndex 0 exits from TOP corner → curve UP
-                  // - childIndex 1 exits from BOTTOM corner → curve DOWN
-                  const c1y = childIndex === 0 ? startY - curveDistance : startY + curveDistance;
-                  
-                  // Control point 2: extend horizontally toward end
-                  const c2x = endX < startX ? endX + curveDistance : endX - curveDistance;
-                  const c2y = endY;
-                  
-                  pathD = `M ${startX} ${startY} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${endX} ${endY}`;
-                } else {
-                  // Standard horizontal bezier for other node types
-                  const c1x = startX + (endX - startX) / 2;
-                  pathD = `M ${startX} ${startY} C ${c1x} ${startY}, ${c1x} ${endY}, ${endX} ${endY}`;
-                }
-                
-                const midX = (startX + endX) / 2;
-                const midY = (startY + endY) / 2;
+                const { pathD, mid } =
+                  parentType === 'validation'
+                    ? buildValidationConnectorBezier({
+                        start: { x: startX, y: startY },
+                        end: { x: endX, y: endY },
+                        childIndex,
+                        layoutDirection,
+                      })
+                    : buildStandardConnectorBezier({
+                        start: { x: startX, y: startY },
+                        end: { x: endX, y: endY },
+                        layoutDirection,
+                      });
+                const midX = mid.x;
+                const midY = mid.y;
 
                 // Special visual behavior: when a process-flow "goto" node is collapsed into a fake line,
                 // the incoming connector should NOT render an arrowhead.
@@ -3641,6 +3668,7 @@ export function NexusCanvas({
                 const { bridgePath, redirectPath } = buildCollapsedGotoPaths({
                   source: sourceLayout,
                   target: targetLayout,
+                  layoutDirection,
                 });
 
                 const handleExpand = (e: React.MouseEvent) => {
@@ -3688,25 +3716,11 @@ export function NexusCanvas({
                 );
               }
 
-              // Use the same connection logic as the line tool (customLines):
-              // - Exit from bottom if target is below/same, otherwise from top
-              // - Enter from top if target is lower, otherwise from bottom
-              // - Vertical bezier (control points extend vertically)
-              const targetIsBelow = targetLayout.y >= sourceLayout.y;
-              const startX = sourceLayout.x + sourceLayout.width / 2;
-              const startY = targetIsBelow ? sourceLayout.y + sourceLayout.height : sourceLayout.y;
-
-              const targetIsLower = targetLayout.y > sourceLayout.y;
-              const endX = targetLayout.x + targetLayout.width / 2;
-              const endY = targetIsLower ? targetLayout.y : targetLayout.y + targetLayout.height;
-
-              const verticalDistance = Math.abs(endY - startY);
-              const curveDistance = Math.max(verticalDistance * 0.5, 80);
-
-              const c1x = startX;
-              const c1y = targetIsBelow ? startY + curveDistance : startY - curveDistance;
-              const c2x = endX;
-              const c2y = targetIsLower ? endY - curveDistance : endY + curveDistance;
+              const { pathD } = buildJumpBezierBetweenBoxes({
+                from: sourceLayout,
+                to: targetLayout,
+                layoutDirection,
+              });
               
               const sourceNode = nodeMap.get(node.id);
               const targetNode = nodeMap.get(targetId);
@@ -3715,7 +3729,7 @@ export function NexusCanvas({
               return (
                 <g key={`goto-${node.id}-${targetId}`}>
                   <path
-                    d={`M ${startX} ${startY} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${endX} ${endY}`}
+                    d={pathD}
                     stroke="#000000"
                     strokeWidth="1.5"
                     fill="none"
@@ -3748,28 +3762,11 @@ export function NexusCanvas({
               const to = animatedLayout[line.toId];
               if (!from || !to) return null;
 
-              // Smart source connection: if target is below or same level, exit from bottom; if above, exit from top
-              const targetIsBelow = to.y >= from.y;
-              const startX = from.x + from.width / 2; // Center horizontally
-              const startY = targetIsBelow ? from.y + from.height : from.y; // Bottom if target below, top if target above
-              
-              // Smart target connection: if target is lower (y greater), connect to top; otherwise connect to bottom
-              const targetIsLower = to.y > from.y;
-              const endY = targetIsLower ? to.y : to.y + to.height;
-              const endX = to.x + to.width / 2; // Connect to center horizontally, but top/bottom vertically
-              
-              // Calculate distances for vertical bezier curve control
-              const verticalDistance = Math.abs(endY - startY);
-              const curveDistance = Math.max(verticalDistance * 0.5, 80);
-              
-              // Vertical bezier curve: control points extend vertically, not horizontally
-              const c1x = startX; // Keep same X as start
-              const c1y = targetIsBelow ? startY + curveDistance : startY - curveDistance; // Extend vertically
-              const c2x = endX; // Keep same X as end
-              const c2y = targetIsLower ? endY - curveDistance : endY + curveDistance; // Extend vertically
-              
-              // Direct path: vertical bezier curve from source to target
-              const path = `M ${startX} ${startY} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${endX} ${endY}`;
+              const { pathD: path } = buildJumpBezierBetweenBoxes({
+                from,
+                to,
+                layoutDirection,
+              });
 
               const isSelected = selectedLineId === line.id;
               // Highlight if line is connected to selected node
@@ -3808,27 +3805,11 @@ export function NexusCanvas({
               const from = animatedLayout[draggingLineFrom];
               if (!from) return null;
               
-              // Smart source connection: if target is below or same level, exit from bottom; if above, exit from top
-              const targetIsBelow = mousePos.y >= from.y;
-              const startX = from.x + from.width / 2; // Center horizontally
-              const startY = targetIsBelow ? from.y + from.height : from.y; // Bottom if target below, top if target above
-              
-              // Determine target connection point based on mouse position
-              const targetIsLower = mousePos.y > from.y;
-              const endY = mousePos.y; // Will connect to top or bottom based on targetIsLower
-              const endX = mousePos.x; // Center horizontally for preview
-              
-              // Calculate distance for vertical bezier curve control
-              const verticalDistance = Math.abs(endY - startY);
-              const curveDistance = Math.max(verticalDistance * 0.5, 80);
-              
-              // Vertical bezier curve: control points extend vertically, not horizontally
-              const c1x = startX; // Keep same X as start
-              const c1y = targetIsBelow ? startY + curveDistance : startY - curveDistance; // Extend vertically
-              const c2x = endX; // Keep same X as end
-              const c2y = targetIsLower ? endY - curveDistance : endY + curveDistance; // Extend vertically
-              
-              const path = `M ${startX} ${startY} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${endX} ${endY}`;
+              const { pathD: path } = buildJumpBezierToPoint({
+                from,
+                to: mousePos,
+                layoutDirection,
+              });
               
               return (
                 <path

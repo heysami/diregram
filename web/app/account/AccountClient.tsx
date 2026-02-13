@@ -1,11 +1,31 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
+import { useEffect, useState } from 'react';
 import { useAuth } from '@/hooks/use-auth';
+import { normalizeLayoutDirection, type LayoutDirection } from '@/lib/layout-direction';
+import { fetchProfileDefaultLayoutDirection, updateProfileDefaultLayoutDirection } from '@/lib/layout-direction-supabase';
 
 export default function AccountClient() {
   const router = useRouter();
   const { configured, supabase, ready, user, signOut } = useAuth();
+  const [defaultLayoutDirection, setDefaultLayoutDirection] = useState<LayoutDirection>('horizontal');
+  const [savingLayoutDirection, setSavingLayoutDirection] = useState(false);
+
+  useEffect(() => {
+    if (!configured) return;
+    if (!ready) return;
+    if (!supabase) return;
+    if (!user?.id) return;
+    let cancelled = false;
+    fetchProfileDefaultLayoutDirection(supabase, user.id).then((dir) => {
+      if (cancelled) return;
+      setDefaultLayoutDirection(dir);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [configured, ready, supabase, user?.id]);
 
   return (
     <main className="mac-desktop flex h-screen flex-col">
@@ -52,6 +72,38 @@ export default function AccountClient() {
                     <span className="font-semibold">User ID:</span> <span className="font-mono">{user.id}</span>
                   </div>
                 </div>
+
+                <div className="mac-double-outline p-3 space-y-2">
+                  <div className="font-semibold">Defaults</div>
+                  <div className="flex items-center justify-between gap-3">
+                    <div>New file layout</div>
+                    <select
+                      className="mac-field h-7"
+                      value={defaultLayoutDirection}
+                      disabled={!configured || !supabase || savingLayoutDirection}
+                      onChange={async (e) => {
+                        const next = normalizeLayoutDirection(e.target.value);
+                        setDefaultLayoutDirection(next);
+                        if (!supabase || !user?.id) return;
+                        setSavingLayoutDirection(true);
+                        try {
+                          await updateProfileDefaultLayoutDirection(supabase, user.id, next);
+                        } finally {
+                          setSavingLayoutDirection(false);
+                        }
+                      }}
+                      title="Default layout direction for new files"
+                    >
+                      <option value="horizontal">Horizontal (grow right)</option>
+                      <option value="vertical">Vertical (grow down)</option>
+                    </select>
+                  </div>
+                  <div className="text-[11px] opacity-70">
+                    Per-file layout can be changed in the editor; this sets the default for new files (and for existing files
+                    that don’t have an override yet).
+                  </div>
+                </div>
+
                 <div className="flex items-center justify-end gap-2">
                   <button
                     type="button"

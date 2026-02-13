@@ -31,12 +31,14 @@ import {
   extractExpandedIdsFromMarkdown,
 } from '@/lib/expanded-state-storage';
 import { extractRunningNumbersFromMarkdown } from '@/lib/expanded-state-matcher';
+import type { LayoutDirection } from '@/lib/layout-direction';
 
 type Props = {
   doc: Y.Doc;
   // Pass-through state from Home so Flow tab uses the exact same process-node engine.
   activeTool: ToolType;
   onToolUse: () => void;
+  layoutDirection?: LayoutDirection;
   mainLevel: number;
   tagView: { activeGroupId: string; visibleTagIds: string[]; highlightedTagIds: string[] };
   pinnedTagIds: string[];
@@ -66,6 +68,7 @@ export function FlowsCanvas({
   doc,
   activeTool,
   onToolUse,
+  layoutDirection = 'horizontal',
   mainLevel,
   tagView,
   pinnedTagIds,
@@ -1060,6 +1063,7 @@ export function FlowsCanvas({
                   doc={doc}
                   activeTool={activeTool}
                   onToolUse={onToolUse}
+                  layoutDirection={layoutDirection}
                   mainLevel={mainLevel}
                   tagView={tagView}
                   pinnedTagIds={swimlane?.pinnedTagIds || []}
@@ -1428,6 +1432,7 @@ export function FlowsCanvas({
                 doc={doc}
                 activeTool={activeTool}
                 onToolUse={onToolUse}
+                layoutDirection={layoutDirection}
                 mainLevel={mainLevel}
                 tagView={tagView}
                 pinnedTagIds={pinnedTagIds}
@@ -1472,6 +1477,7 @@ export function FlowsCanvas({
                   doc={descFlowDoc}
                   activeTool="select"
                   onToolUse={() => {}}
+                  layoutDirection={layoutDirection}
                   mainLevel={1}
                   tagView={tagView}
                   pinnedTagIds={[]}

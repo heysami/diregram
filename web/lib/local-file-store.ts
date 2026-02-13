@@ -12,13 +12,15 @@ export type LocalFile = {
   folderId: string | null;
   /** Hocuspocus document name */
   roomName: string;
+  /** Per-file layout direction (default: horizontal/right) */
+  layoutDirection?: 'horizontal' | 'vertical';
   createdAt: number;
   lastOpenedAt: number;
   access?: LocalAccessControl;
 };
 
 export type LocalFileStore = {
-  version: 3;
+  version: 4;
   folders: LocalFolder[];
   files: LocalFile[];
   lastOpenedFileId: string | null;
@@ -126,27 +128,29 @@ function migrate(raw: unknown): LocalFileStore | null {
       const ff: any = f;
       const createdAt = typeof ff.createdAt === 'number' ? ff.createdAt : now();
       const lastOpenedAt = typeof ff.lastOpenedAt === 'number' ? ff.lastOpenedAt : createdAt;
+      const layoutDirection = ff.layoutDirection === 'vertical' ? 'vertical' : 'horizontal';
       return {
         id: typeof ff.id === 'string' ? ff.id : uuid(),
         name: typeof ff.name === 'string' ? ff.name : 'Map',
         folderId: typeof ff.folderId === 'string' ? ff.folderId : null,
         roomName: typeof ff.roomName === 'string' ? ff.roomName : `file-${uuid()}`,
+        layoutDirection,
         createdAt,
         lastOpenedAt,
         access: migrateAccess(ff.access),
       };
     });
 
-  // v1/v2/v3 -> v3: normalize ACLs and bump version
-  if (version === 1 || version === 2 || version === 3) {
-    return { version: 3, folders, files, lastOpenedFileId };
+  // v1/v2/v3/v4 -> v4: normalize ACLs + layoutDirection and bump version
+  if (version === 1 || version === 2 || version === 3 || version === 4) {
+    return { version: 4, folders, files, lastOpenedFileId };
   }
   return null;
 }
 
 export function loadLocalFileStore(): LocalFileStore {
   if (typeof window === 'undefined') {
-    return { version: 3, folders: [], files: [], lastOpenedFileId: null };
+    return { version: 4, folders: [], files: [], lastOpenedFileId: null };
   }
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
@@ -165,10 +169,11 @@ export function loadLocalFileStore(): LocalFileStore {
     name: 'Demo Map',
     folderId: rootFolder.id,
     roomName: 'file-demo',
+    layoutDirection: 'horizontal',
     createdAt,
     lastOpenedAt: createdAt,
   };
-  const initial: LocalFileStore = { version: 3, folders: [rootFolder], files: [demo], lastOpenedFileId: demo.id };
+  const initial: LocalFileStore = { version: 4, folders: [rootFolder], files: [demo], lastOpenedFileId: demo.id };
   saveLocalFileStore(initial);
   return initial;
 }
@@ -188,10 +193,11 @@ export function ensureLocalFileStore(): LocalFileStore {
     name: 'Demo Map',
     folderId: rootFolder.id,
     roomName: 'file-demo',
+    layoutDirection: 'horizontal',
     createdAt,
     lastOpenedAt: createdAt,
   };
-  const next: LocalFileStore = { version: 3, folders: [rootFolder], files: [demo], lastOpenedFileId: demo.id };
+  const next: LocalFileStore = { version: 4, folders: [rootFolder], files: [demo], lastOpenedFileId: demo.id };
   saveLocalFileStore(next);
   return next;
 }
@@ -208,11 +214,26 @@ export function createLocalFile(store: LocalFileStore, name: string, folderId: s
     name: name.trim() || 'New Map',
     folderId,
     roomName: `file-${uuid()}`,
+    layoutDirection: 'horizontal',
     createdAt,
     lastOpenedAt: createdAt,
   };
   const next: LocalFileStore = { ...store, files: [...store.files, file], lastOpenedFileId: file.id };
   return { store: next, file };
+}
+
+export function setLocalFileLayoutDirection(
+  store: LocalFileStore,
+  fileId: string,
+  layoutDirection: 'horizontal' | 'vertical',
+): LocalFileStore {
+  const idx = store.files.findIndex((f) => f.id === fileId);
+  if (idx === -1) return store;
+  const cur = store.files[idx];
+  if (cur.layoutDirection === layoutDirection) return store;
+  const nextFiles = store.files.slice();
+  nextFiles[idx] = { ...cur, layoutDirection };
+  return { ...store, files: nextFiles };
 }
 
 export function renameLocalFile(store: LocalFileStore, fileId: string, nextNameRaw: string): LocalFileStore {

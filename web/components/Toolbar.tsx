@@ -6,6 +6,7 @@ import { TagViewPopover } from '@/components/tagging/TagViewPopover';
 import { TagManagerModal } from '@/components/tagging/TagManagerModal';
 import { PinnedTagsPopover } from '@/components/tagging/PinnedTagsPopover';
 import { useTagStore } from '@/hooks/use-tag-store';
+import type { LayoutDirection } from '@/lib/layout-direction';
 
 export type ToolType = 'select' | 'node' | 'line' | 'comment' | 'annotation';
 
@@ -13,6 +14,8 @@ interface Props {
   doc: Y.Doc;
   activeTool: ToolType;
   onToolChange: (tool: ToolType) => void;
+  layoutDirection?: LayoutDirection;
+  onLayoutDirectionChange?: (next: LayoutDirection) => void;
   mainLevel: number;
   onMainLevelChange: (level: number) => void;
   tagView: TagViewState;
@@ -47,6 +50,8 @@ export function Toolbar({
   doc,
   activeTool,
   onToolChange,
+  layoutDirection = 'horizontal',
+  onLayoutDirectionChange,
   mainLevel,
   onMainLevelChange,
   tagView,
@@ -99,6 +104,21 @@ export function Toolbar({
                     +
                   </button>
                 </div>
+              </div>
+            ) : null}
+
+            {showFullTools && onLayoutDirectionChange ? (
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-[12px] font-bold">Layout</span>
+                <select
+                  className="mac-field h-7"
+                  value={layoutDirection}
+                  onChange={(e) => onLayoutDirectionChange(e.target.value === 'vertical' ? 'vertical' : 'horizontal')}
+                  title="Canvas layout direction (per file)"
+                >
+                  <option value="horizontal">Horizontal (grow right)</option>
+                  <option value="vertical">Vertical (grow down)</option>
+                </select>
               </div>
             ) : null}
 

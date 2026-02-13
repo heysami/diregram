@@ -8,8 +8,10 @@ import {
   getDiamondSubtreeExtraTop,
   getValidationSecondChildShiftY,
   isProcessFlowDiamondType,
+  shiftSubtreeX,
   shiftSubtreeY,
 } from './process-flow-diamond';
+import type { LayoutDirection } from './layout-direction';
 
 export interface Point {
   x: number;
@@ -53,8 +55,21 @@ export function calculateTreeLayout(
   getRunningNumber?: (nodeId: string) => number | undefined,
   processFlowModeNodes?: Set<string>,
   nodeMap?: Map<string, NexusNode>,
-  processNodeTypes?: Record<string, string>
+  processNodeTypes?: Record<string, string>,
+  layoutDirection: LayoutDirection = 'horizontal',
 ): Record<string, NodeLayout> {
+  if (layoutDirection === 'vertical') {
+    return calculateTreeLayoutVertical(
+      nodes,
+      expandedNodes,
+      doc,
+      getRunningNumber,
+      processFlowModeNodes,
+      nodeMap,
+      processNodeTypes,
+    );
+  }
+
   const layout: Record<string, NodeLayout> = {};
   let currentY = 0;
   const isExpanded = (nodeId: string) => expandedNodes?.has(nodeId) ?? false;
@@ -384,6 +399,276 @@ export function calculateTreeLayout(
   nodes.forEach(root => {
     const treeHeight = processNode(root, 0, currentY);
     currentY += treeHeight;
+  });
+
+  return layout;
+}
+
+/**
+ * Vertical-down tree layout:
+ * - Children grow downward (increasing Y).
+ * - Siblings stack left-to-right (increasing X).
+ *
+ * This mirrors the horizontal layout but swaps the stacking axis and
+ * applies "expanded node pushes next level" logic along Y (height).
+ */
+function calculateTreeLayoutVertical(
+  nodes: NexusNode[],
+  expandedNodes?: Set<string>,
+  doc?: Y.Doc,
+  getRunningNumber?: (nodeId: string) => number | undefined,
+  processFlowModeNodes?: Set<string>,
+  nodeMap?: Map<string, NexusNode>,
+  processNodeTypes?: Record<string, string>,
+): Record<string, NodeLayout> {
+  const layout: Record<string, NodeLayout> = {};
+  let currentX = 0;
+  const isExpanded = (nodeId: string) => expandedNodes?.has(nodeId) ?? false;
+
+  const metadataCache = new Map<number, ExpandedNodeMetadata>();
+  const getMetadata = (nodeId: string): ExpandedNodeMetadata => {
+    if (!doc || !getRunningNumber) {
+      return { width: 4, height: 4, gridSize: 4 };
+    }
+
+    const runningNumber = getRunningNumber(nodeId);
+    if (runningNumber === undefined) {
+      return { width: 4, height: 4, gridSize: 4 };
+    }
+
+    if (!metadataCache.has(runningNumber)) {
+      metadataCache.set(runningNumber, loadExpandedNodeMetadata(doc, runningNumber));
+    }
+    return metadataCache.get(runningNumber) || { width: 4, height: 4, gridSize: 4 };
+  };
+
+  // Track the lowest Y position at each depth
+  // When a node expands (taller), it pushes both its children AND subsequent siblings downward.
+  const levelMaxY: Record<number, number> = {};
+  const levelMaxBottomEdge: Record<number, number> = {};
+
+  // Depth step baseline. Tall nodes will push the next level further down via `levelMaxBottomEdge`.
+  const LEVEL_Y_STEP = DIAMOND_SIZE + GAP_Y;
+
+  function processNode(
+    node: NexusNode,
+    logicalLevel: number,
+    startX: number,
+    accumulatedVisualOffset: number = 0,
+    parentBottomEdge?: number,
+  ): number {
+    const expanded = isExpanded(node.id);
+    const metadata = expanded ? getMetadata(node.id) : null;
+    const widthMultiplier = metadata?.width || 4;
+    const nodeWidth = expanded ? NODE_WIDTH * widthMultiplier : NODE_WIDTH;
+
+    const currentVisualLevel = (node.visualLevel || 0);
+    const totalVisualLevel = currentVisualLevel + accumulatedVisualOffset;
+    const levelKey = logicalLevel + totalVisualLevel;
+
+    const baseY = levelKey * LEVEL_Y_STEP;
+
+    let y: number;
+    if (parentBottomEdge !== undefined) {
+      const parentLevelKey = levelKey - 1;
+      const parentLevelMaxBottom = levelMaxBottomEdge[parentLevelKey];
+      const pushedBySibling = parentLevelMaxBottom ? parentLevelMaxBottom + GAP_Y : undefined;
+
+      // Give extra vertical space for children that are process nodes (for connector labels).
+      let extraGapForProcessNode = 0;
+      if (node.isFlowNode && processFlowModeNodes && nodeMap) {
+        let rootProcessNode: NexusNode | null = node;
+        let checkNode: NexusNode | null = node;
+        while (checkNode) {
+          if (checkNode.isFlowNode) {
+            rootProcessNode = checkNode;
+            const parentId = checkNode.parentId;
+            if (!parentId) break;
+            const parent = nodeMap.get(parentId);
+            if (!parent || !parent.isFlowNode) break;
+            checkNode = parent;
+          } else {
+            break;
+          }
+        }
+        if (rootProcessNode && processFlowModeNodes.has(rootProcessNode.id)) {
+          extraGapForProcessNode = GAP_Y * 0.75;
+        }
+      }
+
+      const calculatedY = parentBottomEdge + GAP_Y + extraGapForProcessNode;
+      const finalY = pushedBySibling ? Math.max(calculatedY, pushedBySibling) : calculatedY;
+
+      if (levelMaxY[levelKey] === undefined) {
+        y = finalY;
+        levelMaxY[levelKey] = y;
+      } else {
+        y = Math.max(levelMaxY[levelKey], finalY);
+        levelMaxY[levelKey] = y;
+      }
+    } else {
+      if (levelMaxY[levelKey] === undefined) {
+        y = baseY;
+        levelMaxY[levelKey] = y;
+      } else {
+        y = levelMaxY[levelKey];
+      }
+    }
+
+    // Determine process-flow state + diamond-ness early so sizing logic can use it.
+    let isProcessFlowModeEnabled = false;
+    if (node.isFlowNode && processFlowModeNodes && nodeMap) {
+      let rootProcessNode: NexusNode | null = node;
+      let checkNode: NexusNode | null = node;
+      while (checkNode) {
+        if (checkNode.isFlowNode) {
+          rootProcessNode = checkNode;
+          const parentId = checkNode.parentId;
+          if (!parentId) break;
+          const parent = nodeMap.get(parentId);
+          if (!parent || !parent.isFlowNode) break;
+          checkNode = parent;
+        } else {
+          break;
+        }
+      }
+      if (rootProcessNode && processFlowModeNodes.has(rootProcessNode.id)) {
+        isProcessFlowModeEnabled = true;
+      }
+    }
+
+    const nodeType = processNodeTypes?.[node.id];
+    const isDiamond = isProcessFlowDiamondType(nodeType);
+
+    const iconExtra = node.icon && node.icon.trim().length ? ICON_EXTRA_HEIGHT_PX : 0;
+    let baseCardHeight: number;
+    if (isDiamond && isProcessFlowModeEnabled) {
+      let size = DIAMOND_SIZE;
+      for (let i = 0; i < 2; i += 1) {
+        const textH = calculateTextHeight(node.content, size);
+        const cardH = Math.max(NODE_HEIGHT_MIN, textH + iconExtra);
+        const next = Math.min(NODE_WIDTH, Math.max(DIAMOND_SIZE, cardH));
+        if (next === size) break;
+        size = next;
+      }
+      baseCardHeight = size;
+    } else {
+      const baseTextHeight = calculateTextHeight(node.content, NODE_WIDTH);
+      baseCardHeight = Math.max(NODE_HEIGHT_MIN, baseTextHeight + iconExtra);
+    }
+    const diamondGeometrySizePx = isDiamond && isProcessFlowModeEnabled ? baseCardHeight : DIAMOND_SIZE;
+
+    const heightMultiplier = metadata?.height || 4;
+    const nodeHeight = expanded ? baseCardHeight * heightMultiplier : baseCardHeight;
+
+    const annotationReserve =
+      node.annotation && node.annotation.trim().length
+        ? ANNOTATION_GAP_PX +
+          calculateTextHeightCustom({
+            text: node.annotation,
+            boxWidth: nodeWidth,
+            paddingX: 12,
+            paddingY: 0,
+            fontSizePx: 11,
+            fontWeight: 400,
+            lineHeight: 1.35,
+          })
+        : 0;
+
+    // Annotations render below the node card, so they must push the next level down too.
+    const effectiveHeightForSpacing = nodeHeight + annotationReserve;
+
+    // Ensure expanded/tall nodes push later levels down.
+    levelMaxBottomEdge[levelKey] = Math.max(levelMaxBottomEdge[levelKey] || -Infinity, y + effectiveHeightForSpacing);
+
+    // Leaf
+    if (node.children.length === 0) {
+      // Horizontal margins for hubs (siblings stack along X in vertical mode).
+      const extraLeft = node.isHub ? HUB_TOP_MARGIN : 0;
+      const extraRight = node.isHub ? HUB_BOTTOM_MARGIN : 0;
+
+      layout[node.id] = {
+        id: node.id,
+        x: startX + extraLeft,
+        y,
+        width: nodeWidth,
+        height: nodeHeight,
+      };
+
+      return extraLeft + nodeWidth + GAP_X + extraRight;
+    }
+
+    // Non-leaf: process children
+    let leftMargin = node.isHub ? HUB_TOP_MARGIN : 0;
+    let rightMargin = node.isHub ? HUB_BOTTOM_MARGIN : 0;
+
+    if (node.isFlowNode && !isProcessFlowModeEnabled) {
+      leftMargin = 0;
+      rightMargin = 0;
+    }
+
+    let childrenTotalWidth = 0;
+    let childStartX = startX + leftMargin;
+
+    const bottomEdge = y + effectiveHeightForSpacing;
+    for (let i = 0; i < node.children.length; i += 1) {
+      const child = node.children[i];
+      const childWidth = processNode(child, logicalLevel + 1, childStartX, totalVisualLevel, bottomEdge);
+      childStartX += childWidth;
+      childrenTotalWidth += childWidth;
+    }
+
+    const childrenMidX =
+      childrenTotalWidth > 0 ? startX + leftMargin + (childrenTotalWidth - GAP_X) / 2 : startX + leftMargin;
+
+    const nodeX = node.isFlowNode ? startX + leftMargin : childrenMidX;
+
+    layout[node.id] = {
+      id: node.id,
+      x: nodeX,
+      y,
+      width: nodeWidth,
+      height: nodeHeight,
+    };
+
+    // Validation diamonds in vertical mode: ensure 2nd child (No) is far enough right so it aligns with the diamond right corner.
+    if (isDiamond && isProcessFlowModeEnabled && nodeType === 'validation' && node.children.length >= 2) {
+      const noChild = node.children[1];
+      const noLayout = layout[noChild.id];
+      if (noLayout) {
+        const noCenterX = noLayout.x + noLayout.width / 2;
+        const desiredNoCenterX = nodeX + diamondGeometrySizePx;
+        const delta = Math.max(0, desiredNoCenterX - noCenterX);
+        if (delta > 0) {
+          shiftSubtreeX(layout, noChild, delta);
+          childrenTotalWidth += delta;
+        }
+      }
+    }
+
+    if (childrenTotalWidth > 0) {
+      if (node.isFlowNode && !isProcessFlowModeEnabled) {
+        return nodeWidth + GAP_X;
+      }
+
+      const subtreeLeft = startX + leftMargin;
+      const subtreeRightFromChildren = startX + leftMargin + childrenTotalWidth;
+      const subtreeRightFromNode = nodeX + nodeWidth;
+      const subtreeRight = Math.max(subtreeRightFromChildren, subtreeRightFromNode);
+
+      return (subtreeRight - subtreeLeft) + rightMargin + GAP_X;
+    }
+
+    if (node.isFlowNode && !isProcessFlowModeEnabled) {
+      return nodeWidth + GAP_X;
+    }
+
+    return leftMargin + nodeWidth + GAP_X + rightMargin;
+  }
+
+  nodes.forEach((root) => {
+    const treeWidth = processNode(root, 0, currentX);
+    currentX += treeWidth;
   });
 
   return layout;

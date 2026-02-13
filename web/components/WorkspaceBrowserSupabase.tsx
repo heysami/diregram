@@ -6,6 +6,8 @@ import { ArrowLeft, Copy, FileText, Folder, FolderPlus, Mail, Pencil, Plus, Tras
 import { useAuth } from '@/hooks/use-auth';
 import { AccessPeopleEditor } from '@/components/AccessPeopleEditor';
 import type { AccessPerson } from '@/lib/local-file-store';
+import type { LayoutDirection } from '@/lib/layout-direction';
+import { fetchProfileDefaultLayoutDirection } from '@/lib/layout-direction-supabase';
 
 type DbFolder = {
   id: string;
@@ -24,6 +26,7 @@ type DbFile = {
   last_opened_at: string | null;
   updated_at: string | null;
   access: { people?: AccessPerson[] } | null;
+  layout_direction?: LayoutDirection | null;
 };
 
 function nowIso() {
@@ -209,11 +212,20 @@ export function WorkspaceBrowserSupabase() {
 
   const createFile = async (folderId: string) => {
     if (!supabase || !userId) return;
+    // Respect per-account default when creating new files.
+    const defaultLayout: LayoutDirection = await fetchProfileDefaultLayoutDirection(supabase, userId);
     const roomName = `file-${crypto.randomUUID()}`;
     const { data, error: err } = await supabase
       .from('files')
-      .insert({ name: 'New Map', owner_id: userId, folder_id: folderId, room_name: roomName, last_opened_at: nowIso() })
-      .select('id,name,owner_id,folder_id,room_name,last_opened_at,updated_at,access')
+      .insert({
+        name: 'New Map',
+        owner_id: userId,
+        folder_id: folderId,
+        room_name: roomName,
+        last_opened_at: nowIso(),
+        layout_direction: defaultLayout,
+      })
+      .select('id,name,owner_id,folder_id,room_name,last_opened_at,updated_at,access,layout_direction')
       .single();
     if (err) return showToast(err.message);
     const file = data as unknown as DbFile;

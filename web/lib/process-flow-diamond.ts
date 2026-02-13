@@ -79,3 +79,21 @@ export function shiftSubtreeY(
   }
 }
 
+export function shiftSubtreeX(
+  layout: Record<string, NodeLayout>,
+  node: NexusNode,
+  deltaX: number,
+): void {
+  if (!deltaX) return;
+  const l = layout[node.id];
+  if (l) layout[node.id] = { ...l, x: l.x + deltaX };
+  node.children.forEach((child) => shiftSubtreeX(layout, child, deltaX));
+  // Variants aren't used as descendants in the main tree traversal, but keep safe.
+  if (node.isHub && node.variants) {
+    node.variants.forEach((v) => {
+      if (v.id === node.id) return;
+      shiftSubtreeX(layout, v, deltaX);
+    });
+  }
+}
+
