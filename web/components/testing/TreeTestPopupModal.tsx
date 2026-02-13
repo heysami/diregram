@@ -3,6 +3,7 @@
 import type { NexusNode } from '@/types/nexus';
 import type { TreeTestRunState } from '@/lib/tree-testing';
 import { singleLine } from '@/lib/testing/text';
+import { NavigationCardGrid } from '@/components/testing/navigation/NavigationCardGrid';
 
 export function TreeTestPopupModal({
   state,
@@ -48,18 +49,7 @@ export function TreeTestPopupModal({
               ))}
             </div>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              {children.map((c) => (
-                <button
-                  key={c.id}
-                  type="button"
-                  onClick={() => onSelect(c.id)}
-                  className="border border-slate-200 bg-white p-3 text-left hover:bg-slate-50"
-                >
-                  <div className="text-xs font-semibold text-slate-900">{singleLine(c.content)}</div>
-                </button>
-              ))}
-            </div>
+            <NavigationCardGrid nodes={children} onSelect={onSelect} />
           )}
         </div>
       </div>

@@ -64,6 +64,7 @@ import { useCanvasKeyboardFocus } from '@/hooks/use-canvas-keyboard-focus';
 import { useFlowlikeGlobalEnterTab } from '@/hooks/use-flowlike-global-enter-tab';
 import type { PresenceController, PresenceView } from '@/lib/presence';
 import { computeSafeViewport } from '@/lib/safe-viewport';
+import { useTagStore } from '@/hooks/use-tag-store';
 
 interface Props {
   doc: Y.Doc;
@@ -71,6 +72,8 @@ interface Props {
   onToolUse?: () => void;
   mainLevel?: number;
   tagView?: { activeGroupId: string; visibleTagIds: string[]; highlightedTagIds: string[] };
+  /** Ordered list of pinned tag ids (controls which tags show above nodes, and in what order). */
+  pinnedTagIds?: string[];
   showComments?: boolean;
   showAnnotations?: boolean;
   /**
@@ -193,6 +196,7 @@ interface PendingAction {
 export function NexusCanvas({ 
     doc, activeTool, onToolUse, mainLevel = 1,
     tagView,
+    pinnedTagIds = [],
     showComments = true,
     showAnnotations = true,
     initialFitToContent = false,
@@ -227,6 +231,10 @@ export function NexusCanvas({
   // (e.g. conditional hub notes) don't repeatedly call yText.toString() inside loops.
   const latestMarkdownRef = useRef<string>('');
   const selectedNodeIdsSet = useMemo(() => new Set(selectedNodeIds), [selectedNodeIds]);
+  const pinnedTagIdsStable = pinnedTagIds;
+  const pinnedTagIdsSet = useMemo(() => new Set(pinnedTagIdsStable), [pinnedTagIdsStable]);
+  const tagStore = useTagStore(doc);
+  const tagNameById = useMemo(() => new Map(tagStore.tags.map((t) => [t.id, t.name])), [tagStore.tags]);
   const suppressNextClickRef = useRef(false);
   const [layout, setLayout] = useState<Record<string, NodeLayout>>({});
   
@@ -1361,9 +1369,28 @@ export function NexusCanvas({
           diamondSize: DIAMOND_SIZE,
         });
         newLayout = computed.layout;
-        setSwimlaneBands(computed.bands);
+        const isSameBands = (a: SwimlaneBandMetrics | null, b: SwimlaneBandMetrics): boolean => {
+          if (!a) return false;
+          if (
+            a.laneGutterW !== b.laneGutterW ||
+            a.headerH !== b.headerH ||
+            a.stageInsetX !== b.stageInsetX ||
+            a.laneInsetY !== b.laneInsetY
+          ) {
+            return false;
+          }
+          const eqArr = (x: number[], y: number[]) =>
+            x.length === y.length && x.every((v, i) => v === y[i]);
+          return (
+            eqArr(a.laneTops, b.laneTops) &&
+            eqArr(a.laneHeights, b.laneHeights) &&
+            eqArr(a.stageLefts, b.stageLefts) &&
+            eqArr(a.stageWidths, b.stageWidths)
+          );
+        };
+        setSwimlaneBands((prev) => (isSameBands(prev, computed.bands) ? prev : computed.bands));
       } else {
-        setSwimlaneBands(null);
+        setSwimlaneBands((prev) => (prev === null ? prev : null));
       }
 
       // Conditional hub notes: reserve EXACT space for the notes box without moving the hub group upward.
@@ -3848,6 +3875,13 @@ export function NexusCanvas({
             const isExpanded = expandedNodes.has(node.id);
             const hasEverExpanded = getRunningNumber(node.id) !== undefined;
             const isProcessNode = node.isFlowNode;
+            const nodeTagIds = Array.isArray((node as any).tags) ? ((node as any).tags as string[]) : [];
+            const pinnedTagsForNodeIds =
+              pinnedTagIdsStable.length && nodeTagIds.length
+                ? pinnedTagIdsStable.filter((id) => pinnedTagIdsSet.has(id) && nodeTagIds.includes(id))
+                : [];
+            const pinnedTagsForNodeNames = pinnedTagsForNodeIds.map((id) => tagNameById.get(id) || id);
+            const hasPinnedTagsForNode = pinnedTagsForNodeIds.length > 0;
             // Default to 'step' if node is a process node but type hasn't been set yet
             const processNodeType = isProcessNode ? (processNodeTypes[node.id] || 'step') : null;
             const rootProcessNodeId = isProcessNode ? getRootProcessNodeId(node.id) : null;
@@ -4076,7 +4110,7 @@ export function NexusCanvas({
                     onDoubleClick={(e) => {
                       startEditing(node.id, undefined, true);
                     }} 
-                    className={`absolute ${isDiamond ? 'text-black bg-transparent' : style.styleClass} ${(isProcessNode && !isCollapsed && isInProcessFlowMode && !isDiamond) ? (processNodeBgClass || '') : ''} ${isDiamond ? '' : 'mac-double-outline'} ${isDiamond ? '' : 'rounded-md'} ${isDiamond ? '' : 'px-3 py-2'} flex flex-col items-center justify-center text-sm font-medium break-words ${isExpanded ? 'overflow-visible group' : (isProcessNode && !isInProcessFlowMode && node.children.length > 0 ? 'overflow-visible' : 'overflow-hidden')} ${(() => {
+                    className={`absolute ${isDiamond ? 'text-black bg-transparent' : style.styleClass} ${(isProcessNode && !isCollapsed && isInProcessFlowMode && !isDiamond) ? (processNodeBgClass || '') : ''} ${isDiamond ? '' : 'mac-double-outline'} ${isDiamond ? '' : 'rounded-md'} ${isDiamond ? '' : 'px-3 py-2'} flex flex-col items-center justify-center text-sm font-medium break-words ${isExpanded ? 'overflow-visible group' : (hasPinnedTagsForNode ? 'overflow-visible' : (isProcessNode && !isInProcessFlowMode && node.children.length > 0 ? 'overflow-visible' : 'overflow-hidden'))} ${(() => {
                       if (!isProcessNode) return '';
                       // Check if process flow mode is enabled for root process node
                       let root: NexusNode | null = node;
@@ -4214,6 +4248,37 @@ export function NexusCanvas({
                         title="This node references a main-canvas process node"
                       >
                         <Link2 size={14} />
+                      </div>
+                    ) : null}
+
+                    {hasPinnedTagsForNode ? (
+                      <div
+                        className="absolute -top-3 left-1/2 -translate-x-1/2 z-[2] flex items-center gap-1 group"
+                      >
+                        {pinnedTagsForNodeIds.slice(0, 3).map((id) => {
+                          const name = tagNameById.get(id) || id;
+                          return (
+                            <span
+                              key={`${node.id}-pin-${id}`}
+                              className="px-1.5 py-0.5 rounded border border-slate-200 bg-white/95 text-[9px] leading-none text-slate-700 shadow-sm max-w-[88px] truncate"
+                            >
+                              {name}
+                            </span>
+                          );
+                        })}
+                        {pinnedTagsForNodeNames.length > 3 ? (
+                          <span
+                            className="px-1.5 py-0.5 rounded border border-slate-200 bg-white/95 text-[9px] leading-none text-slate-700 shadow-sm"
+                          >
+                            +{pinnedTagsForNodeNames.length - 3}
+                          </span>
+                        ) : null}
+
+                        <div className="pointer-events-none absolute left-1/2 -translate-x-1/2 -top-2 -translate-y-full opacity-0 group-hover:opacity-100 transition-opacity">
+                          <div className="max-w-[240px] whitespace-pre-wrap text-[10px] leading-snug mac-double-outline bg-white px-2 py-1 mac-shadow-hard text-slate-800">
+                            {pinnedTagsForNodeNames.join('\n')}
+                          </div>
+                        </div>
                       </div>
                     ) : null}
 

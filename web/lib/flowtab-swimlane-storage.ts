@@ -5,6 +5,8 @@ export interface FlowTabSwimlaneData {
   lanes: { id: string; label: string }[];
   stages: { id: string; label: string }[];
   placement: Record<string, { laneId: string; stage: number }>;
+  /** Ordered list of pinned tag ids for this flow (controls which tags show above nodes). */
+  pinnedTagIds?: string[];
 }
 
 const blockType = (fid: string) => `flowtab-swimlane-${fid}`;
@@ -63,6 +65,7 @@ export function loadFlowTabSwimlane(doc: Y.Doc, fid: string): FlowTabSwimlaneDat
       lanes: Array.isArray(parsed.lanes) ? parsed.lanes : [],
       stages: Array.isArray(parsed.stages) ? parsed.stages : [],
       placement: parsed.placement || {},
+      pinnedTagIds: Array.isArray(parsed.pinnedTagIds) ? parsed.pinnedTagIds : [],
     };
 
     // Auto-heal: if we had to repair the JSON, rewrite it into canonical JSON so future loads are clean.
@@ -100,6 +103,7 @@ export function buildDefaultFlowTabSwimlane(fid: string): FlowTabSwimlaneData {
     lanes: [{ id: 'branch-1', label: 'Lane 1' }],
     stages: [{ id: 'stage-1', label: 'Stage 1' }],
     placement: {},
+    pinnedTagIds: [],
   };
 }
 

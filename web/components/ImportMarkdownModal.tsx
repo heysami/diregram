@@ -13,6 +13,7 @@ import {
   POST_GEN_CHECKLIST_IA,
   POST_GEN_CHECKLIST_PROCESS_FLOWS,
   POST_GEN_CHECKLIST_SWIMLANE,
+  POST_GEN_CHECKLIST_TAGS,
   POST_GEN_CHECKLIST_TECHNICAL,
 } from '@/lib/ai-checklists/post-generation-index';
 
@@ -149,6 +150,15 @@ TAGS
     - ui-surface-public, ui-surface-portal, ui-surface-admin, ui-surface-partner
   - DO NOT encode actors in titles; actors belong in tags + Flowtab swimlane lanes.
   - All tags referenced in <!-- tags:... --> MUST exist in the \`\`\`tag-store\`\`\` tags[] list.
+
+PINNED TAGS (UI display; optional but recommended when used)
+- Pinned tags are a VIEW feature: only pinned tags that are ALSO on the node are shown above the node.
+- Ordering: displayed chips follow the pinned-tag order (first 3 chips, then "+x" for the rest; hover reveals all).
+- Storage:
+  - Global pinned tags (main canvas): stored in a \`\`\`pinned-tags\`\`\` JSON block below '---':
+    { "tagIds": ["tag-1", "tag-2"] }
+  - Flowtab swimlane pinned tags (per flow): stored per flow in \`\`\`flowtab-swimlane-<fid>\`\`\` as:
+    { "pinnedTagIds": ["tag-1", "tag-2"] }
 
 ANNOTATIONS (freeform)
 - Syntax on a node line:
@@ -2178,6 +2188,7 @@ export function ImportMarkdownModal({ doc, isOpen, onClose, onDidReplace }: Prop
         { name: 'post-generation-checklist-all.md', content: POST_GEN_CHECKLIST_ALL },
         { name: 'post-generation-checklist-technical.md', content: POST_GEN_CHECKLIST_TECHNICAL },
         { name: 'post-generation-checklist-ia.md', content: POST_GEN_CHECKLIST_IA },
+        { name: 'post-generation-checklist-tags.md', content: POST_GEN_CHECKLIST_TAGS },
         { name: 'post-generation-checklist-main-canvas-process-flows.md', content: POST_GEN_CHECKLIST_PROCESS_FLOWS },
         { name: 'post-generation-checklist-conditional.md', content: POST_GEN_CHECKLIST_CONDITIONAL },
         { name: 'post-generation-checklist-data-objects.md', content: POST_GEN_CHECKLIST_DATA_OBJECTS },
@@ -2239,7 +2250,7 @@ export function ImportMarkdownModal({ doc, isOpen, onClose, onDidReplace }: Prop
 
           <CollapsibleCopyPanel
             title="Post-generation checklist — 0) Copy ALL (combined)"
-            description="Optional: copy everything as one blob. Recommended order: Technical → IA → Process Flows → Conditional → Data Objects → Swimlane → Completeness."
+            description="Optional: copy everything as one blob. Recommended order: Technical → IA → Tags → Process Flows → Conditional → Data Objects → Swimlane → Completeness."
             copyLabel="Copy all"
             textToCopy={POST_GEN_CHECKLIST_ALL}
             childrenText={POST_GEN_CHECKLIST_ALL}
@@ -2261,6 +2272,15 @@ export function ImportMarkdownModal({ doc, isOpen, onClose, onDidReplace }: Prop
             copyLabel="Copy"
             textToCopy={POST_GEN_CHECKLIST_IA}
             childrenText={POST_GEN_CHECKLIST_IA}
+            copy={copy}
+          />
+
+          <CollapsibleCopyPanel
+            title="Post-generation checklist — 2.25) Tags"
+            description="Checks tag-store integrity, actor/ui-surface tagging rules, and pinned-tag metadata (global + per-flow)."
+            copyLabel="Copy"
+            textToCopy={POST_GEN_CHECKLIST_TAGS}
+            childrenText={POST_GEN_CHECKLIST_TAGS}
             copy={copy}
           />
 

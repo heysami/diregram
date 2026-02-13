@@ -1,9 +1,11 @@
-import { ArrowUpRight, Eye, Highlighter, MessageSquareText, MousePointer2, Move, Pencil, Redo2, Settings2, Square, SquareDashed, Trash2, Undo2, ZoomIn, ZoomOut } from 'lucide-react';
-import { useState } from 'react';
+import { ArrowUpRight, Eye, Highlighter, MessageSquareText, MousePointer2, Move, Pin, Redo2, Settings2, Square, SquareDashed, Trash2, Undo2, ZoomIn, ZoomOut } from 'lucide-react';
+import { useMemo, useState } from 'react';
 import * as Y from 'yjs';
 import type { TagViewState } from '@/types/tagging';
 import { TagViewPopover } from '@/components/tagging/TagViewPopover';
 import { TagManagerModal } from '@/components/tagging/TagManagerModal';
+import { PinnedTagsPopover } from '@/components/tagging/PinnedTagsPopover';
+import { useTagStore } from '@/hooks/use-tag-store';
 
 export type ToolType = 'select' | 'node' | 'line' | 'comment' | 'annotation';
 
@@ -15,6 +17,8 @@ interface Props {
   onMainLevelChange: (level: number) => void;
   tagView: TagViewState;
   onTagViewChange: (next: TagViewState | ((prev: TagViewState) => TagViewState)) => void;
+  pinnedTagIds: string[];
+  onPinnedTagIdsChange: (next: string[]) => void;
   showComments: boolean;
   onShowCommentsChange: (next: boolean) => void;
   showAnnotations: boolean;
@@ -47,6 +51,8 @@ export function Toolbar({
   onMainLevelChange,
   tagView,
   onTagViewChange,
+  pinnedTagIds,
+  onPinnedTagIdsChange,
   showComments,
   onShowCommentsChange,
   showAnnotations,
@@ -64,6 +70,11 @@ export function Toolbar({
   const [showSettings, setShowSettings] = useState(false);
   const [showTagEye, setShowTagEye] = useState(false);
   const [showTagManager, setShowTagManager] = useState(false);
+  const [showPinnedTags, setShowPinnedTags] = useState(false);
+
+  // Keep tag store wired so popovers remain fast to open.
+  const tagStore = useTagStore(doc);
+  void tagStore;
 
   const showFullTools = variant === 'full';
 
@@ -118,6 +129,10 @@ export function Toolbar({
 
       {showFullTools && showTagEye ? (
         <TagViewPopover doc={doc} tagView={tagView} onTagViewChange={onTagViewChange} onOpenManager={() => setShowTagManager(true)} />
+      ) : null}
+
+      {showPinnedTags ? (
+        <PinnedTagsPopover doc={doc} pinnedTagIds={pinnedTagIds} onPinnedTagIdsChange={onPinnedTagIdsChange} />
       ) : null}
 
       {showFullTools ? (
@@ -243,13 +258,16 @@ export function Toolbar({
           </>
         ) : null}
 
+        <div className="mac-sep" />
         {showFullTools ? (
-          <>
-            <div className="mac-sep" />
-
-            <ToolButton isActive={showTagEye} onClick={() => setShowTagEye(!showTagEye)} icon={<Eye size={18} />} label="Tag view" />
-          </>
+          <ToolButton isActive={showTagEye} onClick={() => setShowTagEye(!showTagEye)} icon={<Eye size={18} />} label="Tag view" />
         ) : null}
+        <ToolButton
+          isActive={showPinnedTags}
+          onClick={() => setShowPinnedTags(!showPinnedTags)}
+          icon={<Pin size={18} />}
+          label="Pinned tags"
+        />
 
         <div className="mac-sep" />
         <ToolButton isActive={showSettings} onClick={() => setShowSettings(!showSettings)} icon={<Settings2 size={18} />} label="Settings" />

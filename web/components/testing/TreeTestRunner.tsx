@@ -3,13 +3,15 @@
 import { useEffect, useMemo, useState } from 'react';
 import type * as Y from 'yjs';
 import type { NexusNode } from '@/types/nexus';
-import { loadDataObjects } from '@/lib/data-object-storage';
 import { loadExpandedGridNodesFromDoc, type ExpandedGridNodeRuntime } from '@/lib/expanded-grid-storage';
 import { loadExpandedNodeMetadata } from '@/lib/expanded-node-metadata';
 import type { TreeTestModel } from '@/lib/testing/tree-test-model';
 import { singleLine } from '@/lib/testing/text';
 import { ExpandedGridLayout } from '@/components/testing/ExpandedGridLayout';
 import { TreeTestPopupModal } from '@/components/testing/TreeTestPopupModal';
+import { NavigationCardGrid } from '@/components/testing/navigation/NavigationCardGrid';
+import { useDataObjectAttributeLabels } from '@/components/testing/hooks/useDataObjectAttributeLabels';
+import { loadDataObjects } from '@/lib/data-object-storage';
 
 export function TreeTestRunner({
   doc,
@@ -54,6 +56,15 @@ export function TreeTestRunner({
     store.objects.forEach((o) => map.set(o.id, o));
     return map;
   }, [doc]);
+
+  const { getDataObjectAttributeLabel } = useDataObjectAttributeLabels(doc);
+
+  const clickInnerDataObjectId = (dataObjectId: string) => {
+    const doid = (dataObjectId || '').trim();
+    if (!doid) return;
+    const child = (currentNode?.children || []).find((c) => (c.dataObjectId || '').trim() === doid) || null;
+    if (child) pushMain(child.id);
+  };
 
   const clickChild = (nodeId: string) => {
     const child = state.nodeById.get(nodeId);
@@ -143,13 +154,7 @@ export function TreeTestRunner({
 
   const clickInnerGridNode = (gridNode: ExpandedGridNodeRuntime) => {
     const doid = (gridNode.dataObjectId || gridNode.sourceChildDataObjectId || '').trim();
-    if (doid) {
-      const child = (currentNode.children || []).find((c) => (c.dataObjectId || '').trim() === doid) || null;
-      if (child) {
-        pushMain(child.id);
-        return;
-      }
-    }
+    if (doid) clickInnerDataObjectId(doid);
   };
 
   const advanceInnerProgress = () => {
@@ -284,6 +289,8 @@ export function TreeTestRunner({
                   rows={nextInnerGridLayout.rows}
                   nodes={nextInnerGridLayout.nodes}
                   highlightKey={String(nextInnerStep.gridNodeKey)}
+                  onClickDataObjectId={clickInnerDataObjectId}
+                  getDataObjectAttributeLabel={getDataObjectAttributeLabel}
                   onClickNode={(gn) => {
                     const key = String(gn.key || gn.id);
                     if (key !== String(nextInnerStep.gridNodeKey)) return;
@@ -308,6 +315,8 @@ export function TreeTestRunner({
                     rows={currentGridDims.rows}
                     nodes={currentGridNodesRenderable}
                     onClickNode={clickInnerGridNode}
+                    onClickDataObjectId={clickInnerDataObjectId}
+                    getDataObjectAttributeLabel={getDataObjectAttributeLabel}
                   />
                 </div>
               ) : null}
@@ -329,19 +338,7 @@ export function TreeTestRunner({
                   ))}
                 </div>
               ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {visibleChildrenFiltered.map((c) => (
-                    <button
-                      key={c.id}
-                      type="button"
-                      onClick={() => clickChild(c.id)}
-                      className="rounded-lg border border-slate-200 bg-white p-3 text-left hover:bg-slate-50"
-                      title="Open"
-                    >
-                      <div className="text-xs font-semibold text-slate-900">{singleLine(c.content)}</div>
-                    </button>
-                  ))}
-                </div>
+                <NavigationCardGrid nodes={visibleChildrenFiltered} onSelect={clickChild} />
               )}
             </>
           )}

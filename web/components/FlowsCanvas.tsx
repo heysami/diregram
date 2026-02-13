@@ -13,6 +13,10 @@ import {
   type FlowTabSwimlaneData,
 } from '@/lib/flowtab-swimlane-storage';
 import { loadConnectorLabels, saveConnectorLabels } from '@/lib/process-connector-labels';
+import { parseDimensionDescriptions } from '@/lib/dimension-descriptions';
+import { parseDataObjectAttributeDescriptions } from '@/lib/data-object-attribute-descriptions';
+import { NodeTagsEditor } from '@/components/tagging/NodeTagsEditor';
+import { useTagStore } from '@/hooks/use-tag-store';
 import {
   loadFlowTabProcessReferences,
   saveFlowTabProcessReferences,
@@ -35,6 +39,9 @@ type Props = {
   onToolUse: () => void;
   mainLevel: number;
   tagView: { activeGroupId: string; visibleTagIds: string[]; highlightedTagIds: string[] };
+  pinnedTagIds: string[];
+  onSelectedFlowChange?: (fid: string | null) => void;
+  onSelectedFlowPinnedTagIdsChange?: (tagIds: string[]) => void;
   showComments?: boolean;
   showAnnotations?: boolean;
   activeVariantState: Record<string, Record<string, string>>;
@@ -61,6 +68,9 @@ export function FlowsCanvas({
   onToolUse,
   mainLevel,
   tagView,
+  pinnedTagIds,
+  onSelectedFlowChange,
+  onSelectedFlowPinnedTagIdsChange,
   showComments,
   showAnnotations,
   activeVariantState,
@@ -103,6 +113,23 @@ export function FlowsCanvas({
   const [isRenamingFlow, setIsRenamingFlow] = useState(false);
   const [renameDraft, setRenameDraft] = useState('');
 
+  const [rightPreview, setRightPreview] = useState<
+    | { kind: 'swimlane'; fid: string }
+    | { kind: 'process'; rootNodeId: string }
+    | { kind: 'descFlow'; key: string; title: string; bodyLines: string[] }
+  >({ kind: 'swimlane', fid: '' });
+  const [descFlowDoc, setDescFlowDoc] = useState<Y.Doc | null>(null);
+  const [descFlowRootId, setDescFlowRootId] = useState<string | null>(null);
+  const [descFlowSelectedNodeId, setDescFlowSelectedNodeId] = useState<string | null>(null);
+  const [descFlowExpandedNodes, setDescFlowExpandedNodes] = useState<Set<string>>(() => new Set());
+  const [descFlowProcessFlowModeNodes, setDescFlowProcessFlowModeNodes] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [descFlowFocusTick, setDescFlowFocusTick] = useState(0);
+
+  const tagStore = useTagStore(doc);
+  const tagNameById = useMemo(() => new Map(tagStore.tags.map((t) => [t.id, t.name])), [tagStore.tags]);
+
   useEffect(() => {
     const yText = doc.getText('nexus');
     const update = () => {
@@ -134,6 +161,7 @@ export function FlowsCanvas({
       if (!selectedFid && flows.length) {
         const fid = (flows[0].metadata as any)?.fid || flows[0].id;
         setSelectedFid(fid);
+        setRightPreview({ kind: 'swimlane', fid });
       }
       if (selectedFid) {
         const loaded = loadFlowTabSwimlane(doc, selectedFid);
@@ -143,6 +171,7 @@ export function FlowsCanvas({
           lanes: base.lanes?.length ? base.lanes : [{ id: 'branch-1', label: 'Lane 1' }],
           stages: base.stages?.length ? base.stages : [{ id: 'stage-1', label: 'Stage 1' }],
           placement: base.placement || {},
+          pinnedTagIds: Array.isArray(base.pinnedTagIds) ? base.pinnedTagIds : [],
         };
         setSwimlane(normalized);
       }
@@ -152,12 +181,34 @@ export function FlowsCanvas({
     return () => yText.unobserve(update);
   }, [doc, selectedFid]);
 
+  useEffect(() => {
+    onSelectedFlowChange?.(selectedFid);
+  }, [selectedFid, onSelectedFlowChange]);
+
+  useEffect(() => {
+    if (!selectedFid) {
+      onSelectedFlowPinnedTagIdsChange?.([]);
+      return;
+    }
+    onSelectedFlowPinnedTagIdsChange?.(Array.isArray(swimlane?.pinnedTagIds) ? (swimlane!.pinnedTagIds as string[]) : []);
+  }, [selectedFid, swimlane, onSelectedFlowPinnedTagIdsChange]);
+
   const selectedRoot = useMemo(() => {
     if (!selectedFid) return null;
     return (
       flowRoots.find((r) => ((r.metadata as any)?.fid || r.id) === selectedFid) || null
     );
   }, [flowRoots, selectedFid]);
+
+  // Keep right-side preview aligned with swimlane selection unless user explicitly picked a different preview.
+  useEffect(() => {
+    if (!selectedFid) return;
+    setRightPreview((prev) => {
+      if (prev.kind === 'swimlane' && prev.fid !== selectedFid) return { kind: 'swimlane', fid: selectedFid };
+      if (prev.kind === 'swimlane' && !prev.fid) return { kind: 'swimlane', fid: selectedFid };
+      return prev;
+    });
+  }, [selectedFid]);
 
   const commitRenameSelectedFlow = useCallback(
     (nextNameRaw: string) => {
@@ -228,6 +279,7 @@ export function FlowsCanvas({
       yText.insert(insertAt, prefix + block);
     });
     setSelectedFid(fid);
+    setRightPreview({ kind: 'swimlane', fid });
     const defaultSwimlane = buildDefaultFlowTabSwimlane(fid);
     saveFlowTabSwimlane(doc, defaultSwimlane);
     setSwimlane(defaultSwimlane);
@@ -299,6 +351,18 @@ export function FlowsCanvas({
     walk(selectedRoot);
     return out;
   }, [selectedRoot, swimlane, effectiveStageIdx]);
+
+  const swimlaneLayoutSpec = useMemo(() => {
+    if (!swimlane) return undefined;
+    return {
+      lanes: swimlane.lanes,
+      stages: swimlane.stages,
+      nodeToLaneId,
+      nodeToStage,
+      insertTarget: { laneId: nextLaneId, stage: nextStage },
+      showInsertTargetUI,
+    };
+  }, [swimlane, nodeToLaneId, nodeToStage, nextLaneId, nextStage, showInsertTargetUI]);
 
   const allFlowNodes = useMemo(() => {
     if (!selectedRoot) return [] as NexusNode[];
@@ -403,11 +467,12 @@ export function FlowsCanvas({
     [doc, nodeMap, selectedRoot],
   );
 
+  const mainMarkdown = doc.getText('nexus').toString();
+
   const allNonFlowTabRoots = useMemo(() => {
-    const yText = doc.getText('nexus');
-    const roots = parseNexusMarkdown(yText.toString());
+    const roots = parseNexusMarkdown(mainMarkdown);
     return roots.filter((r) => !(r.metadata as any)?.flowTab);
-  }, [doc, flowRoots.length, selectedFid]); // re-evaluate when doc changes indirectly via flows
+  }, [mainMarkdown]);
 
   const mainNodeById = useMemo(() => {
     const byId = new Map<string, NexusNode>();
@@ -464,6 +529,38 @@ export function FlowsCanvas({
     const seen = new Set<string>();
     return out.filter((n) => (seen.has(n.id) ? false : (seen.add(n.id), true)));
   }, [allNonFlowTabRoots]);
+
+  // Left panel read-only indexes (main-canvas only; these sections are view-only)
+  const allConditionalFlowDescriptions = useMemo(() => {
+    return parseDimensionDescriptions(mainMarkdown).blocks.filter((b) => b.mode === 'flow');
+  }, [mainMarkdown]);
+  const allStatusFlowDescriptions = useMemo(() => {
+    return parseDataObjectAttributeDescriptions(mainMarkdown).blocks.filter((b) => b.mode === 'flow');
+  }, [mainMarkdown]);
+
+  // Right-panel description-flow doc creation (descriptions live after markdown separator, so we render them in a local doc).
+  useEffect(() => {
+    if (rightPreview.kind !== 'descFlow') {
+      setDescFlowDoc(null);
+      setDescFlowRootId(null);
+      setDescFlowSelectedNodeId(null);
+      setDescFlowExpandedNodes(new Set());
+      setDescFlowProcessFlowModeNodes(new Set());
+      return;
+    }
+    const bodyLines = rightPreview.bodyLines || [];
+    const normalized = bodyLines.join('\n').trimEnd() + '\n';
+    const nextDoc = new Y.Doc();
+    nextDoc.getText('nexus').insert(0, normalized);
+    const roots = parseNexusMarkdown(normalized);
+    const rid = roots[0]?.id || null;
+    setDescFlowDoc(nextDoc);
+    setDescFlowRootId(rid);
+    setDescFlowSelectedNodeId(null);
+    setDescFlowExpandedNodes(new Set());
+    setDescFlowProcessFlowModeNodes(rid ? new Set([rid]) : new Set());
+    setDescFlowFocusTick((t) => t + 1);
+  }, [rightPreview]);
 
   const refPickerRoot = useMemo(() => {
     if (!refPickRootId) return null;
@@ -696,7 +793,7 @@ export function FlowsCanvas({
 
   return (
     <div className="absolute inset-0 flex mac-canvas-bg">
-      <div className="w-[280px] max-w-[35vw] min-w-[200px] m-4 mac-window overflow-hidden shrink">
+      <div className="w-[280px] max-w-[35vw] min-w-[200px] m-4 mac-window overflow-hidden shrink flex flex-col max-h-[calc(100%-80px)]">
         {viewBarSpacer}
         <div className="mac-titlebar">
           <div className="mac-title">Flows</div>
@@ -706,7 +803,7 @@ export function FlowsCanvas({
             </button>
           </div>
         </div>
-        <div className="p-2 overflow-auto">
+        <div className="p-2 overflow-auto flex-1">
           {flowRoots.length === 0 ? (
             <div className="p-2 text-xs text-slate-500">
               No flows yet. Click <span className="font-semibold">New</span> to create one.
@@ -715,26 +812,192 @@ export function FlowsCanvas({
             <div className="flex flex-col gap-1">
               {flowRoots.map((r) => {
                 const fid = (r.metadata as any)?.fid || r.id;
+                const pinned = loadFlowTabSwimlane(doc, fid)?.pinnedTagIds || [];
+                const pinnedNames = pinned.map((id) => tagNameById.get(id) || id);
                 return (
                 <button
                   key={fid}
                   type="button"
-                  onClick={() => setSelectedFid(fid)}
+                  onClick={() => {
+                    setSelectedFid(fid);
+                    setRightPreview({ kind: 'swimlane', fid });
+                    onSelectNode(null);
+                    onSelectNodeIds([]);
+                  }}
                   className={`w-full px-2 py-2 text-left text-xs border mac-double-outline ${
                     selectedFid === fid ? 'mac-shadow-hard mac-fill--hatch' : 'bg-white'
                   }`}
                 >
                   <div className="font-medium truncate">{r.content}</div>
                   <div className="text-[10px] text-slate-400 truncate">{fid}</div>
+                  {pinnedNames.length ? (
+                    <div className="mt-1 relative flex items-center gap-1 flex-wrap group">
+                      {pinned.slice(0, 3).map((id) => {
+                        const name = tagNameById.get(id) || id;
+                        return (
+                          <span
+                            key={`${fid}-pinchip-${id}`}
+                            className="px-1.5 py-0.5 rounded border border-slate-200 bg-white/95 text-[9px] leading-none text-slate-700 shadow-sm max-w-[96px] truncate"
+                          >
+                            {name}
+                          </span>
+                        );
+                      })}
+                      {pinned.length > 3 ? (
+                        <span
+                          className="px-1.5 py-0.5 rounded border border-slate-200 bg-white/95 text-[9px] leading-none text-slate-700 shadow-sm"
+                        >
+                          +{pinned.length - 3}
+                        </span>
+                      ) : null}
+
+                      <div className="pointer-events-none absolute left-0 top-full mt-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+                        <div className="max-w-[260px] whitespace-pre-wrap text-[10px] leading-snug mac-double-outline bg-white px-2 py-1 mac-shadow-hard text-slate-800">
+                          {pinnedNames.join('\n')}
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
                 </button>
               )})}
             </div>
           )}
+
+          {/* Read-only: list main-canvas process node flows */}
+          <div className="mt-3 border-t border-slate-200 pt-3">
+            <details open={true}>
+              <summary className="cursor-pointer text-[11px] font-semibold text-slate-800">
+                Navigations (main canvas process flows) <span className="opacity-60 font-normal">· view only</span>
+              </summary>
+              <div className="mt-2 flex flex-col gap-1">
+                {processFlowRoots.length === 0 ? (
+                  <div className="px-2 py-1 text-[11px] text-slate-500">No process roots found.</div>
+                ) : (
+                  processFlowRoots.map((n) => {
+                    const isActive = rightPreview.kind === 'process' && rightPreview.rootNodeId === n.id;
+                    return (
+                      <button
+                        key={n.id}
+                        type="button"
+                        onClick={() => {
+                          setRightPreview({ kind: 'process', rootNodeId: n.id });
+                          onProcessFlowModeNodesChange((prev) => {
+                            const next = new Set(prev);
+                            next.add(n.id);
+                            return next;
+                          });
+                          onSelectNode(n.id);
+                          onSelectNodeIds([]);
+                        }}
+                        className={`w-full px-2 py-2 text-left text-xs border mac-double-outline ${
+                          isActive ? 'mac-shadow-hard mac-fill--hatch' : 'bg-white'
+                        }`}
+                        title="Show this process flow on the right"
+                      >
+                        <div className="font-medium truncate">{n.content}</div>
+                        <div className="text-[10px] text-slate-400 truncate">{n.id}</div>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            </details>
+          </div>
+
+          {/* Read-only: list flow descriptions from conditionals + data-object status */}
+          <div className="mt-3 border-t border-slate-200 pt-3">
+            <details open={false}>
+              <summary className="cursor-pointer text-[11px] font-semibold text-slate-800">
+                Flow descriptions <span className="opacity-60 font-normal">· view only</span>
+              </summary>
+              <div className="mt-2 space-y-2">
+                <div>
+                  <div className="px-2 py-1 text-[11px] font-medium text-slate-700">
+                    Conditional nodes ({allConditionalFlowDescriptions.length})
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    {allConditionalFlowDescriptions.length === 0 ? (
+                      <div className="px-2 py-1 text-[11px] text-slate-500">No conditional flow descriptions.</div>
+                    ) : (
+                      allConditionalFlowDescriptions.map((b) => {
+                        const key = `cond:${String(b.runningNumber ?? b.id)}`;
+                        const isActive = rightPreview.kind === 'descFlow' && rightPreview.key === key;
+                        return (
+                          <button
+                            key={key}
+                            type="button"
+                            onClick={() => {
+                              setRightPreview({
+                                kind: 'descFlow',
+                                key,
+                                title: b.hubLabel || String(b.id),
+                                bodyLines: b.bodyLines || [],
+                              });
+                              onSelectNode(null);
+                              onSelectNodeIds([]);
+                            }}
+                            className={`w-full px-2 py-2 text-left text-xs border mac-double-outline ${
+                              isActive ? 'mac-shadow-hard mac-fill--hatch' : 'bg-white'
+                            }`}
+                            title="Show this description flow on the right"
+                          >
+                            <div className="font-medium truncate">{b.hubLabel || String(b.id)}</div>
+                            <div className="text-[10px] text-slate-400 truncate">
+                              {b.runningNumber ? `desc:${b.runningNumber}` : String(b.id)}
+                            </div>
+                          </button>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="px-2 py-1 text-[11px] font-medium text-slate-700">
+                    Data-object status ({allStatusFlowDescriptions.length})
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    {allStatusFlowDescriptions.length === 0 ? (
+                      <div className="px-2 py-1 text-[11px] text-slate-500">No status flow descriptions.</div>
+                    ) : (
+                      allStatusFlowDescriptions.map((b) => {
+                        const key = `status:${b.id}`;
+                        const isActive = rightPreview.kind === 'descFlow' && rightPreview.key === key;
+                        return (
+                          <button
+                            key={key}
+                            type="button"
+                            onClick={() => {
+                              setRightPreview({
+                                kind: 'descFlow',
+                                key,
+                                title: b.label || b.id,
+                                bodyLines: b.bodyLines || [],
+                              });
+                              onSelectNode(null);
+                              onSelectNodeIds([]);
+                            }}
+                            className={`w-full px-2 py-2 text-left text-xs border mac-double-outline ${
+                              isActive ? 'mac-shadow-hard mac-fill--hatch' : 'bg-white'
+                            }`}
+                            title="Show this status flow on the right"
+                          >
+                            <div className="font-medium truncate">{b.label || b.id}</div>
+                            <div className="text-[10px] text-slate-400 truncate">{b.id}</div>
+                          </button>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+              </div>
+            </details>
+          </div>
         </div>
       </div>
 
       <div className="flex-1 relative m-4 ml-0">
-        {selectedRoot ? (
+        {rightPreview.kind === 'swimlane' && selectedRoot ? (
           <div className="absolute inset-0 flex flex-col">
             <div className="shrink-0 mac-window overflow-hidden">
               <div className="mac-titlebar">
@@ -799,6 +1062,7 @@ export function FlowsCanvas({
                   onToolUse={onToolUse}
                   mainLevel={mainLevel}
                   tagView={tagView}
+                  pinnedTagIds={swimlane?.pinnedTagIds || []}
                   showComments={showComments}
                   showAnnotations={showAnnotations}
                   initialFitToContent
@@ -826,14 +1090,7 @@ export function FlowsCanvas({
                   referencedNodeIds={referencedNodeIds}
                   focusTick={canvasFocusTick}
                   onOpenComments={onOpenComments}
-                  swimlaneLayout={{
-                    lanes: swimlane.lanes,
-                    stages: swimlane.stages,
-                    nodeToLaneId,
-                    nodeToStage,
-                    insertTarget: { laneId: nextLaneId, stage: nextStage },
-                    showInsertTargetUI,
-                  }}
+                  swimlaneLayout={swimlaneLayoutSpec}
                   swimlaneActions={{
                     onSetInsertTarget: (t) => {
                       setNextLaneId(t.laneId);
@@ -950,19 +1207,18 @@ export function FlowsCanvas({
             </div>
 
             {/* Compact top-right inspector for lane/stage assignment */}
-            {swimlane ? (
+            {swimlane && selectedNode ? (
               <div className="absolute right-4 top-4 z-50 pointer-events-none">
                 <div
-                  className="mac-window w-[260px] overflow-hidden pointer-events-auto"
+                  className="mac-window w-[260px] overflow-hidden pointer-events-auto flex flex-col max-h-[calc(100%-80px)]"
                   data-safe-panel="right"
                   data-safe-panel-view="flows"
                 >
                   <div className="mac-titlebar">
                     <div className="mac-title">Node</div>
                   </div>
-                  <div className="p-3 space-y-2">
-                    {selectedNode ? (
-                      <>
+                  <div className="p-3 space-y-2 overflow-auto flex-1">
+                    <>
                         <div className="min-w-0">
                           <div className="text-xs font-semibold truncate">{selectedNode.content}</div>
                           {selectedNodeRefSummary ? (
@@ -984,6 +1240,10 @@ export function FlowsCanvas({
                               Unassign
                             </button>
                           ) : null}
+                        </div>
+
+                        <div className="pt-2 border-t border-slate-200">
+                          <NodeTagsEditor doc={doc} node={selectedNode} compact />
                         </div>
 
                         <div className="space-y-1">
@@ -1023,10 +1283,7 @@ export function FlowsCanvas({
                             ))}
                           </select>
                         </div>
-                      </>
-                    ) : (
-                      <div className="text-xs text-slate-600">Select a node to edit lane/stage.</div>
-                    )}
+                    </>
                   </div>
                 </div>
               </div>
@@ -1151,6 +1408,98 @@ export function FlowsCanvas({
               </div>
             ) : null}
 
+          </div>
+        ) : rightPreview.kind === 'process' ? (
+          <div className="absolute inset-0 flex flex-col">
+            <div className="shrink-0 mac-window overflow-hidden">
+              <div className="mac-titlebar">
+                <div className="mac-title">
+                  {mainNodeById.get(rightPreview.rootNodeId)?.content || rightPreview.rootNodeId}
+                </div>
+              </div>
+              <div className="mac-toolstrip">
+                <div className="text-xs font-semibold text-slate-800 truncate">
+                  Process flow (main canvas)
+                </div>
+              </div>
+            </div>
+            <div className="flex-1 relative">
+              <NexusCanvas
+                doc={doc}
+                activeTool={activeTool}
+                onToolUse={onToolUse}
+                mainLevel={mainLevel}
+                tagView={tagView}
+                pinnedTagIds={pinnedTagIds}
+                showComments={showComments}
+                showAnnotations={showAnnotations}
+                initialFitToContent
+                activeVariantState={activeVariantState}
+                onActiveVariantChange={onActiveVariantChange}
+                viewportResetTick={viewportResetTick}
+                selectedNodeId={selectedNodeId}
+                onSelectNode={onSelectNode}
+                selectedNodeIds={selectedNodeIds}
+                onSelectNodeIds={onSelectNodeIds}
+                expandedNodes={expandedNodes}
+                onExpandedNodesChange={onExpandedNodesChange}
+                processFlowModeNodes={processFlowModeNodes}
+                onProcessFlowModeNodesChange={onProcessFlowModeNodesChange}
+                getRunningNumber={getRunningNumber}
+                getProcessRunningNumber={getProcessRunningNumber}
+                presence={presence}
+                presenceView="flows"
+                rootFocusId={rightPreview.rootNodeId}
+                hideShowFlowToggle
+                focusTick={canvasFocusTick}
+                onOpenComments={onOpenComments}
+              />
+            </div>
+          </div>
+        ) : rightPreview.kind === 'descFlow' ? (
+          <div className="absolute inset-0 flex flex-col">
+            <div className="shrink-0 mac-window overflow-hidden">
+              <div className="mac-titlebar">
+                <div className="mac-title">{rightPreview.title}</div>
+              </div>
+              <div className="mac-toolstrip">
+                <div className="text-xs font-semibold text-slate-800 truncate">Description flow (view only)</div>
+              </div>
+            </div>
+            <div className="flex-1 relative">
+              {descFlowDoc && descFlowRootId ? (
+                <NexusCanvas
+                  doc={descFlowDoc}
+                  activeTool="select"
+                  onToolUse={() => {}}
+                  mainLevel={1}
+                  tagView={tagView}
+                  pinnedTagIds={[]}
+                  showComments={false}
+                  showAnnotations={false}
+                  initialFitToContent
+                  activeVariantState={{}}
+                  onActiveVariantChange={() => {}}
+                  selectedNodeId={descFlowSelectedNodeId}
+                  onSelectNode={setDescFlowSelectedNodeId}
+                  selectedNodeIds={[]}
+                  onSelectNodeIds={() => {}}
+                  expandedNodes={descFlowExpandedNodes}
+                  onExpandedNodesChange={setDescFlowExpandedNodes}
+                  processFlowModeNodes={descFlowProcessFlowModeNodes}
+                  onProcessFlowModeNodesChange={setDescFlowProcessFlowModeNodes}
+                  getRunningNumber={() => undefined}
+                  getProcessRunningNumber={() => undefined}
+                  hideShowFlowToggle
+                  rootFocusId={descFlowRootId}
+                  focusTick={descFlowFocusTick}
+                />
+              ) : (
+                <div className="absolute inset-0 flex items-center justify-center text-xs text-slate-500">
+                  Flow description is empty (nothing to render).
+                </div>
+              )}
+            </div>
           </div>
         ) : (
           <div className="absolute inset-0 flex items-center justify-center text-xs text-slate-500">

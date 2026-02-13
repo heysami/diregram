@@ -41,6 +41,8 @@ import { ImportMarkdownModal } from '@/components/ImportMarkdownModal';
 import { ensureLocalFileStore, type LocalFile } from '@/lib/local-file-store';
 import { loadFileSnapshot, saveFileSnapshot } from '@/lib/local-doc-snapshots';
 import { useAuth } from '@/hooks/use-auth';
+import { usePinnedTags } from '@/hooks/use-pinned-tags';
+import { useToolbarPinnedTags } from '@/hooks/use-toolbar-pinned-tags';
 import { Database, FlaskConical, LayoutDashboard, Network, Workflow } from 'lucide-react';
 
 type ActiveFileMeta = {
@@ -91,6 +93,15 @@ export function EditorApp() {
     visibleTagIds: [],
     highlightedTagIds: [],
   });
+
+  const pinnedTags = usePinnedTags(doc);
+  const pinnedTagIds = pinnedTags.tagIds || [];
+  const { toolbarPinnedTagIds, onPinnedTagIdsChange, onSelectedFlowChange, onSelectedFlowPinnedTagIdsChange } =
+    useToolbarPinnedTags({
+      doc,
+      activeView,
+      globalPinnedTagIds: pinnedTagIds,
+    });
 
   useEffect(() => {
     // Clear when switching views so we don't show stale coords.
@@ -1104,6 +1115,9 @@ export function EditorApp() {
               onToolUse={() => setActiveTool('select')}
               mainLevel={mainLevel}
               tagView={tagView}
+              pinnedTagIds={pinnedTagIds}
+              onSelectedFlowChange={onSelectedFlowChange}
+              onSelectedFlowPinnedTagIdsChange={onSelectedFlowPinnedTagIdsChange}
               showComments={showComments}
               showAnnotations={showAnnotations}
               activeVariantState={activeVariantState}
@@ -1179,6 +1193,7 @@ export function EditorApp() {
                 if (ids.length > 0) setSelectedExpandedGridNode(null);
               }}
               tagView={tagView}
+              pinnedTagIds={pinnedTagIds}
               activeVariantState={activeVariantState}
               onActiveVariantChange={setActiveVariantState}
               expandedNodes={expandedNodes}
@@ -1316,6 +1331,8 @@ export function EditorApp() {
             onMainLevelChange={setMainLevel}
             tagView={tagView}
             onTagViewChange={setTagView}
+            pinnedTagIds={toolbarPinnedTagIds}
+            onPinnedTagIdsChange={onPinnedTagIdsChange}
             showComments={showComments}
             onShowCommentsChange={(next) => {
               setShowComments(next);
