@@ -225,6 +225,59 @@ export function NexusCanvas({
   const initializedRef = useRef(false);
   const lastViewportResetTickRef = useRef<number | undefined>(viewportResetTick);
   const pendingViewportFitRef = useRef(false);
+  const fitToContentRef = useRef<(opts?: { resetZoom?: boolean; fitZoom?: boolean }) => void>(() => {});
+
+  const getSafeViewport = useCallback(() => {
+    const el = containerRef.current;
+    if (!el) return null;
+    const rect = el.getBoundingClientRect();
+    let safeLeft = rect.left;
+    let safeRight = rect.right;
+    let safeTop = rect.top;
+    let safeBottom = rect.bottom;
+
+    const overlapsY = (a: DOMRect, b: DOMRect) => Math.min(a.bottom, b.bottom) > Math.max(a.top, b.top);
+
+    const leftPanel = document.querySelector('[data-editor-left-panel]') as HTMLElement | null;
+    if (leftPanel) {
+      const pr = leftPanel.getBoundingClientRect();
+      if (overlapsY(rect, pr)) safeLeft = Math.max(safeLeft, pr.right);
+    }
+    const rightPanel = document.querySelector('[data-editor-right-panel]') as HTMLElement | null;
+    if (rightPanel) {
+      const pr = rightPanel.getBoundingClientRect();
+      if (overlapsY(rect, pr)) safeRight = Math.min(safeRight, pr.left);
+    }
+
+    if (safeRight - safeLeft < 80) {
+      safeLeft = rect.left;
+      safeRight = rect.right;
+    }
+
+    const width = Math.max(1, safeRight - safeLeft);
+    const height = Math.max(1, safeBottom - safeTop);
+    const centerX = (safeLeft + safeRight) / 2 - rect.left; // canvas-local px
+    const centerY = (safeTop + safeBottom) / 2 - rect.top; // canvas-local px
+
+    return { rect, width, height, centerX, centerY };
+  }, []);
+
+  // Broadcast current transform so the bottom toolbar can show x/y tooltip.
+  useEffect(() => {
+    // Avoid crashing server-side (this file is client, but be safe).
+    if (typeof window === 'undefined') return;
+    const round2 = (n: number) => Math.round(n * 100) / 100;
+    window.dispatchEvent(
+      new CustomEvent('diregram:viewTransform', {
+        detail: {
+          view: effectivePresenceView,
+          x: Math.round(offset.x),
+          y: Math.round(offset.y),
+          z: round2(scale),
+        },
+      }),
+    );
+  }, [effectivePresenceView, offset.x, offset.y, scale]);
 
   // One-time fit+center on mount if requested by the view.
   useEffect(() => {
@@ -245,6 +298,21 @@ export function NexusCanvas({
       initializedRef.current = false;
     }
   }, [viewportResetTick]);
+
+  // Explicit "center" tool from the bottom toolbar (no zoom change).
+  useEffect(() => {
+    const onTool = (evt: Event) => {
+      const e = evt as CustomEvent<{ tool?: string; view?: string }>;
+      const tool = e.detail?.tool;
+      const view = e.detail?.view;
+      if (tool !== 'center') return;
+      if (typeof view === 'string' && view !== effectivePresenceView) return;
+      // Classic behavior: fit + zoom to cover everything.
+      fitToContentRef.current({ fitZoom: true });
+    };
+    window.addEventListener('diregram:canvasTool', onTool as EventListener);
+    return () => window.removeEventListener('diregram:canvasTool', onTool as EventListener);
+  }, [effectivePresenceView]);
   
   // Drag State
   const [draggedNodeId, setDraggedNodeId] = useState<string | null>(null);
@@ -276,6 +344,12 @@ export function NexusCanvas({
     kind: 'child' | 'sibling';
     fromNodeId: string;
   } | null>(null);
+  const pointerCreateLineIndexRef = useRef<number | null>(null);
+  const pendingCenterNodeIdRef = useRef<string | null>(null);
+  // Pending action resolution can race with Yjs -> parse -> roots -> rawNodeMap updates.
+  // We retry briefly so Enter-from-edit reliably enters edit mode on the new node.
+  const [pendingActionRetryTick, setPendingActionRetryTick] = useState(0);
+  const pendingActionRetryRef = useRef(0);
   const [swimlaneRename, setSwimlaneRename] = useState<
     | { kind: 'lane'; laneId: string; value: string; left: number; top: number; width: number }
     | { kind: 'stage'; stageIndex: number; value: string; left: number; top: number; width: number }
@@ -1400,6 +1474,13 @@ export function NexusCanvas({
       // looks like flicker/looping.
       setLayout((prev) => (isSameLayout(prev, newLayout) ? prev : newLayout));
       if ((pendingViewportFitRef.current || !initializedRef.current) && visualTree.length > 0 && containerRef.current) {
+          // If we have a pending per-node center (new node), never override it with whole-graph fit.
+          if (pendingCenterNodeIdRef.current) {
+            pendingViewportFitRef.current = false;
+            initializedRef.current = true;
+            return;
+          }
+
           const { clientWidth, clientHeight } = containerRef.current;
           let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
           Object.values(newLayout).forEach((l) => {
@@ -1480,15 +1561,29 @@ export function NexusCanvas({
       if (pendingAction !== null) {
           const node = Array.from(rawNodeMap.values()).find(n => n.lineIndex === pendingAction.lineIndex);
           if (node) {
-              if (pendingAction.type === 'edit' && lastCreateRef.current?.lineIndex === pendingAction.lineIndex) {
-                  const meta = lastCreateRef.current;
-                  lastCreateRef.current = null;
-                  onNodeCreated?.({
-                    nodeId: node.id,
-                    parentId: node.parentId,
-                    kind: meta.kind,
-                    fromNodeId: meta.fromNodeId,
-                  });
+              pendingActionRetryRef.current = 0;
+              const createdViaEnterTab = pendingAction.type === 'edit' && lastCreateRef.current?.lineIndex === pendingAction.lineIndex;
+              const createdViaPointer = pendingAction.type === 'edit' && pointerCreateLineIndexRef.current === pendingAction.lineIndex;
+              const shouldCenter = createdViaEnterTab || createdViaPointer;
+
+              if (createdViaEnterTab) {
+                const meta = lastCreateRef.current!;
+                lastCreateRef.current = null;
+                onNodeCreated?.({
+                  nodeId: node.id,
+                  parentId: node.parentId,
+                  kind: meta.kind,
+                  fromNodeId: meta.fromNodeId,
+                });
+              }
+              if (createdViaPointer) {
+                pointerCreateLineIndexRef.current = null;
+              }
+              if (shouldCenter) {
+                pendingCenterNodeIdRef.current = node.id;
+                // Prevent an in-flight auto-fit from overriding the per-node center.
+                pendingViewportFitRef.current = false;
+                initializedRef.current = true;
               }
               if (pendingAction.type === 'edit') {
                   startEditing(node.id, undefined, pendingAction.selectAll); 
@@ -1498,14 +1593,47 @@ export function NexusCanvas({
               }
               setPendingAction(null);
           } else {
+              // `rawNodeMap` may not yet include the newly inserted line immediately after a Yjs write.
+              // Retry briefly before giving up (prevents "Enter did nothing" feeling).
+              if (pendingActionRetryRef.current < 25) {
+                pendingActionRetryRef.current += 1;
+                const raf = window.requestAnimationFrame(() => setPendingActionRetryTick((t) => t + 1));
+                return () => window.cancelAnimationFrame(raf);
+              }
+
               // If a create/move operation inserted a line outside the currently rendered subtree
               // (e.g. Flow tab `rootFocusId`), we may not be able to resolve the target node here.
-              // Never let `pendingAction` get stuck, or Enter/Tab flows can feel "broken".
+              // Never let `pendingAction` get stuck.
+              pendingActionRetryRef.current = 0;
               lastCreateRef.current = null;
+              pointerCreateLineIndexRef.current = null;
               setPendingAction(null);
           }
       }
-  }, [rawNodeMap, pendingAction, onSelectNode, onNodeCreated]);
+  }, [rawNodeMap, pendingAction, pendingActionRetryTick, onSelectNode, onNodeCreated]);
+
+  // If a node was just created, center the viewport on it once we have layout for it.
+  useEffect(() => {
+    const targetId = pendingCenterNodeIdRef.current;
+    if (!targetId) return;
+    // Use FINAL layout coordinates so the node stays centered after animations settle.
+    // (Using animatedLayout can center on an intermediate position and then "drift".)
+    const l = layout[targetId] || animatedLayout[targetId];
+    const safe = getSafeViewport();
+    if (!l || !safe) return;
+    const cx = l.x + l.width / 2;
+    const cy = l.y + l.height / 2;
+    const targetScreenX = safe.centerX;
+    const targetScreenY = safe.centerY;
+    setOffset({
+      x: targetScreenX - cx * scale,
+      y: targetScreenY - cy * scale,
+    });
+    // Prevent any pending "fit to content" requests from overriding this.
+    pendingViewportFitRef.current = false;
+    initializedRef.current = true;
+    pendingCenterNodeIdRef.current = null;
+  }, [animatedLayout, layout, scale, getSafeViewport]);
 
   // External connector label editor request (Flow tab uses this to enforce detail labels on lane/stage transitions).
   const lastConnectorEditKeyRef = useRef<string | null>(null);
@@ -1734,7 +1862,8 @@ export function NexusCanvas({
         const yText = doc.getText('nexus');
         const currentText = yText.toString();
         const lines = currentText.split('\n');
-        const prefix = currentText && !currentText.endsWith('\n') ? '\n' : '';
+        const endsWithNewline = !!currentText && currentText.endsWith('\n');
+        const prefix = currentText && !endsWithNewline ? '\n' : '';
         const newText = `${currentText}${prefix}Root Node`;
         
         doc.transact(() => {
@@ -1742,8 +1871,10 @@ export function NexusCanvas({
             yText.insert(0, newText);
         });
         
-        const newLineIndex = currentText ? lines.length : 0;
+        const newLineIndex = !currentText ? 0 : endsWithNewline ? Math.max(0, lines.length - 1) : lines.length;
+        pointerCreateLineIndexRef.current = newLineIndex;
         setPendingAction({ lineIndex: newLineIndex, type: 'edit', selectAll: true });
+        if (containerRef.current) containerRef.current.focus();
         onToolUse?.();
         return;
     }
@@ -2011,23 +2142,11 @@ export function NexusCanvas({
     if (!node) return;
 
     if (e.key === 'Enter' && !e.shiftKey) {
+        // Editing mode: Enter commits text only (does NOT create nodes).
         e.preventDefault();
         commitEdit(editValue);
-        // Creating a new sibling can cause a re-layout; temporarily suppress position animation
-        suppressAnimation();
-        const isFocusedRoot = !!rootFocusId && editingNodeId === rootFocusId;
-        const action = isFocusedRoot
-          ? structure.createChild(node, rawNodeMap, node.activeVariantId)
-          : structure.createSibling(node, rawNodeMap, node.activeVariantId); // Use active variant logic
-        if(action) {
-          lastCreateRef.current = {
-            lineIndex: action.lineIndex,
-            kind: isFocusedRoot ? 'child' : 'sibling',
-            fromNodeId: node.id,
-          };
-          setPendingAction(action);
-        }
         setEditingNodeId(null);
+        setPendingAction({ lineIndex: node.lineIndex, type: 'select' });
     } 
     // Shift+Enter allows newline, don't prevent default
     else if (e.key === 'Tab') {
@@ -2189,7 +2308,6 @@ export function NexusCanvas({
             Number.isFinite(l.height),
         );
       if (entries.length === 0) {
-        topToast.show('Nothing to center (no layout yet).');
         return;
       }
       let minX = Infinity,
@@ -2230,43 +2348,8 @@ export function NexusCanvas({
     },
     [flattenedNodes, isNodeRendered, layout, scale, topToast],
   );
-
-  const viewportLabel = useMemo(() => {
-    const ox = Number.isFinite(offset.x) ? Math.round(offset.x) : NaN;
-    const oy = Number.isFinite(offset.y) ? Math.round(offset.y) : NaN;
-    const z = Number.isFinite(scale) ? Math.round(scale * 100) / 100 : NaN;
-    return `x:${ox} y:${oy} z:${z}`;
-  }, [offset.x, offset.y, scale]);
-
-  const layoutBoundsLabel = useMemo(() => {
-    const ids = new Set<string>();
-    flattenedNodes.forEach((n) => {
-      if (isNodeRendered(n)) ids.add(n.id);
-    });
-    const entries = Array.from(ids)
-      .map((id) => layout[id])
-      .filter(
-        (l): l is NodeLayout =>
-          !!l &&
-          Number.isFinite(l.x) &&
-          Number.isFinite(l.y) &&
-          Number.isFinite(l.width) &&
-          Number.isFinite(l.height),
-      );
-    if (entries.length === 0) return 'bounds: none';
-    let minX = Infinity,
-      minY = Infinity,
-      maxX = -Infinity,
-      maxY = -Infinity;
-    entries.forEach((l) => {
-      minX = Math.min(minX, l.x);
-      minY = Math.min(minY, l.y);
-      maxX = Math.max(maxX, l.x + l.width);
-      maxY = Math.max(maxY, l.y + l.height);
-    });
-    const r = (n: number) => Math.round(n);
-    return `bounds: (${r(minX)},${r(minY)})-(${r(maxX)},${r(maxY)}) nodes:${entries.length}`;
-  }, [flattenedNodes, isNodeRendered, layout]);
+  // Allow earlier effects to invoke the latest fitToContent callback.
+  fitToContentRef.current = fitToContent;
 
   return (
     <div 
@@ -2354,18 +2437,6 @@ export function NexusCanvas({
       onWheel={handleWheel}
       tabIndex={0} 
     >
-      {/* Empty-state debug hint (helps diagnose "imported but canvas is empty") */}
-      {roots.length === 0 ? (
-        <div className="pointer-events-none absolute left-4 top-4 z-50">
-          <div className="rounded-md border border-amber-200 bg-white/95 px-3 py-2 text-[12px] text-amber-900 shadow-sm">
-            <div className="font-semibold">No nodes parsed for canvas.</div>
-            <div className="mt-1 text-amber-800">
-              This usually means the markdown starts with a lone <span className="font-mono">---</span>, or the whole
-              document was pasted wrapped in an outer <span className="font-mono">```</span> fence.
-            </div>
-          </div>
-        </div>
-      ) : null}
       {roots.length > 0 && Object.keys(layout).length === 0 ? (
         <div className="pointer-events-none absolute left-4 top-4 z-50">
           <div className="rounded-md border border-amber-200 bg-white/95 px-3 py-2 text-[12px] text-amber-900 shadow-sm">
@@ -2407,22 +2478,6 @@ export function NexusCanvas({
        ) : null}
        <h3 className="absolute top-4 left-4 text-xs font-bold uppercase tracking-wider text-gray-500 z-10 select-none">Visual Map</h3>
 
-       {/* View controls (always available): recover when viewport is far from content */}
-       <div className="pointer-events-auto absolute top-3 right-3 z-20 flex items-center gap-2">
-         <button
-           type="button"
-           className="mac-btn px-2 py-1 text-xs"
-           title={`Center / fit to content — ${viewportLabel} — ${layoutBoundsLabel}`}
-           onClick={(e) => {
-             e.preventDefault();
-             e.stopPropagation();
-            fitToContent({ fitZoom: true });
-           }}
-         >
-           <Move size={12} />
-           Center <span className="ml-1 font-mono text-[10px] text-slate-600">{viewportLabel}</span>
-         </button>
-       </div>
        {/* Marquee overlay is drawn in world-space (inside viewport SVG), see below. */}
       
       <div 

@@ -9,7 +9,8 @@ import { useAuth } from '@/hooks/use-auth';
 
 export default function WorkspaceClient() {
   const router = useRouter();
-  const { configured } = useAuth();
+  const { configured, user } = useAuth();
+  const supabaseMode = configured && !user?.isLocalAdmin;
 
   return (
     <RequireAuth>
@@ -29,7 +30,7 @@ export default function WorkspaceClient() {
         </header>
 
         <div className="flex-1 overflow-auto p-6">
-          {configured ? <WorkspaceBrowserSupabase /> : <WorkspaceBrowser />}
+          {supabaseMode ? <WorkspaceBrowserSupabase /> : <WorkspaceBrowser />}
         </div>
       </main>
     </RequireAuth>

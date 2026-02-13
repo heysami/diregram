@@ -4,7 +4,14 @@ import { useRouter } from 'next/navigation';
 import { useAuth } from '@/hooks/use-auth';
 import { LogOut, UserRound } from 'lucide-react';
 
-export function AuthStatus() {
+type Props = {
+  /** Optional: show presence count in the account button (e.g. "you +1"). */
+  onlineCount?: number;
+  /** Optional: show connection indicator inside the account button. */
+  status?: string;
+};
+
+export function AuthStatus({ onlineCount, status }: Props) {
   const router = useRouter();
   const { configured, supabase, ready, user, signOut } = useAuth();
 
@@ -37,8 +44,19 @@ export function AuthStatus() {
         onClick={() => router.push('/account')}
         title="Account"
       >
+        {typeof status === 'string' ? (
+          <span
+            className="inline-block w-2.5 h-2.5 border border-black"
+            style={{ background: status === 'connected' ? '#000' : '#fff' }}
+            aria-label={status}
+            title={status}
+          />
+        ) : null}
         <UserRound size={14} />
-        <span>{user.email || 'Account'}</span>
+        <span>
+          {(user.email || 'Account') +
+            (typeof onlineCount === 'number' && onlineCount > 1 ? ` +${onlineCount - 1}` : '')}
+        </span>
       </button>
       <button
         type="button"

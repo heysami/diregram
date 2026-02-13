@@ -7,6 +7,7 @@ import { loadDataObjects } from '@/lib/data-object-storage';
 import { DataObjectSearchSelect } from '@/components/DataObjectSearchSelect';
 import { DataObjectAttributeMultiSelect } from '@/components/DataObjectAttributeMultiSelect';
 import type { ToolType } from '@/components/Toolbar';
+import type { PresenceController } from '@/lib/presence';
 import { buildSystemFlowBoxCommentTargetKey, getThread, observeComments } from '@/lib/node-comments';
 import { CELL_PX, GAP_PX, autoSide, clamp, measureLabel, oppositeSide, rectsOverlap, snapPx } from '@/components/systemflow/systemflow-geometry';
 import {
@@ -34,6 +35,7 @@ export function SystemFlowEditor({
   showComments,
   showAnnotations,
   onOpenComments,
+  presence,
 }: {
   doc: Y.Doc;
   sfid: string;
@@ -41,6 +43,7 @@ export function SystemFlowEditor({
   showComments: boolean;
   showAnnotations: boolean;
   onOpenComments?: (info: { targetKey: string; targetLabel?: string; scrollToThreadId?: string }) => void;
+  presence?: PresenceController | null;
 }) {
   const [state, setState] = useState<SystemFlowState>(() => loadSystemFlowStateFromDoc(doc, sfid));
   const [mode, setMode] = useState<Mode>('select');
@@ -697,6 +700,20 @@ export function SystemFlowEditor({
                   backgroundImage:
                     'linear-gradient(to right, rgba(148,163,184,0.25) 1px, transparent 1px), linear-gradient(to bottom, rgba(148,163,184,0.25) 1px, transparent 1px)',
                 }}
+                onMouseMove={(e) => {
+                  if (!presence) return;
+                  const el = containerRef.current;
+                  if (!el) return;
+                  const r = el.getBoundingClientRect();
+                  const s = scaleRef.current || 1;
+                  // Cursor is stored in unscaled grid pixel space so it can be rendered inside this scaled container.
+                  const x = (e.clientX - r.left) / s;
+                  const y = (e.clientY - r.top) / s;
+                  presence.setCursor({ x, y });
+                }}
+                onMouseLeave={() => {
+                  if (presence) presence.setCursor(null);
+                }}
                 onMouseDown={(e) => {
                   // Clicking empty grid area should deselect (show Steps).
                   // Boxes/links/handles stopPropagation on their own handlers, but we also guard
@@ -713,6 +730,26 @@ export function SystemFlowEditor({
                   e.stopPropagation();
                 }}
               >
+                {/* Multiplayer cursors (render in container space; scale transform applies automatically) */}
+                {presence?.peers?.length ? (
+                  <div className="pointer-events-none absolute inset-0 z-50">
+                    {presence.peers
+                      .filter((p) => p.state?.view === 'systemFlow' && p.state?.cursor)
+                      .map((p) => {
+                        const c = p.state.cursor!;
+                        return (
+                          <div key={`sf-cursor-${p.clientId}`} className="absolute" style={{ left: c.x, top: c.y }}>
+                            <div className="w-3 h-3 border border-black bg-white mac-shadow-hard" />
+                            <div
+                              className={`mt-1 inline-flex items-center gap-1 px-2 py-0.5 text-[10px] mac-double-outline ${p.state.user.badgeClass}`}
+                            >
+                              <span className="font-semibold">{p.state.user.name}</span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                  </div>
+                ) : null}
             {/* Zones (render under boxes) */}
             {zonesWithRects.map(({ z, minX, minY, maxX, maxY }) => {
               const { left, top } = gridToPx(minX, minY);

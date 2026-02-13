@@ -41,6 +41,7 @@ import { ImportMarkdownModal } from '@/components/ImportMarkdownModal';
 import { ensureLocalFileStore, type LocalFile } from '@/lib/local-file-store';
 import { loadFileSnapshot, saveFileSnapshot } from '@/lib/local-doc-snapshots';
 import { useAuth } from '@/hooks/use-auth';
+import { Database, FlaskConical, LayoutDashboard, Network, Workflow } from 'lucide-react';
 
 type ActiveFileMeta = {
   id: string;
@@ -67,6 +68,7 @@ export function EditorApp() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { configured, ready, user } = useAuth();
+  const supabaseMode = configured && !user?.isLocalAdmin;
 
   const [activeFile, setActiveFile] = useState<ActiveFileMeta | null>(null);
   const activeRoomName = activeFile?.roomName || 'nexus-demo';
@@ -83,11 +85,30 @@ export function EditorApp() {
     SelectedExpandedGridNode | SelectedExpandedGridNodes | null
   >(null);
   const [activeView, setActiveView] = useState<AppView>('main');
+  const [centerTransformLabel, setCenterTransformLabel] = useState<string>('');
   const [tagView, setTagView] = useState<TagViewState>({
     activeGroupId: 'tg-ungrouped',
     visibleTagIds: [],
     highlightedTagIds: [],
   });
+
+  useEffect(() => {
+    // Clear when switching views so we don't show stale coords.
+    setCenterTransformLabel('');
+    const onTransform = (evt: Event) => {
+      const e = evt as CustomEvent<{ view?: string; x?: number; y?: number; z?: number }>;
+      const d = e.detail;
+      if (!d || typeof d.view !== 'string') return;
+      if (d.view !== activeView) return;
+      const x = typeof d.x === 'number' ? d.x : NaN;
+      const y = typeof d.y === 'number' ? d.y : NaN;
+      const z = typeof d.z === 'number' ? d.z : NaN;
+      if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return;
+      setCenterTransformLabel(`x:${Math.round(x)} y:${Math.round(y)} z:${Math.round(z * 100) / 100}`);
+    };
+    window.addEventListener('diregram:viewTransform', onTransform as EventListener);
+    return () => window.removeEventListener('diregram:viewTransform', onTransform as EventListener);
+  }, [activeView]);
 
   // Lifted State: Map<HubNodeId, SelectedConditions> (Record<key, value>)
   const [activeVariantState, setActiveVariantState] = useState<Record<string, Record<string, string>>>({});
@@ -169,7 +190,7 @@ export function EditorApp() {
     let cancelled = false;
 
     // Local mode
-    if (!configured) {
+    if (!supabaseMode) {
       const store = ensureLocalFileStore();
       const file = store.files.find((f) => f.id === fileIdFromUrl) || null;
       if (!file) {
@@ -247,7 +268,7 @@ export function EditorApp() {
     return () => {
       cancelled = true;
     };
-  }, [searchParams, configured, ready, user?.id, user?.email, router]);
+  }, [searchParams, supabaseMode, ready, user?.id, user?.email, router]);
 
   // Persistence:
   // - Local-only mode: localStorage snapshot
@@ -285,7 +306,7 @@ export function EditorApp() {
         saveTimerRef.current = null;
         const next = yText.toString();
         saveFileSnapshot(fileId, next);
-        if (configured) {
+        if (supabaseMode) {
           import('@/lib/supabase').then(({ createClient }) => {
             const supabase = createClient();
             if (!supabase) return;
@@ -306,7 +327,7 @@ export function EditorApp() {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (provider as any).off?.('synced', onSynced);
     };
-  }, [doc, provider, activeFile?.id, configured]);
+  }, [doc, provider, activeFile?.id, supabaseMode]);
 
   // Keep presence view in sync with the active app view.
   useEffect(() => {
@@ -952,17 +973,19 @@ export function EditorApp() {
     isLoadingDimensionDescriptions.current = false;
   };
 
+  const viewBarWidthClass =
+    activeView === 'testing'
+      ? 'w-[320px] max-w-[38vw] min-w-[220px]'
+      : 'w-[280px] max-w-[35vw] min-w-[200px]';
+
   return (
     <main className="mac-desktop flex h-screen flex-col">
       <AppHeader
-        activeView={activeView}
-        onChangeView={changeView}
         status={status}
         onClearDatabase={clearDatabase}
         onOpenImportMarkdown={() => setShowImportMarkdown(true)}
         activeFileName={activeFile?.name}
         onlineCount={presence ? 1 + presence.peers.length : undefined}
-        onGoHome={() => router.push('/workspace')}
       />
 
       <ImportMarkdownModal
@@ -984,6 +1007,77 @@ export function EditorApp() {
       />
 
       <div className="flex-1 overflow-hidden relative">
+        {/* View bar: overlays top-left, above left panels only (doesn't shrink right side). */}
+        <div className="absolute left-4 top-2 z-50 pointer-events-auto">
+          <div className={`${viewBarWidthClass} inline-flex items-center justify-between mac-double-outline bg-white px-2 py-1`}>
+              <div className="relative group">
+                <button
+                  type="button"
+                  className={`mac-btn h-8 w-8 flex items-center justify-center ${activeView === 'main' ? 'mac-btn--primary' : ''}`}
+                  onClick={() => changeView('main')}
+                  aria-label="Canvas"
+                >
+                  <Network size={16} />
+                </button>
+                <span className="mac-tooltip absolute left-1/2 top-[calc(100%+6px)] -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">
+                  Canvas
+                </span>
+              </div>
+              <div className="relative group">
+                <button
+                  type="button"
+                  className={`mac-btn h-8 w-8 flex items-center justify-center ${activeView === 'flows' ? 'mac-btn--primary' : ''}`}
+                  onClick={() => changeView('flows')}
+                  aria-label="Flow (F)"
+                >
+                  <Workflow size={16} />
+                </button>
+                <span className="mac-tooltip absolute left-1/2 top-[calc(100%+6px)] -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">
+                  Flow (F)
+                </span>
+              </div>
+              <div className="relative group">
+                <button
+                  type="button"
+                  className={`mac-btn h-8 w-8 flex items-center justify-center ${activeView === 'systemFlow' ? 'mac-btn--primary' : ''}`}
+                  onClick={() => changeView('systemFlow')}
+                  aria-label="System Flow (S)"
+                >
+                  <LayoutDashboard size={16} />
+                </button>
+                <span className="mac-tooltip absolute left-1/2 top-[calc(100%+6px)] -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">
+                  System Flow (S)
+                </span>
+              </div>
+              <div className="relative group">
+                <button
+                  type="button"
+                  className={`mac-btn h-8 w-8 flex items-center justify-center ${activeView === 'dataObjects' ? 'mac-btn--primary' : ''}`}
+                  onClick={() => changeView('dataObjects')}
+                  aria-label="Data Objects (D)"
+                >
+                  <Database size={16} />
+                </button>
+                <span className="mac-tooltip absolute left-1/2 top-[calc(100%+6px)] -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">
+                  Data Objects (D)
+                </span>
+              </div>
+              <div className="relative group">
+                <button
+                  type="button"
+                  className={`mac-btn h-8 w-8 flex items-center justify-center ${activeView === 'testing' ? 'mac-btn--primary' : ''}`}
+                  onClick={() => changeView('testing')}
+                  aria-label="Testing (T)"
+                >
+                  <FlaskConical size={16} />
+                </button>
+                <span className="mac-tooltip absolute left-1/2 top-[calc(100%+6px)] -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">
+                  Testing (T)
+                </span>
+              </div>
+          </div>
+        </div>
+
         <div className="absolute inset-0">
           {activeView === 'dataObjects' ? (
             <DataObjectsCanvas
@@ -1138,14 +1232,14 @@ export function EditorApp() {
         </div>
 
         {/* Floating left window: markdown source (only on main canvas) */}
-        {activeView === 'main' ? (
-          <div className="absolute left-4 top-16 bottom-24 z-50 pointer-events-auto">
-            <NexusEditor doc={doc} />
-          </div>
-        ) : null}
+          {activeView === 'main' ? (
+          <div className="absolute left-4 top-14 bottom-24 z-50 pointer-events-auto" data-editor-left-panel>
+              <NexusEditor doc={doc} />
+            </div>
+          ) : null}
 
-        {/* Floating right window(s) */}
-        <div className="absolute right-4 top-16 bottom-24 z-50 pointer-events-auto">
+          {/* Floating right window(s) */}
+          <div className="absolute right-4 top-4 bottom-24 z-50 pointer-events-auto" data-editor-right-panel>
           {activeTool === 'comment' ? (
             <CommentsPanel
               doc={doc}
@@ -1226,6 +1320,14 @@ export function EditorApp() {
               if (!next && activeTool === 'annotation') setActiveTool('select');
             }}
             variant={activeView === 'flows' || activeView === 'systemFlow' || activeView === 'dataObjects' ? 'notesOnly' : 'full'}
+            onCenterView={() => {
+              if (activeView === 'dataObjects') {
+                window.dispatchEvent(new CustomEvent('diregram:dataobjectsTool', { detail: { tool: 'center' } }));
+                return;
+              }
+              window.dispatchEvent(new CustomEvent('diregram:canvasTool', { detail: { tool: 'center', view: activeView } }));
+            }}
+            centerTooltip={centerTransformLabel}
             systemFlowTools={
               activeView === 'systemFlow'
                 ? {
@@ -1236,6 +1338,18 @@ export function EditorApp() {
                       window.dispatchEvent(new CustomEvent('systemflow:tool', { detail: { type: 'createZone' } })),
                     onDeleteSelection: () =>
                       window.dispatchEvent(new CustomEvent('systemflow:tool', { detail: { type: 'deleteSelection' } })),
+                  }
+                : null
+            }
+            dataObjectsTools={
+              activeView === 'dataObjects'
+                ? {
+                    onOpenManage: () =>
+                      window.dispatchEvent(new CustomEvent('diregram:dataobjectsTool', { detail: { tool: 'manage' } })),
+                    onZoomIn: () =>
+                      window.dispatchEvent(new CustomEvent('diregram:dataobjectsTool', { detail: { tool: 'zoomIn' } })),
+                    onZoomOut: () =>
+                      window.dispatchEvent(new CustomEvent('diregram:dataobjectsTool', { detail: { tool: 'zoomOut' } })),
                   }
                 : null
             }

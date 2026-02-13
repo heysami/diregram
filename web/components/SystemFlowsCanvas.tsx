@@ -24,6 +24,7 @@ export function SystemFlowsCanvas({
   showAnnotations: boolean;
   onOpenComments?: (info: { targetKey: string; targetLabel?: string; scrollToThreadId?: string }) => void;
 }) {
+  const viewBarSpacer = <div className="h-12" aria-hidden />;
   const [systemFlowRoots, setSystemFlowRoots] = useState<NexusNode[]>([]);
   const [selectedSfid, setSelectedSfid] = useState<string | null>(null);
   const [isRenaming, setIsRenaming] = useState(false);
@@ -132,7 +133,8 @@ export function SystemFlowsCanvas({
 
   return (
     <div className="absolute inset-0 flex mac-canvas-bg">
-      <div className="w-72 m-4 mac-window overflow-hidden">
+      <div className="w-[280px] max-w-[35vw] min-w-[200px] m-4 mac-window overflow-hidden shrink">
+        {viewBarSpacer}
         <div className="mac-titlebar">
           <div className="mac-title">System Flows</div>
           <div className="absolute right-1 top-1/2 -translate-y-1/2">
@@ -221,6 +223,7 @@ export function SystemFlowsCanvas({
                 showComments={showComments}
                 showAnnotations={showAnnotations}
                 onOpenComments={onOpenComments}
+                presence={presence}
               />
             </div>
           </div>

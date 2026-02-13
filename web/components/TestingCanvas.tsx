@@ -14,6 +14,7 @@ import { CreateTestModal } from '@/components/testing/CreateTestModal';
 type Props = { doc: Y.Doc };
 
 export function TestingCanvas({ doc }: Props) {
+  const viewBarSpacer = <div className="h-12" aria-hidden />;
   const [store, setStore] = useState<TestingStore>(() => loadTestingStore(doc));
   const [selectedTestId, setSelectedTestId] = useState<string | null>(null);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -79,7 +80,8 @@ export function TestingCanvas({ doc }: Props) {
 
   return (
     <div className="absolute inset-0 flex mac-canvas-bg">
-      <div className="w-80 m-4 mac-window overflow-hidden flex flex-col">
+      <div className="w-[320px] max-w-[38vw] min-w-[220px] m-4 mac-window overflow-hidden flex flex-col shrink">
+        {viewBarSpacer}
         <div className="mac-titlebar">
           <div className="mac-title">Tests</div>
           <div className="absolute right-1 top-1/2 -translate-y-1/2">

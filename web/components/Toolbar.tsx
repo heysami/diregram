@@ -1,4 +1,4 @@
-import { ArrowUpRight, Eye, Highlighter, MessageSquareText, MousePointer2, Redo2, Settings2, Square, SquareDashed, Trash2, Undo2 } from 'lucide-react';
+import { ArrowUpRight, Eye, Highlighter, MessageSquareText, MousePointer2, Move, Pencil, Redo2, Settings2, Square, SquareDashed, Trash2, Undo2, ZoomIn, ZoomOut } from 'lucide-react';
 import { useState } from 'react';
 import * as Y from 'yjs';
 import type { TagViewState } from '@/types/tagging';
@@ -24,11 +24,18 @@ interface Props {
   onRedo?: () => void;
   canUndo?: boolean;
   canRedo?: boolean;
+  onCenterView?: () => void;
+  centerTooltip?: string;
   systemFlowTools?: {
     onAddBox: () => void;
     onToggleLinkMode: () => void;
     onCreateZone: () => void;
     onDeleteSelection: () => void;
+  } | null;
+  dataObjectsTools?: {
+    onOpenManage: () => void;
+    onZoomIn: () => void;
+    onZoomOut: () => void;
   } | null;
 }
 
@@ -49,7 +56,10 @@ export function Toolbar({
   onRedo,
   canUndo = false,
   canRedo = false,
+  onCenterView,
+  centerTooltip,
   systemFlowTools = null,
+  dataObjectsTools = null,
 }: Props) {
   const [showSettings, setShowSettings] = useState(false);
   const [showTagEye, setShowTagEye] = useState(false);
@@ -60,26 +70,50 @@ export function Toolbar({
   return (
     <div className="fixed bottom-4 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2 z-50">
       
-      {showFullTools && showSettings && (
-          <div className="mac-window mb-2 animate-in fade-in slide-in-from-bottom-2">
-            <div className="mac-titlebar">
-              <div className="mac-title">Settings</div>
-            </div>
-            <div className="mac-toolstrip">
-              <span className="text-[12px] font-bold">Main Level</span>
-              <div className="flex items-center">
-                  <button 
-                    onClick={() => onMainLevelChange(Math.max(0, mainLevel - 1))}
-                    className="mac-btn"
-                  >-</button>
+      {showSettings && (
+        <div className="mac-window mb-2 animate-in fade-in slide-in-from-bottom-2">
+          <div className="mac-titlebar">
+            <div className="mac-title">Settings</div>
+          </div>
+          <div className="mac-toolstrip flex flex-col gap-2 items-stretch">
+            {showFullTools ? (
+              <div className="flex items-center gap-2">
+                <span className="text-[12px] font-bold">Main Level</span>
+                <div className="flex items-center">
+                  <button onClick={() => onMainLevelChange(Math.max(0, mainLevel - 1))} className="mac-btn">
+                    -
+                  </button>
                   <span className="px-2 text-[12px] font-mono w-10 text-center">{mainLevel}</span>
-                  <button 
-                    onClick={() => onMainLevelChange(mainLevel + 1)}
-                    className="mac-btn"
-                  >+</button>
+                  <button onClick={() => onMainLevelChange(mainLevel + 1)} className="mac-btn">
+                    +
+                  </button>
+                </div>
+              </div>
+            ) : null}
+
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-[12px] font-bold">Visibility</span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  className={`mac-btn ${showComments ? 'mac-btn--primary' : ''}`}
+                  onClick={() => onShowCommentsChange(!showComments)}
+                  title={showComments ? 'Hide comments' : 'Show comments'}
+                >
+                  Comments
+                </button>
+                <button
+                  type="button"
+                  className={`mac-btn ${showAnnotations ? 'mac-btn--primary' : ''}`}
+                  onClick={() => onShowAnnotationsChange(!showAnnotations)}
+                  title={showAnnotations ? 'Hide annotations' : 'Show annotations'}
+                >
+                  Annotations
+                </button>
               </div>
             </div>
           </div>
+        </div>
       )}
 
       {showFullTools && showTagEye ? (
@@ -184,40 +218,51 @@ export function Toolbar({
           </>
         ) : null}
 
-        {/* Visibility toggles */}
-        <div className="mac-sep" />
-        <ToolButton
-          isActive={showComments}
-          onClick={() => onShowCommentsChange(!showComments)}
-          icon={<MessageSquareText size={18} />}
-          label={showComments ? 'Hide comments' : 'Show comments'}
-        />
-        <ToolButton
-          isActive={showAnnotations}
-          onClick={() => onShowAnnotationsChange(!showAnnotations)}
-          icon={<Highlighter size={18} />}
-          label={showAnnotations ? 'Hide annotations' : 'Show annotations'}
-        />
-        
-        {showFullTools ? (
+        {/* Data Objects tools (optional) */}
+        {dataObjectsTools ? (
           <>
             <div className="mac-sep" />
-            
-            <ToolButton 
-              isActive={showSettings} 
-              onClick={() => setShowSettings(!showSettings)}
-              icon={<Settings2 size={18} />}
-              label="Settings"
-            />
-
             <ToolButton
-              isActive={showTagEye}
-              onClick={() => setShowTagEye(!showTagEye)}
-              icon={<Eye size={18} />}
-              label="Tag view"
+              isActive={false}
+              onClick={dataObjectsTools.onOpenManage}
+              icon={<Pencil size={18} />}
+              label="Manage objects"
+            />
+            <ToolButton
+              isActive={false}
+              onClick={dataObjectsTools.onZoomIn}
+              icon={<ZoomIn size={18} />}
+              label="Zoom in"
+            />
+            <ToolButton
+              isActive={false}
+              onClick={dataObjectsTools.onZoomOut}
+              icon={<ZoomOut size={18} />}
+              label="Zoom out"
             />
           </>
         ) : null}
+
+        {showFullTools ? (
+          <>
+            <div className="mac-sep" />
+
+            <ToolButton isActive={showTagEye} onClick={() => setShowTagEye(!showTagEye)} icon={<Eye size={18} />} label="Tag view" />
+          </>
+        ) : null}
+
+        <div className="mac-sep" />
+        <ToolButton isActive={showSettings} onClick={() => setShowSettings(!showSettings)} icon={<Settings2 size={18} />} label="Settings" />
+
+        {/* View controls */}
+        <div className="mac-sep" />
+        <ToolButton
+          isActive={false}
+          onClick={onCenterView ? onCenterView : () => {}}
+          icon={<Move size={18} />}
+          label={`Center view${centerTooltip ? ` — ${centerTooltip}` : ''}`}
+          disabled={!onCenterView}
+        />
         </div>
       </div>
     </div>

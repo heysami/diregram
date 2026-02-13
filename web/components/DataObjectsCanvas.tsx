@@ -1,10 +1,9 @@
 'use client';
 
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as Y from 'yjs';
 import type { NexusNode } from '@/types/nexus';
 import { buildMergedDataObjectGraph, type DataObjectEdge, type DataObjectGraph, type DataObjectNode } from '@/lib/data-object-graph';
-import { Database, Pencil, ZoomIn, ZoomOut } from 'lucide-react';
 import { loadDataObjects, upsertDataObject } from '@/lib/data-object-storage';
 import { ManageDataObjectsModal } from '@/components/ManageDataObjectsModal';
 import { DataObjectInspectorPanel } from '@/components/DataObjectInspectorPanel';
@@ -343,11 +342,27 @@ export function DataObjectsCanvas({
   const dragRef = useRef<{ startX: number; startY: number; panX: number; panY: number } | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
+  // Broadcast current transform so the bottom toolbar can show x/y tooltip.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const round2 = (n: number) => Math.round(n * 100) / 100;
+    window.dispatchEvent(
+      new CustomEvent('diregram:viewTransform', {
+        detail: {
+          view: 'dataObjects',
+          x: Math.round(pan.x),
+          y: Math.round(pan.y),
+          z: round2(scale),
+        },
+      }),
+    );
+  }, [pan.x, pan.y, scale]);
+
   // Match NexusCanvas zoom limits/feel as closely as possible.
   const clampScale = (s: number) => Math.max(0.1, Math.min(5, s));
   void commentsTick; // re-render on collaborative comment updates
 
-  const zoomAtClientPoint = (nextScaleRaw: number, clientX: number, clientY: number) => {
+  const zoomAtClientPoint = useCallback((nextScaleRaw: number, clientX: number, clientY: number) => {
     const el = containerRef.current;
     if (!el) {
       setScale(clampScale(nextScaleRaw));
@@ -366,7 +381,42 @@ export function DataObjectsCanvas({
 
     setScale(nextScale);
     setPan({ x: nextPanX, y: nextPanY });
-  };
+  }, [pan.x, pan.y, scale]);
+
+  const fitToContent = useCallback(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const cw = el.clientWidth;
+    const ch = el.clientHeight;
+    if (!cw || !ch) return;
+    const PAD = 80;
+    const w = Math.max(1, bounds.width + PAD * 2);
+    const h = Math.max(1, bounds.height + PAD * 2);
+    const fit = clampScale(Math.min(cw / w, ch / h));
+    setScale(fit);
+    setPan({
+      x: (cw - bounds.width * fit) / 2,
+      y: (ch - bounds.height * fit) / 2,
+    });
+  }, [bounds.width, bounds.height]);
+
+  const zoomIn = useCallback(() => {
+    const el = containerRef.current;
+    if (!el) return setScale((s) => clampScale(s * 1.1));
+    const rect = el.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    zoomAtClientPoint(scale * 1.1, cx, cy);
+  }, [scale, zoomAtClientPoint]);
+
+  const zoomOut = useCallback(() => {
+    const el = containerRef.current;
+    if (!el) return setScale((s) => clampScale(s / 1.1));
+    const rect = el.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    zoomAtClientPoint(scale / 1.1, cx, cy);
+  }, [scale, zoomAtClientPoint]);
 
   // Space-to-pan (matches the main canvas ergonomics).
   useEffect(() => {
@@ -395,25 +445,27 @@ export function DataObjectsCanvas({
   // Fit + center once on mount (first open).
   useEffect(() => {
     if (!initialFitToContent) return;
-    const el = containerRef.current;
-    if (!el) return;
     // Defer until after layout so clientWidth/Height are stable.
     const raf = window.requestAnimationFrame(() => {
-      const cw = el.clientWidth;
-      const ch = el.clientHeight;
-      if (!cw || !ch) return;
-      const PAD = 80;
-      const w = Math.max(1, bounds.width + PAD * 2);
-      const h = Math.max(1, bounds.height + PAD * 2);
-      const fit = clampScale(Math.min(cw / w, ch / h));
-      setScale(fit);
-      setPan({
-        x: (cw - bounds.width * fit) / 2,
-        y: (ch - bounds.height * fit) / 2,
-      });
+      fitToContent();
     });
     return () => window.cancelAnimationFrame(raf);
-  }, [initialFitToContent, bounds.width, bounds.height]);
+  }, [initialFitToContent, fitToContent]);
+
+  // Listen for toolbar actions (we keep the canvas uncluttered).
+  useEffect(() => {
+    const onTool = (evt: Event) => {
+      const e = evt as CustomEvent<{ tool?: string }>;
+      const tool = e.detail?.tool;
+      if (!tool) return;
+      if (tool === 'manage') openManage();
+      if (tool === 'zoomIn') zoomIn();
+      if (tool === 'zoomOut') zoomOut();
+      if (tool === 'center') fitToContent();
+    };
+    window.addEventListener('diregram:dataobjectsTool', onTool as EventListener);
+    return () => window.removeEventListener('diregram:dataobjectsTool', onTool as EventListener);
+  }, [fitToContent, openManage, zoomIn, zoomOut]);
 
   // Auto-center selection
   useEffect(() => {
@@ -443,54 +495,6 @@ export function DataObjectsCanvas({
 
   return (
     <div className="absolute inset-0 mac-canvas-bg">
-      <div className="absolute top-4 left-4 z-20 mac-window overflow-hidden">
-        <div className="mac-titlebar">
-          <div className="mac-title">Data Objects</div>
-        </div>
-        <div className="mac-toolstrip">
-          <Database size={16} />
-          <div className="text-xs">
-            <span className="font-semibold">{graph.objects.length}</span> objects ·{' '}
-            <span className="font-semibold">{graph.edges.length}</span> links
-          </div>
-          <div className="mac-sep" />
-          <button type="button" onClick={openManage} className="h-6 w-6 border flex items-center justify-center" title="Manage objects (rename)">
-            <Pencil size={16} />
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              const el = containerRef.current;
-              if (!el) return setScale((s) => clampScale(s * 1.1));
-              const rect = el.getBoundingClientRect();
-              const cx = rect.left + rect.width / 2;
-              const cy = rect.top + rect.height / 2;
-              zoomAtClientPoint(scale * 1.1, cx, cy);
-            }}
-            className="h-6 w-6 border flex items-center justify-center"
-            title="Zoom in"
-          >
-            <ZoomIn size={16} />
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              const el = containerRef.current;
-              if (!el) return setScale((s) => clampScale(s / 1.1));
-              const rect = el.getBoundingClientRect();
-              const cx = rect.left + rect.width / 2;
-              const cy = rect.top + rect.height / 2;
-              zoomAtClientPoint(scale / 1.1, cx, cy);
-            }}
-            className="h-6 w-6 border flex items-center justify-center"
-            title="Zoom out"
-          >
-            <ZoomOut size={16} />
-          </button>
-          <div className="text-[11px] w-12 text-right">{Math.round(scale * 100)}%</div>
-        </div>
-      </div>
-
       {selectedId ? (
         <DataObjectInspectorPanel
           doc={doc}
