@@ -13,6 +13,9 @@ AVOID:
   → Exactly one '---' separator exists
   → No fenced code blocks appear above '---' (tree region)
   → All fenced blocks below '---' are strict JSON
+  → Non-fenced, allowed post-separator sections (if present) MUST be well-formed:
+    - ## Condition Dimension Descriptions (with ### [table|flow] ... blocks)
+    - ## Data Object Attribute Descriptions (with ### [table|flow] ... blocks)
   → No UNCLOSED_CODE_BLOCK errors (closing backticks exist)
 
 ☐ Registry integrity (lineIndex/node-id based):
@@ -26,6 +29,23 @@ AVOID:
   → expanded-metadata-N exists
   → expanded-grid-N exists
   → expanded-states.entries[].content matches the node title EXACTLY
+
+☐ Expanded grid schema sanity (MUST; prevents “UI config silently ignored”):
+  → Each expanded-grid-N MUST be a JSON array of grid nodes
+  → Each grid node MUST have: key, content, gridX, gridY, gridWidth, gridHeight
+  → uiType MUST be one of:
+    - content | list | button | navOut | filter | tabs | wizard | sideNav | dropdown | collapsible | text
+  → If uiType is tabs|wizard|sideNav|dropdown:
+    - uiTabs MUST exist and be a non-empty array
+    - each uiTabs[] entry MUST have id + label (items optional)
+  → If uiType is collapsible:
+    - uiSections MUST exist and be a non-empty array
+    - each uiSections[] entry MUST have id + label (items optional)
+  → If textVariant/textAlign are present:
+    - textVariant MUST be one of h1..h6|normal|small
+    - textAlign MUST be left|center|right
+  → If ANY link target selects attributes (dataObjectAttributeIds present on grid node OR on uiTabs/uiSections/items):
+    - dataObjectAttributeMode SHOULD be present and be data|input (default to data)
 
 ☐ Tags + actor tagging (MUST; machine-checkable semantics):
   → If the markdown uses <!-- tags:... --> ANYWHERE, it MUST include exactly one \`\`\`tag-store\`\`\` block

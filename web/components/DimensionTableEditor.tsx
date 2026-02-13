@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Plus, Merge } from 'lucide-react';
 import { getAllColumnIds as getAllColumnIdsUtil } from './table-editor/tableUtils';
 import { mergeCells as mergeCellsUtil, unmergeCell as unmergeCellUtil } from './table-editor/mergeUtils';
@@ -89,6 +89,7 @@ export function DimensionTableEditor({
   dimensionValues = [],
   onChange,
 }: Props) {
+  const linkedValuesSet = useMemo(() => new Set(dimensionValues.map((v) => v.trim())), [dimensionValues]);
   const initialRowsNormalized = initialRows && initialRows.length
     ? normalizeRows(initialRows)
     : [
@@ -326,6 +327,8 @@ export function DimensionTableEditor({
                       key={parent.id}
                       column={parent}
                       isChild={false}
+                      dimensionValues={dimensionValues}
+                      linkedValuesSet={linkedValuesSet}
                       mergedCells={mergedCells}
                       selectionStart={selectionStart}
                       selectedCell={selectedCell}
@@ -354,6 +357,8 @@ export function DimensionTableEditor({
                       key={child.id}
                       column={child}
                       isChild={true}
+                      dimensionValues={dimensionValues}
+                      linkedValuesSet={linkedValuesSet}
                       mergedCells={mergedCells}
                       selectionStart={selectionStart}
                       selectedCell={selectedCell}
@@ -398,6 +403,7 @@ export function DimensionTableEditor({
                         row={row}
                         colId={parent.id}
                         mergedCells={mergedCells}
+                        linkedValuesSet={linkedValuesSet}
                         selectionStart={selectionStart}
                         selectedCell={selectedCell}
                         editingCell={editingCell}
@@ -431,6 +437,7 @@ export function DimensionTableEditor({
                       row={row}
                       colId={child.id}
                       mergedCells={mergedCells}
+                      linkedValuesSet={linkedValuesSet}
                       selectionStart={selectionStart}
                       selectedCell={selectedCell}
                       editingCell={editingCell}

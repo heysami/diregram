@@ -54,6 +54,10 @@ export function ExpandedNodeView({ node, doc, styleClass, nodeMap, runningNumber
   const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
 
+  // Local UI state for richer inner-node previews (tabs/wizard/sidenav/collapsible).
+  const [activeTabByGridKey, setActiveTabByGridKey] = useState<Record<string, string>>({});
+  const [collapsedByGridKey, setCollapsedByGridKey] = useState<Record<string, Record<string, boolean>>>({});
+
   
   const gridContainerRef = useRef<HTMLDivElement>(null);
   const editInputRef = useRef<HTMLTextAreaElement>(null);
@@ -593,14 +597,24 @@ export function ExpandedNodeView({ node, doc, styleClass, nodeMap, runningNumber
           const gap = 2; // gap between cells
           const cellWidth = `calc((100% - ${(GRID_WIDTH - 1) * gap}px) / ${GRID_WIDTH})`;
           const cellHeight = `calc((100% - ${(GRID_HEIGHT - 1) * gap}px) / ${GRID_HEIGHT})`;
+          const gridKey = (gridNode.key || gridNode.id) as string;
+          const uiType = gridNode.uiType || 'content';
+          const isTextUi = uiType === 'text';
+          const isSelectedGrid = selectedKeysSet.has(gridKey);
           
           return (
             <div
               key={gridNode.id}
               data-grid-node="true"
-              className={`absolute ${nodeBgMap[gridNode.color || ''] || fillClass} border p-1 text-xs flex flex-col shadow-sm group cursor-move ${
-                draggingNodeId === gridNode.id ? 'opacity-75' : ''
-              } ${(selectedKeysSet.has((gridNode.key || gridNode.id) as string)) ? 'ring-2 ring-blue-500 border-blue-300' : 'border-gray-300'}`}
+              className={
+                isTextUi
+                  ? `absolute bg-transparent p-0 flex flex-col group ${
+                      draggingNodeId === gridNode.id ? 'opacity-75' : ''
+                    } ${isSelectedGrid ? 'bg-blue-500/10' : ''} cursor-text`
+                  : `absolute ${nodeBgMap[gridNode.color || ''] || fillClass} border p-1 text-xs flex flex-col shadow-sm group cursor-move ${
+                      draggingNodeId === gridNode.id ? 'opacity-75' : ''
+                    } ${isSelectedGrid ? 'ring-2 ring-blue-500 border-blue-300' : 'border-gray-300'}`
+              }
               style={{
                 left: `calc(${gridNode.gridX} * (${cellWidth} + ${gap}px))`,
                 top: `calc(${gridNode.gridY} * (${cellHeight} + ${gap}px))`,
@@ -630,30 +644,264 @@ export function ExpandedNodeView({ node, doc, styleClass, nodeMap, runningNumber
                   onBlur={commitEdit}
                   onKeyDown={handleInputKeyDown}
                   onClick={(e) => e.stopPropagation()}
-                  className="w-full h-full text-center bg-transparent focus:outline-none resize-none text-gray-900 text-xs p-1"
+                  className={`w-full h-full bg-transparent focus:outline-none resize-none text-gray-900 text-xs p-1 ${
+                    isTextUi
+                      ? gridNode.textAlign === 'right'
+                        ? 'text-right'
+                        : gridNode.textAlign === 'center'
+                          ? 'text-center'
+                          : 'text-left'
+                      : 'text-center'
+                  }`}
                   style={{ lineHeight: '1.5' }}
                   autoFocus
                 />
               ) : (
                 <div className="flex items-center justify-center flex-1 relative">
-                  <div
-                    className="flex flex-col items-center justify-center text-gray-900 text-center cursor-text px-1 w-full"
-                    onDoubleClick={(e) => {
-                      e.stopPropagation();
-                      startEditing(gridNode.id);
-                    }}
-                  >
-                    {gridNode.icon && gridNode.icon.trim().length > 0 && (
-                      <div className="leading-none select-none" style={{ fontSize: '3em', lineHeight: '1', marginBottom: 4 }}>
-                        {gridNode.icon}
+                  {(() => {
+                    const title = gridNode.content || '';
+                    const titleIcon = gridNode.icon && gridNode.icon.trim().length ? gridNode.icon : '';
+
+                    const alignClass =
+                      gridNode.textAlign === 'right'
+                        ? 'text-right'
+                        : gridNode.textAlign === 'center'
+                          ? 'text-center'
+                          : 'text-left';
+
+                    const renderTitle = (opts?: { small?: boolean }) => {
+                      const small = opts?.small ?? false;
+                      if (!title && !titleIcon) return null;
+                      return (
+                        <div className={`flex items-center gap-1 ${small ? 'text-[10px]' : 'text-[11px]'} font-medium text-gray-900 ${alignClass}`}>
+                          {titleIcon ? <span className="select-none leading-none">{titleIcon}</span> : null}
+                          {title ? <span className="truncate">{title}</span> : null}
+                        </div>
+                      );
+                    };
+
+                    if (uiType === 'text') {
+                      const variant = gridNode.textVariant || 'normal';
+                      const base = `w-full ${alignClass} break-words whitespace-pre-wrap cursor-text px-1 leading-snug`;
+                      const onDbl = (e: React.MouseEvent) => {
+                        e.stopPropagation();
+                        startEditing(gridNode.id);
+                      };
+                      const content = title;
+                      const node = (() => {
+                        switch (variant) {
+                          case 'h1':
+                            return <div className={`${base} text-lg font-extrabold`} onDoubleClick={onDbl}>{content}</div>;
+                          case 'h2':
+                            return <div className={`${base} text-base font-bold`} onDoubleClick={onDbl}>{content}</div>;
+                          case 'h3':
+                            return <div className={`${base} text-sm font-semibold`} onDoubleClick={onDbl}>{content}</div>;
+                          case 'h4':
+                            return <div className={`${base} text-xs font-semibold`} onDoubleClick={onDbl}>{content}</div>;
+                          case 'h5':
+                            return <div className={`${base} text-xs font-medium`} onDoubleClick={onDbl}>{content}</div>;
+                          case 'h6':
+                            return <div className={`${base} text-[11px] font-medium`} onDoubleClick={onDbl}>{content}</div>;
+                          case 'small':
+                            return <div className={`${base} text-[10px] font-normal`} onDoubleClick={onDbl}>{content}</div>;
+                          case 'normal':
+                          default:
+                            return <div className={`${base} text-xs font-normal`} onDoubleClick={onDbl}>{content}</div>;
+                        }
+                      })();
+                      return node;
+                    }
+
+                    if (uiType === 'tabs' || uiType === 'wizard' || uiType === 'sideNav' || uiType === 'dropdown') {
+                      const tabs = gridNode.uiTabs || [];
+                      const activeId = activeTabByGridKey[gridKey] || tabs[0]?.id || '';
+                      const active = tabs.find((t) => t.id === activeId) || tabs[0];
+                      const setActive = (id: string) => setActiveTabByGridKey((prev) => ({ ...prev, [gridKey]: id }));
+                      const items = active?.items || [];
+                      const linkedBadge = (hasLink?: boolean) => (hasLink ? <span className="ml-1 text-[10px] text-blue-700">🔗</span> : null);
+
+                      if (uiType === 'sideNav') {
+                        return (
+                          <div className="w-full h-full flex flex-col px-1" onDoubleClick={(e) => { e.stopPropagation(); startEditing(gridNode.id); }}>
+                            {renderTitle({ small: true })}
+                            <div className="flex flex-1 min-h-0 mt-1 border border-gray-200 bg-white/60">
+                              <div className="w-1/3 min-w-[60px] border-r border-gray-200 p-1 space-y-1 overflow-hidden">
+                                {tabs.map((t) => {
+                                  const isActive = (t.id === (active?.id || ''));
+                                  return (
+                                    <button
+                                      key={t.id}
+                                      type="button"
+                                      onClick={(e) => { e.stopPropagation(); setActive(t.id); }}
+                                      className={`w-full text-[10px] px-1 py-0.5 rounded text-left truncate ${isActive ? 'bg-blue-600 text-white' : 'bg-white/70 hover:bg-white'}`}
+                                      title={t.label}
+                                    >
+                                      {t.icon ? `${t.icon} ` : ''}{t.label}{linkedBadge(!!t.dataObjectId)}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                              <div className="flex-1 p-1 overflow-hidden">
+                                <div className="space-y-1">
+                                  {items.slice(0, 6).map((it) => (
+                                    <div key={it.id} className="text-[10px] text-gray-800 truncate">
+                                      {it.icon ? <span className="mr-1">{it.icon}</span> : null}
+                                      {it.label}{linkedBadge(!!it.dataObjectId)}
+                                    </div>
+                                  ))}
+                                  {items.length > 6 ? <div className="text-[10px] text-gray-500">…</div> : null}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      }
+
+                      if (uiType === 'dropdown') {
+                        return (
+                          <div className="w-full h-full flex flex-col px-1" onDoubleClick={(e) => { e.stopPropagation(); startEditing(gridNode.id); }}>
+                            {renderTitle({ small: true })}
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const idx = tabs.findIndex((t) => t.id === (active?.id || ''));
+                                const next = tabs[(idx + 1) % Math.max(1, tabs.length)];
+                                if (next) setActive(next.id);
+                              }}
+                              className="mt-1 w-full text-[10px] px-2 py-1 rounded border border-gray-200 bg-white/80 text-left truncate"
+                              title="Dropdown (click to cycle sections)"
+                            >
+                              {active?.icon ? `${active.icon} ` : ''}{active?.label || 'Select…'}{linkedBadge(!!active?.dataObjectId)}
+                              <span className="float-right text-gray-500">▾</span>
+                            </button>
+                            <div className="flex-1 min-h-0 mt-1 border border-gray-200 bg-white/60 p-1 overflow-hidden">
+                              <div className="space-y-1">
+                                {items.slice(0, 8).map((it) => (
+                                  <div key={it.id} className="text-[10px] text-gray-800 truncate">
+                                    {it.icon ? <span className="mr-1">{it.icon}</span> : null}
+                                    {it.label}{linkedBadge(!!it.dataObjectId)}
+                                  </div>
+                                ))}
+                                {items.length > 8 ? <div className="text-[10px] text-gray-500">…</div> : null}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      }
+
+                      // tabs / wizard (horizontal)
+                      return (
+                        <div className="w-full h-full flex flex-col px-1" onDoubleClick={(e) => { e.stopPropagation(); startEditing(gridNode.id); }}>
+                          {renderTitle({ small: true })}
+                          <div className="mt-1 flex gap-1 flex-wrap">
+                            {tabs.slice(0, 6).map((t, idx) => {
+                              const isActive = (t.id === (active?.id || ''));
+                              const label = uiType === 'wizard' ? `Step ${idx + 1}` : t.label;
+                              return (
+                                <button
+                                  key={t.id}
+                                  type="button"
+                                  onClick={(e) => { e.stopPropagation(); setActive(t.id); }}
+                                  className={`text-[10px] px-1.5 py-0.5 rounded border ${isActive ? 'bg-blue-600 text-white border-blue-600' : 'bg-white/70 text-gray-800 border-gray-200 hover:bg-white'}`}
+                                  title={t.label}
+                                >
+                                  {t.icon ? `${t.icon} ` : ''}{label}{linkedBadge(!!t.dataObjectId)}
+                                </button>
+                              );
+                            })}
+                          </div>
+                          <div className="flex-1 min-h-0 mt-1 border border-gray-200 bg-white/60 p-1 overflow-hidden">
+                            <div className="space-y-1">
+                              {items.slice(0, 8).map((it) => (
+                                <div key={it.id} className="text-[10px] text-gray-800 truncate">
+                                  {it.icon ? <span className="mr-1">{it.icon}</span> : null}
+                                  {it.label}{linkedBadge(!!it.dataObjectId)}
+                                </div>
+                              ))}
+                              {items.length > 8 ? <div className="text-[10px] text-gray-500">…</div> : null}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    if (uiType === 'collapsible') {
+                      const sections = gridNode.uiSections || [];
+                      const currentCollapsed = collapsedByGridKey[gridKey] || {};
+                      const isCollapsed = (sectionId: string, defaultCollapsed?: boolean): boolean => {
+                        if (sectionId in currentCollapsed) return !!currentCollapsed[sectionId];
+                        return !!defaultCollapsed;
+                      };
+                      const toggle = (sectionId: string, defaultCollapsed?: boolean) => {
+                        const next = !isCollapsed(sectionId, defaultCollapsed);
+                        setCollapsedByGridKey((prev) => ({
+                          ...prev,
+                          [gridKey]: { ...(prev[gridKey] || {}), [sectionId]: next },
+                        }));
+                      };
+                      return (
+                        <div className="w-full h-full flex flex-col px-1" onDoubleClick={(e) => { e.stopPropagation(); startEditing(gridNode.id); }}>
+                          {renderTitle({ small: true })}
+                          <div className="flex-1 min-h-0 mt-1 border border-gray-200 bg-white/60 p-1 overflow-hidden">
+                            <div className="space-y-1">
+                              {sections.slice(0, 6).map((s) => {
+                                const collapsed = isCollapsed(s.id, s.collapsedByDefault);
+                                const items = s.items || [];
+                                return (
+                                  <div key={s.id} className="border border-gray-200 rounded bg-white/70">
+                                    <button
+                                      type="button"
+                                      className="w-full flex items-center justify-between text-[10px] px-1.5 py-1 text-gray-900"
+                                      onClick={(e) => { e.stopPropagation(); toggle(s.id, s.collapsedByDefault); }}
+                                      title={s.label}
+                                    >
+                                      <span className="truncate">
+                                        {s.icon ? `${s.icon} ` : ''}{s.label}{s.dataObjectId ? <span className="ml-1 text-[10px] text-blue-700">🔗</span> : null}
+                                      </span>
+                                      <span className="ml-2 text-gray-500">{collapsed ? '▸' : '▾'}</span>
+                                    </button>
+                                    {!collapsed && (
+                                      <div className="px-1.5 pb-1 space-y-0.5">
+                                        {items.slice(0, 4).map((it) => (
+                                          <div key={it.id} className="text-[10px] text-gray-800 truncate">
+                                            {it.icon ? <span className="mr-1">{it.icon}</span> : null}
+                                            {it.label}{it.dataObjectId ? <span className="ml-1 text-[10px] text-blue-700">🔗</span> : null}
+                                          </div>
+                                        ))}
+                                        {items.length > 4 ? <div className="text-[10px] text-gray-500">…</div> : null}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                              {sections.length > 6 ? <div className="text-[10px] text-gray-500">…</div> : null}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    // Default (content/list/button/etc.): existing simple label rendering.
+                    return (
+                      <div
+                        className="flex flex-col items-center justify-center text-gray-900 text-center cursor-text px-1 w-full"
+                        onDoubleClick={(e) => {
+                          e.stopPropagation();
+                          startEditing(gridNode.id);
+                        }}
+                      >
+                        {titleIcon && (
+                          <div className="leading-none select-none" style={{ fontSize: '3em', lineHeight: '1', marginBottom: 4 }}>
+                            {titleIcon}
+                          </div>
+                        )}
+                        <span className="w-full break-words whitespace-pre-wrap">
+                          {title}
+                        </span>
                       </div>
-                    )}
-                    <span
-                      className="w-full break-words whitespace-pre-wrap"
-                    >
-                      {gridNode.content}
-                    </span>
-                  </div>
+                    );
+                  })()}
                   <button
                     onClick={(e) => {
                       e.stopPropagation();

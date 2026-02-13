@@ -1,12 +1,20 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import * as Y from 'yjs';
 import { X, Plus, Trash2 } from 'lucide-react';
 import type { DataObjectEdge, DataObjectGraph } from '@/lib/data-object-graph';
 import type { NexusDataObjectStore } from '@/lib/data-object-storage';
 import { ensureDataObject, upsertDataObject } from '@/lib/data-object-storage';
-import { loadDataObjectAttributes, newDataObjectAttributeId, upsertDataObjectAttributes, type DataObjectAttribute } from '@/lib/data-object-attributes';
+import {
+  loadDataObjectAttributes,
+  newDataObjectAttributeId,
+  upsertDataObjectAttributes,
+  type DataObjectAttribute,
+  type DataObjectAttributeType,
+} from '@/lib/data-object-attributes';
+import { StatusValuesEditor } from '@/components/data-objects/StatusValuesEditor';
+import { useDataObjectAttributeDescriptionModals } from '@/hooks/use-data-object-attribute-description-modals';
 
 function edgeLabel(e: DataObjectEdge): string {
   if (e.kind === 'attribute') return 'attribute (1:1)';
@@ -32,17 +40,42 @@ export function DataObjectInspectorPanel({
   onClose: () => void;
   onSelectId: (id: string) => void;
 }) {
+  // Remount the inner panel on selection changes to avoid setState-in-effect patterns.
+  return (
+    <DataObjectInspectorPanelInner
+      key={selectedId}
+      doc={doc}
+      graph={graph}
+      store={store}
+      selectedId={selectedId}
+      onClose={onClose}
+      onSelectId={onSelectId}
+    />
+  );
+}
+
+function DataObjectInspectorPanelInner({
+  doc,
+  graph,
+  store,
+  selectedId,
+  onClose,
+  onSelectId,
+}: {
+  doc: Y.Doc;
+  graph: DataObjectGraph;
+  store: NexusDataObjectStore;
+  selectedId: string;
+  onClose: () => void;
+  onSelectId: (id: string) => void;
+}) {
   const graphNode = useMemo(() => graph.objects.find((o) => o.id === selectedId), [graph.objects, selectedId]);
   const existing = useMemo(() => store.objects.find((o) => o.id === selectedId), [store.objects, selectedId]);
   const isMissing = !existing;
 
   const [nameDraft, setNameDraft] = useState(existing?.name || graphNode?.name || selectedId);
   const [attrsDraft, setAttrsDraft] = useState<DataObjectAttribute[]>(() => loadDataObjectAttributes(existing?.data));
-
-  useEffect(() => {
-    setNameDraft(existing?.name || graphNode?.name || selectedId);
-    setAttrsDraft(loadDataObjectAttributes(existing?.data));
-  }, [selectedId]); // intentionally only on selection change (avoid overwriting while typing)
+  const doAttrDesc = useDataObjectAttributeDescriptionModals({ doc });
 
   const directEdges = useMemo(
     () => graph.edges.filter((e) => e.fromId === selectedId || e.toId === selectedId),
@@ -79,6 +112,8 @@ export function DataObjectInspectorPanel({
     const nextData = upsertDataObjectAttributes(obj.data, nextAttrs);
     upsertDataObject(doc, { ...obj, data: nextData });
   };
+
+  const objLabel = (existing?.name || graphNode?.name || nameDraft || selectedId).trim() || selectedId;
 
   return (
     <div
@@ -196,20 +231,108 @@ export function DataObjectInspectorPanel({
                     <Trash2 size={14} />
                   </button>
                 </div>
-                <div className="mt-2">
-                  <div className="text-[11px] text-gray-500 mb-1">Sample value</div>
-                  <input
-                    value={a.sample || ''}
-                    onChange={(e) => {
-                      const next = attrsDraft.slice();
-                      next[idx] = { ...a, sample: e.target.value };
-                      setAttrsDraft(next);
-                    }}
-                    onBlur={() => commitAttrs(attrsDraft)}
-                    className="mac-field w-full"
-                    placeholder={'e.g. 123, "pending", 2026-01-01…'}
-                  />
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  <div>
+                    <div className="text-[11px] text-gray-500 mb-1">Type</div>
+                    <select
+                      value={(a.type || 'text') as DataObjectAttributeType}
+                      onChange={(e) => {
+                        const t = e.target.value as DataObjectAttributeType;
+                        const next = attrsDraft.slice();
+                        const prev = next[idx];
+                        if (t === 'status') {
+                          const prevSample = prev.sample || '';
+                          const prevValues = prev.type === 'status' ? prev.values || [] : [];
+                          next[idx] = {
+                            id: prev.id,
+                            name: prev.name,
+                            type: 'status',
+                            values: prevValues,
+                            sample: prevSample || undefined,
+                          } satisfies DataObjectAttribute;
+                        } else {
+                          next[idx] = {
+                            id: prev.id,
+                            name: prev.name,
+                            type: 'text',
+                            sample: prev.sample || '',
+                          } satisfies DataObjectAttribute;
+                        }
+                        setAttrsDraft(next);
+                        commitAttrs(next);
+                      }}
+                      className="mac-field w-full"
+                    >
+                      <option value="text">Text</option>
+                      <option value="status">Status</option>
+                    </select>
+                  </div>
+                  <div>
+                    <div className="text-[11px] text-gray-500 mb-1">Sample value</div>
+                    <input
+                      value={a.sample || ''}
+                      onChange={(e) => {
+                        const next = attrsDraft.slice();
+                        next[idx] = { ...a, sample: e.target.value };
+                        setAttrsDraft(next);
+                      }}
+                      onBlur={() => commitAttrs(attrsDraft)}
+                      className="mac-field w-full"
+                      placeholder={'e.g. 123, "pending", 2026-01-01…'}
+                      disabled={a.type === 'status'}
+                    />
+                  </div>
                 </div>
+
+                {a.type === 'status' ? (
+                  <div className="mt-2">
+                    <div className="text-[11px] text-gray-500 mb-1">Values</div>
+                    <StatusValuesEditor
+                      values={a.values || []}
+                      onChange={(nextValues) => {
+                        const next = attrsDraft.slice();
+                        const cur = next[idx];
+                        if (!cur || cur.type !== 'status') return;
+                        next[idx] = { ...cur, values: nextValues };
+                        setAttrsDraft(next);
+                        commitAttrs(next);
+                      }}
+                    />
+                    <div className="mt-2 flex items-center gap-2">
+                      <span className="text-[10px] text-gray-500">Describe this status:</span>
+                      <button
+                        type="button"
+                        className="mac-btn px-2 py-1 text-[10px]"
+                        onClick={() =>
+                          doAttrDesc.openTable({
+                            doId: selectedId,
+                            doName: objLabel,
+                            attrId: a.id,
+                            attrName: a.name,
+                            values: a.values || [],
+                          })
+                        }
+                      >
+                        Table
+                      </button>
+                      <button
+                        type="button"
+                        className="mac-btn px-2 py-1 text-[10px]"
+                        onClick={() =>
+                          doAttrDesc.openFlow({
+                            doId: selectedId,
+                            doName: objLabel,
+                            attrId: a.id,
+                            attrName: a.name,
+                            values: a.values || [],
+                          })
+                        }
+                      >
+                        Flow
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
               </div>
             ))}
           </div>
@@ -217,6 +340,8 @@ export function DataObjectInspectorPanel({
           <div className="mt-2 text-xs text-gray-500">No attributes yet.</div>
         )}
       </div>
+
+      {doAttrDesc.modals}
     </div>
   );
 }

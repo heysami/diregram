@@ -50,9 +50,7 @@ export function NexusEditor({ doc }: Props) {
             placeholder="Markdown source..."
           />
           <div className="px-4 py-2 text-[10px] uppercase tracking-wide text-gray-500 bg-gray-50 border-t">
-            Below the `---` separator in this markdown, you&apos;ll see the
-            &nbsp;<span className="font-semibold">Condition Dimension Descriptions</span> section,
-            which links Flow/Table descriptions back to their hub nodes.
+            Below the `---` separator in this markdown, you&apos;ll see metadata blocks used by advanced editors.
           </div>
         </div>
       )}

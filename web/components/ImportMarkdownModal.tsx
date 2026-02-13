@@ -36,9 +36,7 @@ SECTION 0 — HARD RULES (do not break these)
   - Do NOT use markdown lists in the tree area (no leading "-", "*", "1.").
   - Do NOT use markdown emphasis/links expecting rendering — the app will treat it as literal text.
   - If you accidentally output headings/bullets, NexusMap will interpret them as node titles and your structure will be wrong.
-- The ONLY place we intentionally use "##" / "###" headings is **below the "---" separator** inside the dedicated section:
-  ## Condition Dimension Descriptions
-  This section is NOT part of the tree (it’s metadata text storage for lifecycle descriptions).
+- Below the "---" separator you MAY use headings/sections as normal documentation text (this area is not part of the node tree).
 - Fenced code blocks below '---' must be valid JSON.
   You requested “generate everything”, so do NOT omit metadata blocks; instead generate minimal valid JSON using safe defaults, and keep all links consistent.
 
@@ -204,53 +202,8 @@ IMPORTANT LIMITATION:
 Purpose:
 - Model lifecycle/state logic per dimension key (e.g. Status lifecycle: draft → submitted → approved).
 - The TREE defines the possible values as Hub variants using (key=value).
-- The actual lifecycle “definition” (flow/table text) is stored below '---' and linked back using desc running numbers.
-
-How it works (all of these must be consistent):
-- Hub line has a desc anchor:
-  <!-- desc:flow:Status:1,table:Status:2 -->
-- Below '---':
-  - \`\`\`dimension-descriptions\`\`\` JSON contains entries for runningNumber 1 and 2
-  - The "## Condition Dimension Descriptions" section contains the actual written body for desc:1 and desc:2
-
-WORKED EXAMPLE (Status lifecycle, end-to-end):
-
-Root
-  Order <!-- desc:flow:Status:1,table:Status:2 -->
-    Order (Status=draft)
-    Order (Status=submitted)
-    Order (Status=approved)
----
-\`\`\`dimension-descriptions
-{
-  "nextRunningNumber": 3,
-  "entries": [
-    { "runningNumber": 1, "content": "Order", "parentPath": ["Root"], "lineIndex": 1, "dimensionKey": "Status", "mode": "flow" },
-    { "runningNumber": 2, "content": "Order", "parentPath": ["Root"], "lineIndex": 1, "dimensionKey": "Status", "mode": "table" }
-  ]
-}
-\`\`\`
-
-## Condition Dimension Descriptions
-
-### [flow] Order (node-1::Status) <!-- desc:1 -->
-Valid transitions:
-- draft -> submitted (Submit)
-- submitted -> approved (Approve)
-- submitted -> draft (Request changes)
-
-Side effects:
-- on submit: lock editing, send notification
-- on approve: create invoice, enqueue fulfillment
-
-### [table] Order (node-1::Status) <!-- desc:2 -->
-Statuses:
-- draft: editable
-- submitted: review pending
-- approved: finalized
-
-Invalid:
-- approved -> draft is NOT allowed.
+- Lifecycle/state meaning must be expressed directly via the hub/variant structure and/or annotations.
+- Do NOT generate \`<!-- desc:... -->\` anchors or \`\`\`dimension-descriptions\`\`\` blocks.
 
 4.3 Flow tab business journey swimlane
 --------------------------------
@@ -489,9 +442,7 @@ Inline comment anchors:
 - <!-- hubnote:N -->  = hub notes anchor (unique)
   Must match: \`\`\`conditional-hub-notes\`\`\` entry runningNumber N.
   Recommended: use the SAME N for hubnote:N and expid:N on that hub line.
-- <!-- desc:... -->   = dimension description anchors on the HUB line
-  Format: <!-- desc:flow:Status:1,table:Status:2 -->
-  Must match: \`\`\`dimension-descriptions\`\`\` entries and the Condition Dimension Descriptions headings.
+- (REMOVED) Dimension description anchors (\`<!-- desc:... -->\`) are not used. Do not generate them.
 
 ===============================================================================
 SECTION 8 — '---' SEPARATOR + METADATA BLOCK SCHEMAS (advanced)
@@ -583,10 +534,48 @@ Schema: JSON array of grid nodes:
     "content": "Search box",
     "icon": "🔎",
     "color": "slate",
-    "uiType": "content|list|button|navOut|filter|tabs",
+    "uiType": "content|list|button|navOut|filter|tabs|wizard|sideNav|dropdown|collapsible|text",
     "dataObjectId": "do-1",
+    "dataObjectAttributeIds": ["__objectName__", "attr-1"],
+    "dataObjectAttributeMode": "data|input",
     "relationKind": "attribute|relation|none",
     "relationCardinality": "one|oneToMany|manyToMany",
+    "textVariant": "h1|h2|h3|h4|h5|h6|normal|small",
+    "textAlign": "left|center|right",
+    "uiTabs": [
+      {
+        "id": "tab-1",
+        "label": "Details",
+        "icon": "ℹ️",
+        "dataObjectId": "do-1",
+        "dataObjectAttributeIds": ["__objectName__", "attr-1"],
+        "dataObjectAttributeMode": "data|input",
+        "items": [
+          {
+            "id": "item-1",
+            "label": "Order number",
+            "icon": "#",
+            "dataObjectId": "do-1",
+            "dataObjectAttributeIds": ["attr-1"],
+            "dataObjectAttributeMode": "data|input"
+          }
+        ]
+      }
+    ],
+    "uiSections": [
+      {
+        "id": "section-1",
+        "label": "Advanced",
+        "icon": "⚙️",
+        "collapsedByDefault": false,
+        "dataObjectId": "do-1",
+        "dataObjectAttributeIds": ["attr-1"],
+        "dataObjectAttributeMode": "data|input",
+        "items": [
+          { "id": "item-1", "label": "Audit log", "icon": "🧾", "dataObjectId": "do-2" }
+        ]
+      }
+    ],
     "gridX": 0, "gridY": 0, "gridWidth": 2, "gridHeight": 1
   }
 ]
@@ -715,33 +704,6 @@ Schema:
 }
 WARNING: placement keys are node ids (node-<lineIndex>) and are fragile under edits.
 
-8.11 dimension-descriptions
-Type: \`\`\`dimension-descriptions\`\`\`
-Purpose:
-- Stores descriptions for Hub dimensions (lifecycle/conditional modeling) in two modes:
-  - mode "flow": a flow diagram/description for a dimension key (e.g. Status flow)
-  - mode "table": a table/definition view for a dimension key
-Used by:
-- Dimension Flow/Table editors (conditional/lifecycle features).
-Links to:
-- The hub node line is annotated with:
-  <!-- desc:flow:Status:1,table:Status:2 -->
-  Each entry references a runningNumber in this block.
-Schema:
-{
-  "nextRunningNumber": 3,
-  "entries": [
-    {
-      "runningNumber": 1,
-      "content": "Order",
-      "parentPath": ["Root"],
-      "lineIndex": 10,
-      "dimensionKey": "Status",
-      "mode": "flow"
-    }
-  ]
-}
-
 8.12 conditional-hub-notes
 Type: \`\`\`conditional-hub-notes\`\`\`
 Purpose:
@@ -842,7 +804,7 @@ Your output combines distinct modeling layers — DO NOT blur them:
 - Process flows (#flow#) = step-by-step behavior (decisions, validations, outcomes)
 - Flow tab swimlanes (#flowtab# + flowtab-swimlane-*) = high-level journey / handoff view(s)
 - Expanded nodes (<!-- expid:N --> + expanded-grid-N) = screen composition (what’s on the page)
-- Conditional hubs ((Key=value) variants + dimension-descriptions) = lifecycle / timeframe / state-based variants
+- Conditional hubs ((Key=value) variants) = lifecycle / timeframe / state-based variants
 - Data objects (data-objects) = domain entities + relationships, wired into screens/features
 
 MUST DO (strict rules)
@@ -875,8 +837,7 @@ MUST DO (strict rules)
 4) Use conditional hubs for timeframe/lifecycle (NOT fake linear “waiting” steps):
 - If time passes, async processing occurs, or availability depends on state, prefer:
   - hub variants like Thing (Status=draft), Thing (Status=submitted), ...
-  - lifecycle anchors on the hub line: <!-- desc:flow:Status:N,table:Status:M -->
-  - required blocks: dimension-descriptions + prose section (and conditional-hub-notes if used)
+  - optional hub notes (if needed): <!-- hubnote:N --> + conditional-hub-notes block
 
 5) Expanded nodes must be real screen composition (not prose):
 - For each <!-- expid:N --> you MUST include:
@@ -897,8 +858,7 @@ MUST DO (strict rules)
   - process-node-type-* (nodeId match)
   - flow-connector-labels keys
   - flowtab-swimlane-* placement keys
-  - hub registries (dimension-descriptions, conditional-hub-notes) lineIndex
-  - prose headers (node-X::Key) references
+  - hub registries (conditional-hub-notes) lineIndex
 If you cannot guarantee correct reindexing, do NOT make structural edits.
 
 TO AVOID (hard don’ts)
@@ -910,6 +870,7 @@ TO AVOID (hard don’ts)
 Practical debug workflow (self-correct):
 - Generate the tree first (stable line ordering).
 - Add anchors (expid/fid/do/desc/hubnote) ONLY when you will also generate the matching blocks.
+- Do NOT generate legacy conditional-hub desc anchors.
 - Generate metadata blocks after '---'.
 - Verify: JSON validity, connector validity (parent→child only), and orphan data object detection.
 - If you edit the tree: immediately recompute ALL lineIndex/node-id based references.
@@ -1050,9 +1011,7 @@ CRITICAL REQUIREMENTS:
 - flow-node-N (for each entry in flow-nodes that needs a graph)
 - flow-connector-labels (parent→child only)
 - flowtab-swimlane-FID (for each flowtab)
-- dimension-descriptions (if using hubs)
 - conditional-hub-notes (if using hubs)
-- Prose section (for dimension descriptions)
 
 FOCUS AREAS:
 ☑ Normal (non-#flow#) nodes are sitemap/IA: navigation → screens → content → functions.
@@ -1127,7 +1086,7 @@ PRE-GENERATION CHECKLIST (run mentally BEFORE outputting markdown)
   - flow-nodes + flow-node-N for every referenced runningNumber
   - flow-connector-labels
   - flowtab-swimlane-{fid} for each flowtab
-  - dimension-descriptions + conditional-hub-notes + prose section ONLY if those anchors appear in the tree
+  - conditional-hub-notes ONLY if hubnote anchors appear in the tree
 
 ☐ Domain modeling wiring (non-negotiable):
   - Every data object in \`\`\`data-objects\`\`\` is referenced by at least one:
@@ -1142,7 +1101,7 @@ PRE-GENERATION CHECKLIST (run mentally BEFORE outputting markdown)
 
 ☐ Timeframe vs navigation discipline:
   - Do NOT model “waiting/async/time passing” as navigation nodes.
-  - Prefer conditional hubs (Status=..., Phase=..., etc.) + dimension descriptions for lifecycle/timeframe modeling.
+  - Prefer conditional hubs (Status=..., Phase=..., etc.) + hub notes/annotations for lifecycle/timeframe modeling.
   - Avoid duplicating the same feature in two places (“second sitemap” inside hub variants).`;
 
 // Separate copyable checklist for post-generation QA.
@@ -1229,9 +1188,6 @@ const POST_GENERATION_VERIFICATION_CHECKLIST = `Post-Generation Verification Che
 ☐ Run: cat -n [file] | grep "#flow# <!--"
   → Verify flow-nodes registry line indices match
 
-☐ Check dimension-descriptions line indices
-  → Must match the hub nodes with <!-- desc: --> anchors
-
 ☐ Check conditional-hub-notes line indices
   → Must match nodes with <!-- hubnote: --> anchors
 
@@ -1286,11 +1242,6 @@ const POST_GENERATION_VERIFICATION_CHECKLIST = `Post-Generation Verification Che
   → No overlapping grid positions
 
 7) Hub Systems (if applicable)
-☐ Dimension descriptions:
-  → Each hub node has <!-- desc:mode:key:N --> anchor
-  → dimension-descriptions registry has matching entry
-  → Prose section has matching header: ### [mode] Name (node-X::key)
-
 ☐ Conditional hub notes:
   → Each hub has <!-- hubnote:N --> anchor
   → conditional-hub-notes registry has entry
@@ -1519,7 +1470,7 @@ What it checks (high-signal):
     - branching #flow# nodes must have connector labels for each branch edge
   - Swimlanes: flowtab-swimlane-* blocks must NOT include "connectors"
   - Flowtab refs (if present): flowtab-process-references must reference existing nodeIds; validates inner refs' grids when specified
-  - Dimension registries (best-effort): dimension-descriptions and conditional-hub-notes lineIndex fields must be in-range
+  - Hub notes (best-effort): conditional-hub-notes lineIndex fields must be in-range
   - Data objects: detects orphan do-* objects by requiring references via <!-- do:... --> and/or dataObjectId fields in expanded UI blocks
 
 Exit code:
@@ -1954,18 +1905,6 @@ def main() -> None:
                             if not any(isinstance(n, dict) and n.get("key") == grid_key for n in grid):
                                 issues.append(Issue("warning", "FLOWTAB_REF_MISSING_GRID_NODE", f"flowtab-process-references['{k}'] gridNodeKey '{grid_key}' not found in expanded-grid-{exp_rn}"))
 
-    # Dimension registries (best-effort)
-    dim = parsed_blocks.get("dimension-descriptions")
-    if isinstance(dim, dict):
-        entries = dim.get("entries")
-        if isinstance(entries, list):
-            for e in entries:
-                if not isinstance(e, dict):
-                    continue
-                rn = e.get("runningNumber")
-                li = e.get("lineIndex")
-                if li is None or not isinstance(li, int) or li < 0 or li >= len(lines):
-                    issues.append(Issue("error", "DIM_DESC_BAD_LINE", f"dimension-descriptions entry rn={rn} has invalid lineIndex {li}"))
     hub = parsed_blocks.get("conditional-hub-notes")
     if isinstance(hub, dict):
         entries = hub.get("entries")

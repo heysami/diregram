@@ -35,12 +35,9 @@ export function useTableEditing({
       const value = row?.cells[colId] || '';
       setEditingCell({ rowId, colId });
       setEditingValue(value);
-      // Show suggestions upfront for header rows when input is empty
-      if (row?.rowType === 'header' && dimensionValues.length > 0 && value === '') {
-        setSuggestions(dimensionValues.slice(0, 10));
-      } else {
-        setSuggestions([]);
-      }
+      // Show suggestions upfront when input is empty (any cell, including header cells).
+      if (dimensionValues.length > 0 && value.trim() === '') setSuggestions(dimensionValues.slice(0, 10));
+      else setSuggestions([]);
       setSuggestionIndex(null);
     },
     [rows, dimensionValues],
@@ -64,23 +61,21 @@ export function useTableEditing({
   const handleCellInput = useCallback(
     (value: string) => {
       setEditingValue(value);
-      const row = rows.find((r) => r.id === editingCell?.rowId);
-      if (row?.rowType === 'header' && dimensionValues.length > 0) {
-        if (value.trim() === '') {
-          // Show all suggestions when input is empty
-          setSuggestions(dimensionValues.slice(0, 10));
-        } else {
-          const filtered = dimensionValues.filter((v) =>
-            v.toLowerCase().includes(value.toLowerCase()),
-          );
-          setSuggestions(filtered.slice(0, 10));
-        }
-        setSuggestionIndex(null);
-      } else {
+      if (dimensionValues.length === 0) {
         setSuggestions([]);
+        setSuggestionIndex(null);
+        return;
       }
+      if (value.trim() === '') {
+        setSuggestions(dimensionValues.slice(0, 10));
+        setSuggestionIndex(null);
+        return;
+      }
+      const filtered = dimensionValues.filter((v) => v.toLowerCase().includes(value.toLowerCase()));
+      setSuggestions(filtered.slice(0, 10));
+      setSuggestionIndex(null);
     },
-    [rows, dimensionValues, editingCell],
+    [dimensionValues],
   );
 
   const handleCellKeyDown = useCallback(

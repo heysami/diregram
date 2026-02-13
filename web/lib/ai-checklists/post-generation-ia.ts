@@ -22,6 +22,11 @@ AVOID:
 ☐ Screen content placement:
   → Detailed screen composition/content MUST live in expanded-grid-N (not as long child lists under a screen node)
   → Reminder: the tree may name screens and high-level sections, but component-level detail belongs in expanded-grid-N.
+  → For LLM-generated screen layouts, prefer using explicit expanded-grid uiTypes to convey structure:
+    - tabs / wizard / sideNav / dropdown: navigation + grouped content lists
+    - collapsible: grouped sections that can expand/collapse
+    - text (with textVariant/textAlign): headings, labels, helper text
+  → Avoid encoding these as long prose paragraphs; encode them as structured expanded-grid JSON.
 
 ☐ Screen surface tagging (MUST):
   → Every screen node with <!-- expid:N --> MUST include a ui-surface tag (tg-uiSurface), e.g.:

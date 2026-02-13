@@ -1527,7 +1527,7 @@ export function DimensionFlowEditor({
                 
                 const key = edgeKey(meta.sourceNodeId, branchNodes[0].id);
                 const label = connectorLabels[key]?.label?.trim();
-                const labelColor = connectorLabels[key]?.color || '#0f172a';
+    const labelColor = connectorLabels[key]?.color || '#0f172a';
                 const midX = (startX + endX) / 2;
                 const midY = (startY + endY) / 2;
 

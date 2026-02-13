@@ -10,7 +10,7 @@
  */
 
 export const KNOWN_NODE_LINE_COMMENT_RE =
-  /<!--\s*(?:expanded:\d+|expid:\d+|rn:\d+|desc:[^>]*|ann:[^>]*|icon:[\s\S]*?|do:[^>]*?|doattrs:[^>]*?|tags:[^>]*)\s*-->/g;
+  /<!--\s*(?:expanded:\d+|expid:\d+|rn:\d+|desc:[^>]*|ann:[^>]*|icon:[\s\S]*?|do:[^>]*?|doattrs:[^>]*?|dostatus:[^>]*?|tags:[^>]*)\s*-->/g;
 
 export function extractKnownNodeLineComments(line: string): string[] {
   return line.match(KNOWN_NODE_LINE_COMMENT_RE) || [];

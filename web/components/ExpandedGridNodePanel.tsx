@@ -6,13 +6,19 @@ import {
   ExpandedGridRelationCardinality,
   ExpandedGridRelationKind,
   ExpandedGridUiType,
+  ExpandedGridUiTab,
+  ExpandedGridUiSection,
+  ExpandedGridTextAlign,
+  ExpandedGridTextVariant,
   loadExpandedGridNodesFromDoc,
   saveExpandedGridNodesToDoc,
 } from '@/lib/expanded-grid-storage';
 import { createDataObject, loadDataObjects, upsertDataObject } from '@/lib/data-object-storage';
 import { loadExpandedNodeMetadata } from '@/lib/expanded-node-metadata';
 import { DataObjectSearchSelect } from '@/components/DataObjectSearchSelect';
-import { DataObjectAttributeMultiSelect } from '@/components/DataObjectAttributeMultiSelect';
+import { ExpandedGridNodePanelUiModal, type UiModal } from '@/components/expanded-grid-node-panel/ui-modal';
+import { ExpandedGridNodePanelUiConfigEditor } from '@/components/expanded-grid-node-panel/ui-config-editor';
+import { ExpandedGridNodePanelMainAttrsEditor } from '@/components/expanded-grid-node-panel/main-attrs-editor';
 
 const UI_TYPES: Array<{ value: ExpandedGridUiType; label: string }> = [
   { value: 'content', label: 'Content' },
@@ -21,6 +27,11 @@ const UI_TYPES: Array<{ value: ExpandedGridUiType; label: string }> = [
   { value: 'navOut', label: 'Navigation out' },
   { value: 'filter', label: 'Filter' },
   { value: 'tabs', label: 'Tabs' },
+  { value: 'wizard', label: 'Wizard' },
+  { value: 'sideNav', label: 'Side nav' },
+  { value: 'dropdown', label: 'Dropdown' },
+  { value: 'collapsible', label: 'Collapsible' },
+  { value: 'text', label: 'Text' },
 ];
 
 const COLORS = ['slate', 'gray', 'blue', 'green', 'red', 'purple', 'orange', 'pink', 'cyan', 'yellow'] as const;
@@ -137,6 +148,37 @@ export function ExpandedGridNodePanel({ doc, selection, nodeMap, onClose }: Prop
     const updated = gridNodes.map((n) => ((n.key || n.id) === gridNodeKey ? { ...n, ...patch } : n));
     saveExpandedGridNodesToDoc(doc, runningNumber, updated);
   };
+
+  const ensureUiTabs = (current: ExpandedGridNodeRuntime): ExpandedGridUiTab[] => {
+    const existing = (current as unknown as Record<string, unknown>).uiTabs as ExpandedGridUiTab[] | undefined;
+    if (existing && Array.isArray(existing) && existing.length) return existing;
+    return [{ id: 'tab-1', label: 'Tab 1', icon: undefined, items: [{ id: 'item-1', label: 'Item 1', icon: undefined }] }];
+  };
+
+  const ensureUiSections = (current: ExpandedGridNodeRuntime): ExpandedGridUiSection[] => {
+    const existing = (current as unknown as Record<string, unknown>).uiSections as ExpandedGridUiSection[] | undefined;
+    if (existing && Array.isArray(existing) && existing.length) return existing;
+    return [{ id: 'section-1', label: 'Section 1', icon: undefined, items: [{ id: 'item-1', label: 'Item 1', icon: undefined }] }];
+  };
+
+  const TEXT_VARIANTS: Array<{ value: ExpandedGridTextVariant; label: string }> = [
+    { value: 'h1', label: 'H1' },
+    { value: 'h2', label: 'H2' },
+    { value: 'h3', label: 'H3' },
+    { value: 'h4', label: 'H4' },
+    { value: 'h5', label: 'H5' },
+    { value: 'h6', label: 'H6' },
+    { value: 'normal', label: 'Normal' },
+    { value: 'small', label: 'Small' },
+  ];
+
+  const TEXT_ALIGNS: Array<{ value: ExpandedGridTextAlign; label: string }> = [
+    { value: 'left', label: 'Left' },
+    { value: 'center', label: 'Middle' },
+    { value: 'right', label: 'Right' },
+  ];
+
+  const [uiModalStack, setUiModalStack] = useState<UiModal[]>([]);
 
   const linkedObject = selectedNode.dataObjectId
     ? dataObjectStore.objects.find((o) => o.id === selectedNode.dataObjectId) || null
@@ -256,12 +298,11 @@ export function ExpandedGridNodePanel({ doc, selection, nodeMap, onClose }: Prop
       </div>
 
       {selectedNode.dataObjectId ? (
-        <DataObjectAttributeMultiSelect
-          objectId={selectedNode.dataObjectId}
-          objects={dataObjectStore.objects}
-          value={selectedNode.dataObjectAttributeIds || []}
-          onChange={(next) => commit({ dataObjectAttributeIds: next })}
-          label="Linked attributes"
+        <ExpandedGridNodePanelMainAttrsEditor
+          dataObjectId={selectedNode.dataObjectId}
+          attributeIds={selectedNode.dataObjectAttributeIds || []}
+          attributeMode={selectedNode.dataObjectAttributeMode}
+          setUiModalStack={setUiModalStack}
         />
       ) : null}
 
@@ -308,6 +349,16 @@ export function ExpandedGridNodePanel({ doc, selection, nodeMap, onClose }: Prop
             onChange={(e) => {
               const nextType = e.target.value as ExpandedGridUiType;
               const nextPatch: Partial<ExpandedGridNodeRuntime> = { uiType: nextType };
+              if ((nextType === 'tabs' || nextType === 'wizard' || nextType === 'sideNav' || nextType === 'dropdown') && !selectedNode.uiTabs) {
+                nextPatch.uiTabs = ensureUiTabs(selectedNode);
+              }
+              if (nextType === 'collapsible' && !selectedNode.uiSections) {
+                nextPatch.uiSections = ensureUiSections(selectedNode);
+              }
+              if (nextType === 'text') {
+                nextPatch.textVariant = (selectedNode.textVariant || 'normal') as ExpandedGridTextVariant;
+                nextPatch.textAlign = (selectedNode.textAlign || 'left') as ExpandedGridTextAlign;
+              }
               // Keep relationship fields constrained: only lists can carry relation cardinality.
               if (nextType !== 'list') {
                 nextPatch.relationKind = undefined;
@@ -327,6 +378,72 @@ export function ExpandedGridNodePanel({ doc, selection, nodeMap, onClose }: Prop
             ))}
           </select>
         </div>
+
+        {(() => {
+          const currentType = selectedNode.uiType || 'content';
+
+          if (
+            currentType === 'tabs' ||
+            currentType === 'wizard' ||
+            currentType === 'sideNav' ||
+            currentType === 'dropdown' ||
+            currentType === 'collapsible'
+          ) {
+            return (
+              <ExpandedGridNodePanelUiConfigEditor
+                uiType={currentType as ExpandedGridUiType}
+                uiTabs={(selectedNode.uiTabs || []) as ExpandedGridUiTab[]}
+                uiSections={(selectedNode.uiSections || []) as ExpandedGridUiSection[]}
+                setUiModalStack={setUiModalStack}
+                onCommitUiTabs={(next) => commit({ uiTabs: next })}
+                onCommitUiSections={(next) => commit({ uiSections: next })}
+              />
+            );
+          }
+
+          if (currentType === 'text') {
+            return (
+              <div className="mt-4">
+                <div className="text-xs font-bold uppercase tracking-wider text-gray-500 mb-2">Text</div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[11px] font-medium text-gray-700 mb-1">Variant</label>
+                    <select
+                      value={(selectedNode.textVariant || 'normal') as ExpandedGridTextVariant}
+                      onChange={(e) => commit({ textVariant: e.target.value as ExpandedGridTextVariant })}
+                      className="w-full text-xs border border-gray-300 rounded px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    >
+                      {TEXT_VARIANTS.map((v) => (
+                        <option key={v.value} value={v.value}>
+                          {v.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-medium text-gray-700 mb-1">Align</label>
+                    <select
+                      value={(selectedNode.textAlign || 'left') as ExpandedGridTextAlign}
+                      onChange={(e) => commit({ textAlign: e.target.value as ExpandedGridTextAlign })}
+                      className="w-full text-xs border border-gray-300 rounded px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    >
+                      {TEXT_ALIGNS.map((a) => (
+                        <option key={a.value} value={a.value}>
+                          {a.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                <div className="mt-2 text-[10px] text-gray-500">
+                  Uses the node’s “Text” field as the content.
+                </div>
+              </div>
+            );
+          }
+
+          return null;
+        })()}
 
         <div className="mt-4">
           <label className="block text-xs font-medium text-gray-700 mb-2">Color</label>
@@ -430,7 +547,762 @@ export function ExpandedGridNodePanel({ doc, selection, nodeMap, onClose }: Prop
         </details>
       )}
       </div>
+
+      <ExpandedGridNodePanelUiModal
+        uiModalStack={uiModalStack}
+        setUiModalStack={setUiModalStack}
+        objects={dataObjectStore.objects}
+        childNodeLinkedObjects={childNodeLinkedObjects.map((o) => ({ id: o.id, name: o.name }))}
+        currentUiTabs={(selectedNode.uiTabs || []) as ExpandedGridUiTab[]}
+        currentUiSections={(selectedNode.uiSections || []) as ExpandedGridUiSection[]}
+        onCommitUiTabs={(next) => commit({ uiTabs: next })}
+        onCommitUiSections={(next) => commit({ uiSections: next })}
+        onCommitMainAttrs={({ ids, mode }) => commit({ dataObjectAttributeIds: ids, dataObjectAttributeMode: mode })}
+      />
+
+      {/* Inline modal implementation moved to `components/expanded-grid-node-panel/ui-modal.tsx`.
+          Kept here commented-out for easier diff review; safe to delete later.
+      {uiModal ? (
+        <div
+          className="fixed inset-0 z-[100] bg-black/40 flex items-center justify-center p-4"
+          onMouseDown={(e) => {
+            // click outside closes
+            if (e.target === e.currentTarget) closeAllModals();
+          }}
+        >
+          <div className="w-full max-w-[680px] max-h-[85vh] overflow-hidden rounded-lg border border-gray-200 bg-white shadow-xl">
+            <div className="px-3 py-2 border-b border-gray-200 flex items-center justify-between">
+              <div className="flex items-center gap-2 min-w-0">
+                {uiModalStack.length > 1 ? (
+                  <button
+                    type="button"
+                    onClick={closeModal}
+                    className="text-[11px] px-2 py-1 rounded-md border border-gray-200 text-gray-700 hover:bg-gray-100"
+                  >
+                    Back
+                  </button>
+                ) : null}
+                <div className="text-xs font-semibold text-gray-900 truncate">
+                  {uiModal.kind === 'tab'
+                    ? `${uiModal.mode === 'add' ? 'Add' : 'Edit'} ${uiModal.uiType === 'wizard' ? 'step' : uiModal.uiType === 'dropdown' ? 'section' : 'tab'}`
+                    : uiModal.kind === 'tabItem'
+                      ? `${uiModal.itemId ? 'Edit' : 'Add'} item`
+                      : uiModal.kind === 'section'
+                        ? `${uiModal.mode === 'add' ? 'Add' : 'Edit'} collapsible section`
+                        : 'Edit item'}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={closeAllModals}
+                className="text-[11px] px-2 py-1 rounded-md border border-gray-200 text-gray-700 hover:bg-gray-100"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="p-4 overflow-y-auto max-h-[calc(85vh-44px)]">
+              {uiModal.kind === 'tab' ? (
+                (() => {
+                  const draft = uiModal.draft;
+                  const setDraft = (patch: Partial<ExpandedGridUiTab>) =>
+                    setUiModalStack((prev) => {
+                      const next = [...prev];
+                      const top = next[next.length - 1] as Extract<UiModal, { kind: 'tab' }>;
+                      next[next.length - 1] = { ...top, draft: { ...top.draft, ...patch } };
+                      return next;
+                    });
+
+                  return (
+                    <div className="space-y-3">
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="block text-[11px] font-medium text-gray-700 mb-1">Icon</label>
+                          <input
+                            value={draft.icon || ''}
+                            onChange={(e) => setDraft({ icon: e.target.value.trim() || undefined })}
+                            placeholder="🙂"
+                            className="mac-field w-full"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[11px] font-medium text-gray-700 mb-1">Label</label>
+                          <input
+                            value={draft.label || ''}
+                            onChange={(e) => setDraft({ label: e.target.value })}
+                            placeholder="Tab label"
+                            className="mac-field w-full"
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-medium text-gray-700 mb-1">Linked data object</label>
+                        <DataObjectSearchSelect
+                          className="w-full"
+                          value={draft.dataObjectId || ''}
+                          onChange={(nextId) =>
+                            setDraft({
+                              dataObjectId: nextId || undefined,
+                              dataObjectAttributeIds: [],
+                              dataObjectAttributeMode: 'data',
+                            })
+                          }
+                          objects={dataObjectStore.objects.map((o) => ({ id: o.id, name: o.name }))}
+                          placeholder="Link object…"
+                          includeNoneOption={true}
+                          noneLabel="No object"
+                        />
+                        {childNodeLinkedObjects.length > 0 && (
+                          <div className="mt-2 flex flex-wrap gap-1">
+                            {childNodeLinkedObjects.slice(0, 8).map((o) => (
+                              <button
+                                key={o.id}
+                                type="button"
+                                onClick={() => setDraft({ dataObjectId: o.id, dataObjectAttributeIds: [] })}
+                                className={`text-[10px] px-1.5 py-0.5 rounded-md border ${
+                                  draft.dataObjectId === o.id
+                                    ? 'border-blue-300 bg-blue-50 text-blue-700'
+                                    : 'border-gray-200 text-gray-700 hover:bg-gray-100'
+                                }`}
+                              >
+                                {o.name}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        {draft.dataObjectId ? (
+                          <>
+                            <div className="mt-2 grid grid-cols-2 gap-2">
+                              <div className="col-span-2">
+                                <label className="block text-[11px] font-medium text-gray-700 mb-1">
+                                  Attributes mode (applies to all selected)
+                                </label>
+                                <select
+                                  value={(draft.dataObjectAttributeMode || 'data') as ExpandedGridAttributeRenderMode}
+                                  onChange={(e) => setDraft({ dataObjectAttributeMode: e.target.value as ExpandedGridAttributeRenderMode })}
+                                  className="mac-field w-full"
+                                >
+                                  <option value="data">Data only</option>
+                                  <option value="input">Input form</option>
+                                </select>
+                              </div>
+                            </div>
+                            <DataObjectAttributeMultiSelect
+                              objectId={draft.dataObjectId}
+                              objects={dataObjectStore.objects}
+                              value={draft.dataObjectAttributeIds || []}
+                              onChange={(nextAttrs) => setDraft({ dataObjectAttributeIds: nextAttrs })}
+                              label="Linked attributes"
+                            />
+                          </>
+                        ) : null}
+                      </div>
+
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <div className="text-[11px] font-medium text-gray-700">Items</div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const newItem: UiItemDraft = {
+                                id: makeId('item'),
+                                label: `Item ${(draft.items || []).length + 1}`,
+                                icon: undefined,
+                                dataObjectId: undefined,
+                                dataObjectAttributeIds: [],
+                              };
+                              setUiModalStack((prev) => [
+                                ...prev,
+                                { kind: 'tabItem', uiType: uiModal.uiType, tabId: draft.id, itemId: newItem.id, draft: newItem },
+                              ]);
+                            }}
+                            className="text-[11px] px-2 py-1 rounded-md bg-blue-600 text-white hover:bg-blue-700"
+                          >
+                            Add item
+                          </button>
+                        </div>
+                        <div className="rounded-md border border-gray-200 bg-white overflow-hidden">
+                          {(() => {
+                            const safeItems = Array.isArray(draft.items)
+                              ? (draft.items as unknown[]).filter(
+                                  (x): x is NonNullable<ExpandedGridUiTab['items']>[number] =>
+                                    !!x && typeof x === 'object' && typeof (x as Record<string, unknown>).id === 'string'
+                                )
+                              : [];
+                            if (safeItems.length === 0) {
+                              return <div className="p-2 text-[11px] text-gray-500">No items yet.</div>;
+                            }
+                            return (
+                              <div className="divide-y divide-gray-100">
+                                {safeItems.map((it) => (
+                                  <div key={it.id} className="p-2 flex items-center gap-2">
+                                    <div className="min-w-0 flex-1">
+                                      <div className="text-[11px] text-gray-900 truncate">
+                                        {it.icon ? <span className="mr-1">{it.icon}</span> : null}
+                                        {it.label}
+                                        {it.dataObjectId ? <span className="ml-1 text-[10px] text-blue-700">🔗</span> : null}
+                                      </div>
+                                      {it.dataObjectAttributeIds?.length ? (
+                                        <div className="text-[10px] text-gray-500">
+                                          attrs: <span className="font-medium">{it.dataObjectAttributeIds.length}</span>
+                                        </div>
+                                      ) : null}
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const asDraft: UiItemDraft = {
+                                          id: it.id,
+                                          label: it.label,
+                                          icon: it.icon,
+                                          dataObjectId: (it as unknown as Record<string, unknown>).dataObjectId as string | undefined,
+                                          dataObjectAttributeIds: (it as unknown as Record<string, unknown>).dataObjectAttributeIds as string[] | undefined,
+                                          dataObjectAttributeMode: (it as unknown as Record<string, unknown>).dataObjectAttributeMode as ExpandedGridAttributeRenderMode | undefined,
+                                        };
+                                        setUiModalStack((prev) => [...prev, { kind: 'tabItem', uiType: uiModal.uiType, tabId: draft.id, itemId: it.id, draft: asDraft }]);
+                                      }}
+                                      className="text-[11px] px-2 py-1 rounded-md border border-gray-200 text-gray-700 hover:bg-gray-100"
+                                    >
+                                      Edit
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setDraft({ items: safeItems.filter((x) => x.id !== it.id) })}
+                                      className="text-[11px] px-2 py-1 rounded-md border border-gray-200 text-red-600 hover:bg-red-50"
+                                    >
+                                      Delete
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                            );
+                          })()}
+                        </div>
+                      </div>
+
+                      <div className="pt-2 flex items-center justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={closeModal}
+                          className="text-[11px] px-2 py-1 rounded-md border border-gray-200 text-gray-700 hover:bg-gray-100"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const current = selectedNode.uiTabs || [];
+                            const normalized: ExpandedGridUiTab = {
+                              ...draft,
+                              label: (draft.label || '').trim() || 'Untitled',
+                              items: [...(draft.items || [])],
+                            };
+                            const next =
+                              uiModal.mode === 'add'
+                                ? [...current, normalized]
+                                : current.map((x) => (x.id === uiModal.tabId ? normalized : x));
+                            commit({ uiTabs: next });
+                            closeModal();
+                          }}
+                          className="text-[11px] px-2 py-1 rounded-md bg-blue-600 text-white hover:bg-blue-700"
+                        >
+                          Save
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })()
+              ) : uiModal.kind === 'tabItem' ? (
+                (() => {
+                  const draft = uiModal.draft;
+                  const setDraft = (patch: Partial<UiItemDraft>) =>
+                    setUiModalStack((prev) => {
+                      const next = [...prev];
+                      const top = next[next.length - 1] as Extract<UiModal, { kind: 'tabItem' }>;
+                      next[next.length - 1] = { ...top, draft: { ...top.draft, ...patch } };
+                      return next;
+                    });
+
+                  return (
+                    <div className="space-y-3">
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="block text-[11px] font-medium text-gray-700 mb-1">Icon</label>
+                          <input value={draft.icon || ''} onChange={(e) => setDraft({ icon: e.target.value.trim() || undefined })} className="mac-field w-full" />
+                        </div>
+                        <div>
+                          <label className="block text-[11px] font-medium text-gray-700 mb-1">Label</label>
+                          <input value={draft.label || ''} onChange={(e) => setDraft({ label: e.target.value })} className="mac-field w-full" />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-medium text-gray-700 mb-1">Linked data object</label>
+                        <DataObjectSearchSelect
+                          className="w-full"
+                          value={draft.dataObjectId || ''}
+                          onChange={(nextId) =>
+                            setDraft({
+                              dataObjectId: nextId || undefined,
+                              dataObjectAttributeIds: [],
+                              dataObjectAttributeMode: 'data',
+                            })
+                          }
+                          objects={dataObjectStore.objects.map((o) => ({ id: o.id, name: o.name }))}
+                          placeholder="Link object…"
+                          includeNoneOption={true}
+                          noneLabel="No object"
+                        />
+                        {draft.dataObjectId ? (
+                          <>
+                            <label className="block text-[11px] font-medium text-gray-700 mb-1">
+                              Attributes mode (applies to all selected)
+                            </label>
+                            <select
+                              value={(draft.dataObjectAttributeMode || 'data') as ExpandedGridAttributeRenderMode}
+                              onChange={(e) => setDraft({ dataObjectAttributeMode: e.target.value as ExpandedGridAttributeRenderMode })}
+                              className="mac-field w-full"
+                            >
+                              <option value="data">Data only</option>
+                              <option value="input">Input form</option>
+                            </select>
+                            <DataObjectAttributeMultiSelect
+                              objectId={draft.dataObjectId}
+                              objects={dataObjectStore.objects}
+                              value={draft.dataObjectAttributeIds || []}
+                              onChange={(nextAttrs) => setDraft({ dataObjectAttributeIds: nextAttrs })}
+                              label="Linked attributes"
+                            />
+                          </>
+                        ) : null}
+                      </div>
+
+                      <div className="pt-2 flex items-center justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={closeModal}
+                          className="text-[11px] px-2 py-1 rounded-md border border-gray-200 text-gray-700 hover:bg-gray-100"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            // Update the parent tab draft (second-to-last in stack), not the doc yet.
+                            setUiModalStack((prev) => {
+                              if (prev.length < 2) return prev.slice(0, -1);
+                              const next = [...prev];
+                              const item = next[next.length - 1] as Extract<UiModal, { kind: 'tabItem' }>;
+                              const parent = next[next.length - 2] as Extract<UiModal, { kind: 'tab' }>;
+                              const items = Array.isArray(parent.draft.items)
+                                ? (parent.draft.items as unknown[]).filter(
+                                    (x): x is NonNullable<ExpandedGridUiTab['items']>[number] =>
+                                      !!x && typeof x === 'object' && typeof (x as Record<string, unknown>).id === 'string'
+                                  )
+                                : [];
+                              const normalized: UiItemDraft = {
+                                ...item.draft,
+                                label: (item.draft.label || '').trim() || 'Untitled',
+                              };
+                              const idx = items.findIndex((x) => x.id === item.itemId);
+                              if (idx >= 0) {
+                                items[idx] = normalized as unknown as ExpandedGridUiTab['items'][number];
+                              } else {
+                                items.push(normalized as unknown as ExpandedGridUiTab['items'][number]);
+                              }
+                              next[next.length - 2] = { ...parent, draft: { ...parent.draft, items } };
+                              next.pop();
+                              return next;
+                            });
+                          }}
+                          className="text-[11px] px-2 py-1 rounded-md bg-blue-600 text-white hover:bg-blue-700"
+                        >
+                          Save item
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })()
+              ) : uiModal.kind === 'section' ? (
+                (() => {
+                  const draft = uiModal.draft;
+                  const setDraft = (patch: Partial<ExpandedGridUiSection>) =>
+                    setUiModalStack((prev) => {
+                      const next = [...prev];
+                      const top = next[next.length - 1] as Extract<UiModal, { kind: 'section' }>;
+                      next[next.length - 1] = { ...top, draft: { ...top.draft, ...patch } };
+                      return next;
+                    });
+
+                  return (
+                    <div className="space-y-3">
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="block text-[11px] font-medium text-gray-700 mb-1">Icon</label>
+                          <input value={draft.icon || ''} onChange={(e) => setDraft({ icon: e.target.value.trim() || undefined })} className="mac-field w-full" />
+                        </div>
+                        <div>
+                          <label className="block text-[11px] font-medium text-gray-700 mb-1">Label</label>
+                          <input value={draft.label || ''} onChange={(e) => setDraft({ label: e.target.value })} className="mac-field w-full" />
+                        </div>
+                      </div>
+
+                      <label className="text-[11px] text-gray-700 flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={!!draft.collapsedByDefault}
+                          onChange={(e) => setDraft({ collapsedByDefault: e.target.checked })}
+                        />
+                        Collapsed by default
+                      </label>
+
+                      <div>
+                        <label className="block text-[11px] font-medium text-gray-700 mb-1">Linked data object</label>
+                        <DataObjectSearchSelect
+                          className="w-full"
+                          value={draft.dataObjectId || ''}
+                          onChange={(nextId) =>
+                            setDraft({
+                              dataObjectId: nextId || undefined,
+                              dataObjectAttributeIds: [],
+                              dataObjectAttributeMode: 'data',
+                            })
+                          }
+                          objects={dataObjectStore.objects.map((o) => ({ id: o.id, name: o.name }))}
+                          placeholder="Link object…"
+                          includeNoneOption={true}
+                          noneLabel="No object"
+                        />
+                        {childNodeLinkedObjects.length > 0 && (
+                          <div className="mt-2 flex flex-wrap gap-1">
+                            {childNodeLinkedObjects.slice(0, 8).map((o) => (
+                              <button
+                                key={o.id}
+                                type="button"
+                                onClick={() => setDraft({ dataObjectId: o.id, dataObjectAttributeIds: [], dataObjectAttributeMode: 'data' })}
+                                className={`text-[10px] px-1.5 py-0.5 rounded-md border ${
+                                  draft.dataObjectId === o.id
+                                    ? 'border-blue-300 bg-blue-50 text-blue-700'
+                                    : 'border-gray-200 text-gray-700 hover:bg-gray-100'
+                                }`}
+                              >
+                                {o.name}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        {draft.dataObjectId ? (
+                          <>
+                            <label className="block text-[11px] font-medium text-gray-700 mb-1">
+                              Attributes mode (applies to all selected)
+                            </label>
+                            <select
+                              value={(draft.dataObjectAttributeMode || 'data') as ExpandedGridAttributeRenderMode}
+                              onChange={(e) => setDraft({ dataObjectAttributeMode: e.target.value as ExpandedGridAttributeRenderMode })}
+                              className="mac-field w-full"
+                            >
+                              <option value="data">Data only</option>
+                              <option value="input">Input form</option>
+                            </select>
+                            <DataObjectAttributeMultiSelect
+                              objectId={draft.dataObjectId}
+                              objects={dataObjectStore.objects}
+                              value={draft.dataObjectAttributeIds || []}
+                              onChange={(nextAttrs) => setDraft({ dataObjectAttributeIds: nextAttrs })}
+                              label="Linked attributes"
+                            />
+                          </>
+                        ) : null}
+                      </div>
+
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <div className="text-[11px] font-medium text-gray-700">Items</div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const newItem: UiItemDraft = {
+                                id: makeId('item'),
+                                label: `Item ${(draft.items || []).length + 1}`,
+                                icon: undefined,
+                                dataObjectId: undefined,
+                                dataObjectAttributeIds: [],
+                              };
+                              setUiModalStack((prev) => [
+                                ...prev,
+                                { kind: 'sectionItem', sectionId: draft.id, itemId: newItem.id, draft: newItem },
+                              ]);
+                            }}
+                            className="text-[11px] px-2 py-1 rounded-md bg-blue-600 text-white hover:bg-blue-700"
+                          >
+                            Add item
+                          </button>
+                        </div>
+                        <div className="rounded-md border border-gray-200 bg-white overflow-hidden">
+                          {(() => {
+                            const safeItems = Array.isArray(draft.items)
+                              ? (draft.items as unknown[]).filter(
+                                  (x): x is NonNullable<ExpandedGridUiSection['items']>[number] =>
+                                    !!x && typeof x === 'object' && typeof (x as Record<string, unknown>).id === 'string'
+                                )
+                              : [];
+                            if (safeItems.length === 0) {
+                              return <div className="p-2 text-[11px] text-gray-500">No items yet.</div>;
+                            }
+                            return (
+                              <div className="divide-y divide-gray-100">
+                                {safeItems.map((it) => (
+                                  <div key={it.id} className="p-2 flex items-center gap-2">
+                                    <div className="min-w-0 flex-1">
+                                      <div className="text-[11px] text-gray-900 truncate">
+                                        {it.icon ? <span className="mr-1">{it.icon}</span> : null}
+                                        {it.label}
+                                        {it.dataObjectId ? <span className="ml-1 text-[10px] text-blue-700">🔗</span> : null}
+                                      </div>
+                                      {it.dataObjectAttributeIds?.length ? (
+                                        <div className="text-[10px] text-gray-500">
+                                          attrs: <span className="font-medium">{it.dataObjectAttributeIds.length}</span>
+                                        </div>
+                                      ) : null}
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const asDraft: UiItemDraft = {
+                                          id: it.id,
+                                          label: it.label,
+                                          icon: it.icon,
+                                          dataObjectId: (it as unknown as Record<string, unknown>).dataObjectId as string | undefined,
+                                          dataObjectAttributeIds: (it as unknown as Record<string, unknown>).dataObjectAttributeIds as string[] | undefined,
+                                          dataObjectAttributeMode: (it as unknown as Record<string, unknown>).dataObjectAttributeMode as ExpandedGridAttributeRenderMode | undefined,
+                                        };
+                                        setUiModalStack((prev) => [...prev, { kind: 'sectionItem', sectionId: draft.id, itemId: it.id, draft: asDraft }]);
+                                      }}
+                                      className="text-[11px] px-2 py-1 rounded-md border border-gray-200 text-gray-700 hover:bg-gray-100"
+                                    >
+                                      Edit
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setDraft({ items: safeItems.filter((x) => x.id !== it.id) })}
+                                      className="text-[11px] px-2 py-1 rounded-md border border-gray-200 text-red-600 hover:bg-red-50"
+                                    >
+                                      Delete
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                            );
+                          })()}
+                        </div>
+                      </div>
+
+                      <div className="pt-2 flex items-center justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={closeModal}
+                          className="text-[11px] px-2 py-1 rounded-md border border-gray-200 text-gray-700 hover:bg-gray-100"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const current = selectedNode.uiSections || [];
+                            const normalized: ExpandedGridUiSection = {
+                              ...draft,
+                              label: (draft.label || '').trim() || 'Untitled',
+                              items: [...(draft.items || [])],
+                            };
+                            const next =
+                              uiModal.mode === 'add'
+                                ? [...current, normalized]
+                                : current.map((x) => (x.id === uiModal.sectionId ? normalized : x));
+                            commit({ uiSections: next });
+                            closeModal();
+                          }}
+                          className="text-[11px] px-2 py-1 rounded-md bg-blue-600 text-white hover:bg-blue-700"
+                        >
+                          Save
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })()
+              ) : uiModal.kind === 'sectionItem' ? (
+                (() => {
+                  const draft = uiModal.draft;
+                  const setDraft = (patch: Partial<UiItemDraft>) =>
+                    setUiModalStack((prev) => {
+                      const next = [...prev];
+                      const top = next[next.length - 1] as Extract<UiModal, { kind: 'sectionItem' }>;
+                      next[next.length - 1] = { ...top, draft: { ...top.draft, ...patch } };
+                      return next;
+                    });
+
+                  return (
+                    <div className="space-y-3">
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="block text-[11px] font-medium text-gray-700 mb-1">Icon</label>
+                          <input value={draft.icon || ''} onChange={(e) => setDraft({ icon: e.target.value.trim() || undefined })} className="mac-field w-full" />
+                        </div>
+                        <div>
+                          <label className="block text-[11px] font-medium text-gray-700 mb-1">Label</label>
+                          <input value={draft.label || ''} onChange={(e) => setDraft({ label: e.target.value })} className="mac-field w-full" />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-medium text-gray-700 mb-1">Linked data object</label>
+                        <DataObjectSearchSelect
+                          className="w-full"
+                          value={draft.dataObjectId || ''}
+                          onChange={(nextId) =>
+                            setDraft({
+                              dataObjectId: nextId || undefined,
+                              dataObjectAttributeIds: [],
+                              dataObjectAttributeMode: 'data',
+                            })
+                          }
+                          objects={dataObjectStore.objects.map((o) => ({ id: o.id, name: o.name }))}
+                          placeholder="Link object…"
+                          includeNoneOption={true}
+                          noneLabel="No object"
+                        />
+                        {draft.dataObjectId ? (
+                          <>
+                            <label className="block text-[11px] font-medium text-gray-700 mb-1">
+                              Attributes mode (applies to all selected)
+                            </label>
+                            <select
+                              value={(draft.dataObjectAttributeMode || 'data') as ExpandedGridAttributeRenderMode}
+                              onChange={(e) => setDraft({ dataObjectAttributeMode: e.target.value as ExpandedGridAttributeRenderMode })}
+                              className="mac-field w-full"
+                            >
+                              <option value="data">Data only</option>
+                              <option value="input">Input form</option>
+                            </select>
+                            <DataObjectAttributeMultiSelect
+                              objectId={draft.dataObjectId}
+                              objects={dataObjectStore.objects}
+                              value={draft.dataObjectAttributeIds || []}
+                              onChange={(nextAttrs) => setDraft({ dataObjectAttributeIds: nextAttrs })}
+                              label="Linked attributes"
+                            />
+                          </>
+                        ) : null}
+                      </div>
+
+                      <div className="pt-2 flex items-center justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={closeModal}
+                          className="text-[11px] px-2 py-1 rounded-md border border-gray-200 text-gray-700 hover:bg-gray-100"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setUiModalStack((prev) => {
+                              if (prev.length < 2) return prev.slice(0, -1);
+                              const next = [...prev];
+                              const item = next[next.length - 1] as Extract<UiModal, { kind: 'sectionItem' }>;
+                              const parent = next[next.length - 2] as Extract<UiModal, { kind: 'section' }>;
+                              const items = Array.isArray(parent.draft.items)
+                                ? (parent.draft.items as unknown[]).filter(
+                                    (x): x is NonNullable<ExpandedGridUiSection['items']>[number] =>
+                                      !!x && typeof x === 'object' && typeof (x as Record<string, unknown>).id === 'string'
+                                  )
+                                : [];
+                              const normalized: UiItemDraft = {
+                                ...item.draft,
+                                label: (item.draft.label || '').trim() || 'Untitled',
+                              };
+                              const idx = items.findIndex((x) => x.id === item.itemId);
+                              if (idx >= 0) items[idx] = normalized as unknown as ExpandedGridUiSection['items'][number];
+                              else items.push(normalized as unknown as ExpandedGridUiSection['items'][number]);
+                              next[next.length - 2] = { ...parent, draft: { ...parent.draft, items } };
+                              next.pop();
+                              return next;
+                            });
+                          }}
+                          className="text-[11px] px-2 py-1 rounded-md bg-blue-600 text-white hover:bg-blue-700"
+                        >
+                          Save item
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })()
+              ) : uiModal.kind === 'mainAttrs' ? (
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-[11px] font-medium text-gray-700 mb-1">
+                      Attributes mode (applies to all selected)
+                    </label>
+                    <select
+                      value={uiModal.mode}
+                      onChange={(e) => {
+                        const mode = e.target.value as ExpandedGridAttributeRenderMode;
+                        setUiModalStack((prev) => {
+                          const next = [...prev];
+                          const top = next[next.length - 1] as Extract<UiModal, { kind: 'mainAttrs' }>;
+                          next[next.length - 1] = { ...top, mode };
+                          return next;
+                        });
+                      }}
+                      className="mac-field w-full"
+                    >
+                      <option value="data">Data only</option>
+                      <option value="input">Input form</option>
+                    </select>
+                  </div>
+                  <DataObjectAttributeMultiSelect
+                    objectId={uiModal.objectId}
+                    objects={dataObjectStore.objects}
+                    value={uiModal.value}
+                    onChange={(nextAttrs) => {
+                      setUiModalStack((prev) => {
+                        const next = [...prev];
+                        const top = next[next.length - 1] as Extract<UiModal, { kind: 'mainAttrs' }>;
+                        next[next.length - 1] = { ...top, value: nextAttrs };
+                        return next;
+                      });
+                    }}
+                    label="Linked attributes"
+                  />
+                  <div className="pt-2 flex items-center justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={closeModal}
+                      className="text-[11px] px-2 py-1 rounded-md border border-gray-200 text-gray-700 hover:bg-gray-100"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        commit({
+                          dataObjectAttributeIds: uiModal.value,
+                          dataObjectAttributeMode: uiModal.mode,
+                        });
+                        closeModal();
+                      }}
+                      className="text-[11px] px-2 py-1 rounded-md bg-blue-600 text-white hover:bg-blue-700"
+                    >
+                      Save
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
+      */}
     </div>
   );
 }
+
 

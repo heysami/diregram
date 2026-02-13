@@ -21,14 +21,26 @@ AVOID:
 ☐ Correct placement (AVOID):
   → AVOID duplicating the sitemap inside variants (no “second sitemap”)
   → Variants should define state meaning + enablement, not replicate portal pages/actions
+  
+☐ Dimension descriptions (SUPPORTED; table + flow):
+  → Conditional dimensions MAY have Table/Flow descriptions.
+  → If you add descriptions, they MUST be stored + linked consistently:
+    - Tree line anchors: \`<!-- desc:table:<dimensionKey>:<rn>,flow:<dimensionKey>:<rn> -->\`
+    - Registry: \`\`\`dimension-descriptions\`\`\` JSON block (runningNumber + lineIndex linkage)
+    - Body: \`---\` section \`## Condition Dimension Descriptions\` with:
+      \`### [table|flow] <HubLabel> (<nodeId>::<dimensionKey>) <!-- desc:<rn> -->\`
+  → AVOID “dangling” descriptions:
+    - desc anchors without matching registry entries, or vice versa.
+    - body blocks without a stable runningNumber (when rn exists in registry).
+  → Guidance:
+    - Use Table descriptions for structured definitions / state matrices.
+    - Use Flow descriptions for step-by-step behavior (Flow Tab style nodes, #flow#-tagged lines).
 
-☐ Dimension descriptions (if lifecycle/state is modeled) (MUST):
-  → If a hub line uses <!-- desc:... --> anchors:
-    - MUST have \`\`\`dimension-descriptions\`\`\` block with matching runningNumber entries
-    - MUST have the prose section:
-      ## Condition Dimension Descriptions
-      with matching headers and <!-- desc:N --> anchors
-  → AVOID having desc anchors without the block/prose (it becomes untraceable)
+☐ Linked Data Object status dimensions (locked; shared descriptions):
+  → If a hub line has \`<!-- do:do-X -->\` AND uses locked status dimensions:
+    - MUST store selected status attribute ids as: \`<!-- dostatus:attr-1,attr-2 -->\` on the hub line
+    - These keys/values are non-editable in the conditional UI (values come from the Data Object attribute)
+    - Table/Flow “Describe” MUST edit the SAME description stored on the Data Object attribute (not a dimension description block)
 
 ☐ Conditional hub notes (if used) (MUST):
   → If a hub line uses <!-- hubnote:N -->:

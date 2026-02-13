@@ -15,6 +15,7 @@ import * as Y from 'yjs';
 import { loadExpandedNodeMetadata, saveExpandedNodeMetadata, ExpandedNodeMetadata } from '@/lib/expanded-node-metadata';
 
 export type ResizeDirection = 'width+' | 'width-' | 'height+' | 'height-';
+export type ExpandedNodeSizePatch = { width?: number; height?: number };
 
 interface UseExpandedNodeResizeProps {
   doc: Y.Doc;
@@ -70,9 +71,24 @@ export function useExpandedNodeResize(
   config: ResizeConfig = {}
 ): {
   handleResize: (nodeId: string, direction: ResizeDirection) => void;
+  setSize: (nodeId: string, patch: ExpandedNodeSizePatch) => void;
   getMetadata: (nodeId: string) => ExpandedNodeMetadata | null;
 } {
   const finalConfig = { ...DEFAULT_CONFIG, ...config };
+
+  const clamp = useCallback(
+    (value: number, min: number, max: number): number => Math.max(min, Math.min(max, value)),
+    []
+  );
+
+  const snapToStep = useCallback(
+    (value: number): number => {
+      const step = finalConfig.step;
+      if (!Number.isFinite(step) || step <= 0) return value;
+      return Math.round(value / step) * step;
+    },
+    [finalConfig.step]
+  );
 
   /**
    * Get metadata for a node by its ID
@@ -132,8 +148,42 @@ export function useExpandedNodeResize(
     [doc, getRunningNumber, finalConfig]
   );
 
+  /**
+   * Set width/height multiplier directly (used by drag handles / ghost resize).
+   * Values are clamped to min/max and snapped to the configured step.
+   */
+  const setSize = useCallback(
+    (nodeId: string, patch: ExpandedNodeSizePatch) => {
+      const runningNumber = getRunningNumber(nodeId);
+      if (runningNumber === undefined) return;
+
+      const metadata = loadExpandedNodeMetadata(doc, runningNumber);
+      const currentWidth = metadata.width ?? 4;
+      const currentHeight = metadata.height ?? 4;
+
+      const requestedWidth = patch.width ?? currentWidth;
+      const requestedHeight = patch.height ?? currentHeight;
+
+      const nextWidth = clamp(snapToStep(requestedWidth), finalConfig.minWidth, finalConfig.maxWidth);
+      const nextHeight = clamp(snapToStep(requestedHeight), finalConfig.minHeight, finalConfig.maxHeight);
+
+      // Avoid needless writes
+      if (nextWidth === currentWidth && nextHeight === currentHeight) return;
+
+      const updatedMetadata: ExpandedNodeMetadata = {
+        ...metadata,
+        width: nextWidth,
+        height: nextHeight,
+      };
+
+      saveExpandedNodeMetadata(doc, runningNumber, updatedMetadata);
+    },
+    [clamp, doc, finalConfig.maxHeight, finalConfig.maxWidth, finalConfig.minHeight, finalConfig.minWidth, getRunningNumber, snapToStep]
+  );
+
   return {
     handleResize,
+    setSize,
     getMetadata,
   };
 }

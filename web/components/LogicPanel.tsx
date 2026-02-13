@@ -1,23 +1,18 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import * as Y from 'yjs';
 import { NexusNode } from '@/types/nexus';
-import { calculateTreeLayout, NodeLayout } from '@/lib/layout-engine';
 import { X, Plus, ChevronDown, ChevronRight } from 'lucide-react';
 import { useNexusStructure } from '@/hooks/use-nexus-structure';
 import { buildConditionMatrixScenarios } from '@/lib/condition-matrix';
 import { ConditionMatrixOverlay } from '@/components/ConditionMatrixOverlay';
-import { upsertDimensionDescription, parseDimensionDescriptions, DimensionDescriptionMode } from '@/lib/dimension-descriptions';
-import { serializeTableToMarkdown, parseTableFromMarkdown } from '@/lib/table-serialization';
-import { parseFlowFromMarkdown } from '@/lib/flow-serialization';
-import { loadDimensionDescriptions, saveDimensionDescriptions, DimensionDescriptionEntry } from '@/lib/dimension-description-storage';
-import { matchNodeToDimensionDescription } from '@/lib/dimension-description-matcher';
-import { DimensionFlowEditor, FlowNode } from '@/components/DimensionFlowEditor';
-import { DimensionTableEditor, TableColumn, TableRow, MergedCell } from '@/components/DimensionTableEditor';
+import { useConditionDimensionDescriptionModals } from '@/hooks/use-condition-dimension-description-modals';
 import { loadExpandedNodeMetadata, saveExpandedNodeMetadata } from '@/lib/expanded-node-metadata';
 import { isNodeInsideVariant } from '@/lib/variant-detection';
 import { createDataObject, loadDataObjects, NexusDataObjectStore } from '@/lib/data-object-storage';
 import { DataObjectSearchSelect } from '@/components/DataObjectSearchSelect';
 import { DataObjectAttributeMultiSelect } from '@/components/DataObjectAttributeMultiSelect';
+import { useDataObjectAttributeDescriptionModals } from '@/hooks/use-data-object-attribute-description-modals';
+import { useLinkedDataObjectStatusDimensions } from '@/hooks/use-linked-data-object-status-dimensions';
 import {
   createTag,
   loadTagStore,
@@ -198,91 +193,26 @@ export function LogicPanel({ node, doc, activeVariantId, roots, expandedNodes, o
   const isInitializingRef = useRef(false);
   const autoGenLastInsertRef = useRef<string>('');
   const [showMatrix, setShowMatrix] = useState(false);
-  const [showDescriptionModal, setShowDescriptionModal] = useState(false);
-  const [descriptionMode, setDescriptionMode] = useState<DimensionDescriptionMode | null>(null);
-  const [descriptionDimensionKey, setDescriptionDimensionKey] = useState<string | null>(null);
-  const [flowNodes, setFlowNodes] = useState<FlowNode[] | null>(null);
-  const [flowEdges, setFlowEdges] = useState<Record<string, { label: string; color: string }> | null>(null);
-  const [tableColumns, setTableColumns] = useState<TableColumn[] | null>(null);
-  const [tableRows, setTableRows] = useState<TableRow[] | null>(null);
-  const [tableMergedCells, setTableMergedCells] = useState<Map<string, MergedCell> | null>(null);
-  
-  // Track running numbers for dimension descriptions (similar to expanded nodes)
-  const dimensionDescriptionRunningNumberMapRef = useRef<Map<string, number>>(new Map()); // Map from "nodeId::dimensionKey::mode" to runningNumber
+  // (Dimension Table/Flow description modals are managed by a dedicated hook below.)
 
-  // Load dimension descriptions when modal opens
-  const isLoadingDescRef = useRef(false);
-  useEffect(() => {
-    if (!showDescriptionModal || !descriptionMode || !descriptionDimensionKey || isLoadingDescRef.current) {
-      return;
-    }
-    
-    isLoadingDescRef.current = true;
-    const yText = doc.getText('nexus');
-    const currentText = yText.toString();
-    
-    // Load dimension description state
-    const descData = loadDimensionDescriptions(doc);
-    
-    // ⚠️ DIMENSION DESCRIPTION MATCHING: Use the modularized matcher - do not modify matching logic here
-    // All dimension description matching functionality is handled by dimension-description-matcher.ts
-    // See: web/lib/dimension-description-matcher.ts
-    // Get running number for this node+dimension+mode combination
-    const match = matchNodeToDimensionDescription(
-      node,
-      descriptionDimensionKey,
-      descriptionMode,
-      currentText,
-      descData.entries,
-      nodeMap
-    );
-    
-    let runningNumber: number | undefined;
-    if (match) {
-      runningNumber = match.runningNumber;
-      // Update mapping
-      const key = `${node.id}::${descriptionDimensionKey}::${descriptionMode}`;
-      dimensionDescriptionRunningNumberMapRef.current.set(key, runningNumber);
-    }
-    
-    // Parse dimension descriptions from markdown
-    const { blocks } = parseDimensionDescriptions(currentText);
-    
-    // Find the block by running number (preferred) or by legacy id
-    const block = runningNumber
-      ? blocks.find(b => b.runningNumber === runningNumber && b.mode === descriptionMode)
-      : blocks.find(b => b.id === `${node.id}::${descriptionDimensionKey}` && b.mode === descriptionMode);
-    
-    if (block && block.bodyLines.length > 0) {
-      if (descriptionMode === 'flow') {
-        const parsed = parseFlowFromMarkdown(block.bodyLines);
-        if (parsed) {
-          // eslint-disable-next-line react-hooks/set-state-in-effect
-          setFlowNodes(parsed.nodes);
-          setFlowEdges(parsed.edges);
-        }
-      } else if (descriptionMode === 'table') {
-        const parsed = parseTableFromMarkdown(block.bodyLines);
-        if (parsed) {
-          setTableColumns(parsed.columns);
-          setTableRows(parsed.rows);
-          setTableMergedCells(parsed.mergedCells);
-        }
-      }
-    } else {
-      // No existing description, reset to empty
-      if (descriptionMode === 'flow') {
-        setFlowNodes(null);
-        setFlowEdges(null);
-      } else {
-        setTableColumns(null);
-        setTableRows(null);
-        setTableMergedCells(null);
-      }
-    }
-    
-    isLoadingDescRef.current = false;
-  }, [showDescriptionModal, descriptionMode, descriptionDimensionKey, node, doc, nodeMap]);
+  const doAttrDesc = useDataObjectAttributeDescriptionModals({ doc });
+  const linkedStatus = useLinkedDataObjectStatusDimensions({
+    doc,
+    hubNode,
+    dataObjects: dataObjectStore.objects,
+    baseKeyValues: keyValues,
+  });
+
+  const {
+    linkedDo,
+    statusAttrs: linkedDoStatusAttrs,
+    lockedByKey: lockedStatusDimsByKey,
+    lockedKeys,
+    effectiveKeyValues,
+    addLockedStatusDimension,
+    removeLockedStatusDimension,
+  } = linkedStatus;
+  const dimensionDesc = useConditionDimensionDescriptionModals({ doc, node, nodeMap, effectiveKeyValues });
 
   // Initialize keyValues from dimensionMap - only when node changes
   useEffect(() => {
@@ -341,11 +271,11 @@ export function LogicPanel({ node, doc, activeVariantId, roots, expandedNodes, o
     // Skip during initialization to prevent loops
     if (isInitializingRef.current) return;
     
-    if (keyValues.size === 0) return;
+    if (effectiveKeyValues.size === 0) return;
     
     // Generate Cartesian Product
-    const keys = Array.from(keyValues.keys());
-    const valuesArrays = keys.map(k => keyValues.get(k) || []);
+    const keys = Array.from(effectiveKeyValues.keys());
+    const valuesArrays = keys.map(k => effectiveKeyValues.get(k) || []);
     
     if (valuesArrays.some(arr => arr.length === 0)) return; // Skip if any key has no values
     
@@ -406,7 +336,7 @@ export function LogicPanel({ node, doc, activeVariantId, roots, expandedNodes, o
       
       return () => clearTimeout(timeoutId);
     }
-  }, [keyValues, hubNode, activeVariantId, structure]);
+  }, [effectiveKeyValues, hubNode, activeVariantId, structure]);
   
   // Sync refs with state
   useEffect(() => {
@@ -417,7 +347,7 @@ export function LogicPanel({ node, doc, activeVariantId, roots, expandedNodes, o
     editingKeyRef.current = editingKey;
   }, [editingKey]);
 
-  const hasDimensions = keyValues.size > 0;
+  const hasDimensions = effectiveKeyValues.size > 0;
 
   // Scenarios for read-only condition matrix overlay
   const scenarios = useMemo(() => buildConditionMatrixScenarios(node), [node]);
@@ -483,7 +413,13 @@ export function LogicPanel({ node, doc, activeVariantId, roots, expandedNodes, o
   }, [node]);
 
   const addKey = () => {
-    const newKey = `key${keyValues.size + 1}`;
+    // Avoid colliding with locked keys (from linked Data Object status) or existing keys.
+    let n = effectiveKeyValues.size + 1;
+    let newKey = `key${n}`;
+    while (effectiveKeyValues.has(newKey) || lockedKeys.has(newKey)) {
+      n += 1;
+      newKey = `key${n}`;
+    }
     const defaultValue = 'default';
     
     // Update local state: add the new dimension with its first value.
@@ -960,207 +896,6 @@ export function LogicPanel({ node, doc, activeVariantId, roots, expandedNodes, o
   const toggleCommonFromPanel = () => {
     // Delegate to shared structure helper so behavior matches canvas
     structure.toggleCommonNode(node, activeVariantId);
-  };
-
-  const openDescriptionModal = (mode: DimensionDescriptionMode, dimensionKey: string) => {
-    setDescriptionMode(mode);
-    setDescriptionDimensionKey(dimensionKey);
-    setShowDescriptionModal(true);
-  };
-
-  const closeDescriptionModal = () => {
-    setShowDescriptionModal(false);
-    setDescriptionMode(null);
-    setDescriptionDimensionKey(null);
-  };
-
-  const serializeFlowToMarkdown = (
-    nodes: FlowNode[],
-    edges: Record<string, { label: string; color: string }>,
-  ): string[] => {
-    if (!nodes.length) return [];
-    const byBranch = new Map<string, FlowNode[]>();
-    nodes.forEach((n) => {
-      const bid = n.branchId || 'branch-1';
-      if (!byBranch.has(bid)) byBranch.set(bid, []);
-      byBranch.get(bid)!.push(n);
-    });
-    const branchEntries = Array.from(byBranch.entries());
-    const lines: string[] = [];
-    branchEntries.forEach(([bid, branchNodes], idx) => {
-      lines.push(`Branch ${String.fromCharCode(65 + idx)} (${bid}):`);
-      branchNodes.forEach((n, stepIdx) => {
-        const tag = n.type.toUpperCase();
-        lines.push(`  ${stepIdx + 1}. [${tag}] ${n.label || `Step ${stepIdx + 1}`}`);
-      });
-      if (idx < branchEntries.length - 1) lines.push('');
-    });
-    lines.push('');
-    lines.push('```flowjson');
-    lines.push(
-      JSON.stringify(
-        {
-          nodes,
-          edges,
-        },
-        null,
-        2,
-      ),
-    );
-    lines.push('```');
-    return lines;
-  };
-
-
-  const handleSaveDescription = () => {
-    if (!descriptionMode || !descriptionDimensionKey) return;
-    
-    const yText = doc.getText('nexus');
-    const current = yText.toString();
-
-    // Load current dimension description state
-    const descData = loadDimensionDescriptions(doc);
-    
-    // Get or assign running number
-    const key = `${node.id}::${descriptionDimensionKey}::${descriptionMode}`;
-    let runningNumber = dimensionDescriptionRunningNumberMapRef.current.get(key);
-    
-    if (!runningNumber) {
-      // ⚠️ DIMENSION DESCRIPTION MATCHING: Use the modularized matcher - do not modify matching logic here
-      // Try to find existing running number by matching
-      const yText = doc.getText('nexus');
-      const currentText = yText.toString();
-      const match = matchNodeToDimensionDescription(
-        node,
-        descriptionDimensionKey,
-        descriptionMode,
-        currentText,
-        descData.entries,
-        nodeMap
-      );
-      
-      if (match) {
-        runningNumber = match.runningNumber;
-      } else {
-        // Assign new running number
-        runningNumber = descData.nextRunningNumber;
-        descData.nextRunningNumber = runningNumber + 1;
-      }
-      
-      dimensionDescriptionRunningNumberMapRef.current.set(key, runningNumber);
-    }
-    
-    // Update or create entry
-    const existingIndex = descData.entries.findIndex(
-      e => e.runningNumber === runningNumber
-    );
-    
-    const entry: DimensionDescriptionEntry = {
-      runningNumber,
-      content: node.content,
-      parentPath: [], // Will be updated below
-      lineIndex: node.lineIndex,
-      dimensionKey: descriptionDimensionKey,
-      mode: descriptionMode,
-    };
-    
-    // Build parent path
-    const parentPath: string[] = [];
-    let currentParent = nodeMap.get(node.parentId || '');
-    while (currentParent) {
-      parentPath.unshift(currentParent.content);
-      currentParent = currentParent.parentId ? nodeMap.get(currentParent.parentId) : undefined;
-    }
-    entry.parentPath = parentPath;
-    
-    if (existingIndex >= 0) {
-      descData.entries[existingIndex] = entry;
-    } else {
-      descData.entries.push(entry);
-    }
-    
-    // Serialize flow/table data first
-    let bodyLines: string[] = [];
-    if (descriptionMode === 'flow' && flowNodes) {
-      bodyLines = serializeFlowToMarkdown(flowNodes, flowEdges || {});
-    } else if (descriptionMode === 'table' && tableColumns && tableRows) {
-      const dimensionValues = descriptionDimensionKey
-        ? keyValues.get(descriptionDimensionKey) || []
-        : [];
-      bodyLines = serializeTableToMarkdown(
-        tableColumns,
-        tableRows,
-        tableMergedCells,
-        dimensionValues,
-      );
-    }
-
-    // Save to markdown with running number (this updates the dimension descriptions section)
-    let updatedWithDesc = upsertDimensionDescription(current, {
-      id: `${node.id}::${descriptionDimensionKey}`, // Keep legacy format for compatibility
-      runningNumber,
-      hubLabel: `${node.content} – ${descriptionDimensionKey}`,
-      mode: descriptionMode,
-      bodyLines,
-    });
-
-    // Now add comments to node lines in the updated text
-    // This needs to happen before we save, so the comments are included
-    const lines = updatedWithDesc.split('\n');
-    const lineToDescriptions = new Map<number, Array<{ mode: DimensionDescriptionMode; dimensionKey: string; runningNumber: number }>>();
-    descData.entries.forEach(entry => {
-      if (!lineToDescriptions.has(entry.lineIndex)) {
-        lineToDescriptions.set(entry.lineIndex, []);
-      }
-      lineToDescriptions.get(entry.lineIndex)!.push({
-        mode: entry.mode,
-        dimensionKey: entry.dimensionKey,
-        runningNumber: entry.runningNumber,
-      });
-    });
-    
-    // Remove old desc annotations and add new ones
-    const annotatedLines = lines.map((line, index) => {
-      // Remove old desc annotation (format: <!-- desc:... -->)
-      let cleaned = line.replace(/<!--\s*desc:[^>]*\s*-->/, '').trimEnd();
-      
-      // Add new annotation if this line has dimension descriptions
-      const descriptions = lineToDescriptions.get(index);
-      if (descriptions && descriptions.length > 0) {
-        // Format: <!-- desc:flow:Status:1,table:Priority:2 -->
-        const descParts = descriptions.map(d => `${d.mode}:${d.dimensionKey}:${d.runningNumber}`).join(',');
-        cleaned = cleaned + ` <!-- desc:${descParts} -->`;
-      }
-      
-      return cleaned;
-    });
-    
-    updatedWithDesc = annotatedLines.join('\n');
-    
-    // Update the metadata block in the annotated text
-    const storageBlock = `\`\`\`dimension-descriptions\n${JSON.stringify(descData, null, 2)}\n\`\`\``;
-    const existingMatch = updatedWithDesc.match(/```dimension-descriptions\n[\s\S]*?\n```/);
-    
-    if (existingMatch) {
-      updatedWithDesc = updatedWithDesc.replace(/```dimension-descriptions\n[\s\S]*?\n```/, storageBlock);
-    } else {
-      const separatorIndex = updatedWithDesc.indexOf('\n---\n');
-      if (separatorIndex !== -1) {
-        updatedWithDesc = updatedWithDesc.slice(0, separatorIndex) + '\n' + storageBlock + '\n' + updatedWithDesc.slice(separatorIndex);
-      } else {
-        updatedWithDesc = updatedWithDesc + (updatedWithDesc.endsWith('\n') ? '' : '\n') + '\n' + storageBlock;
-      }
-    }
-
-    // Save everything in one transaction
-    if (updatedWithDesc !== current) {
-      doc.transact(() => {
-        yText.delete(0, yText.length);
-        yText.insert(0, updatedWithDesc);
-      });
-    }
-
-    closeDescriptionModal();
   };
 
   return (
@@ -1669,7 +1404,36 @@ export function LogicPanel({ node, doc, activeVariantId, roots, expandedNodes, o
         
         {!isCollapsed && (
           <div className="space-y-2">
-            {Array.from(keyValues.entries()).map(([key, values]) => (
+            {linkedDo && linkedDoStatusAttrs.length > 0 ? (
+              <div className="rounded-md border border-slate-200 bg-slate-50 p-2">
+                <div className="text-[11px] font-semibold text-slate-700">From linked Data Object status</div>
+                <div className="mt-1 text-[10px] text-slate-500">
+                  Add a status attribute as a locked dimension (values come from the object).
+                </div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {linkedDoStatusAttrs
+                    .filter((a) => !linkedStatus.linkedAttrIds.includes(a.id))
+                    .map((a) => (
+                      <button
+                        key={a.id}
+                        type="button"
+                        className="mac-btn px-2 py-1 text-[10px]"
+                        onClick={() => addLockedStatusDimension(a.id)}
+                      >
+                        + {a.name || a.id}
+                      </button>
+                    ))}
+                  {linkedDoStatusAttrs.filter((a) => !linkedStatus.linkedAttrIds.includes(a.id)).length === 0 ? (
+                    <div className="text-[10px] text-slate-500">All status attributes are already added.</div>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
+
+            {Array.from(effectiveKeyValues.entries()).map(([key, values]) => {
+              const locked = lockedStatusDimsByKey.get(key) || null;
+              const isLocked = !!locked;
+              return (
               <div key={key} className="bg-white border rounded-md p-2">
                 <div className="flex items-center gap-2 mb-2">
                   <button
@@ -1678,170 +1442,244 @@ export function LogicPanel({ node, doc, activeVariantId, roots, expandedNodes, o
                   >
                     {expandedKeys.has(key) ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
                   </button>
-             <input
-                type="text"
-                    value={editingKey === key ? editingKeyValue : key}
-                    onChange={(e) => {
-                      // Mark as editing to prevent auto-generation
-                      if (editingKey !== key) {
+                  {isLocked ? (
+                    <div className="flex-1">
+                      <div className="text-xs font-medium text-slate-900 border-b border-black/30 pb-0.5">
+                        {key}{' '}
+                        <span className="ml-1 text-[10px] font-normal text-slate-500">
+                          (from {locked?.objectName})
+                        </span>
+                      </div>
+                    </div>
+                  ) : (
+                    <input
+                      type="text"
+                      value={editingKey === key ? editingKeyValue : key}
+                      onChange={(e) => {
+                        // Mark as editing to prevent auto-generation
+                        if (editingKey !== key) {
+                          setEditingKey(key);
+                          setEditingKeyValue(key);
+                        }
+                        setEditingKeyValue(e.target.value);
+                      }}
+                      onFocus={() => {
                         setEditingKey(key);
                         setEditingKeyValue(key);
-                      }
-                      setEditingKeyValue(e.target.value);
-                    }}
-                    onFocus={(e) => {
-                      setEditingKey(key);
-                      setEditingKeyValue(key);
-                    }}
-                    onBlur={(e) => {
-                      const newKey = e.target.value.trim();
-                      if (newKey && newKey !== key) {
-                        updateKeyName(key, newKey);
-                      }
-                      setEditingKey(null);
-                      setEditingKeyValue('');
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.currentTarget.blur();
-                      } else if (e.key === 'Escape') {
+                      }}
+                      onBlur={(e) => {
+                        const newKey = e.target.value.trim();
+                        if (newKey && newKey !== key) {
+                          updateKeyName(key, newKey);
+                        }
                         setEditingKey(null);
                         setEditingKeyValue('');
-                        e.currentTarget.blur();
-                      }
-                    }}
-                    className="flex-1 text-xs font-medium border-b border-black outline-none pb-0.5"
-                    placeholder="Key name"
-                  />
-        <button 
-                    onClick={() => removeKey(key)}
-                    className="opacity-60 hover:opacity-100"
-        >
-                    <X size={12} />
-        </button>
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.currentTarget.blur();
+                        } else if (e.key === 'Escape') {
+                          setEditingKey(null);
+                          setEditingKeyValue('');
+                          e.currentTarget.blur();
+                        }
+                      }}
+                      className="flex-1 text-xs font-medium border-b border-black outline-none pb-0.5"
+                      placeholder="Key name"
+                    />
+                  )}
+
+                  {isLocked ? (
+                    <button
+                      type="button"
+                      className="text-[10px] px-2 py-1 rounded-md border border-slate-200 hover:bg-slate-50"
+                      title="Unlink locked dimension"
+                      onClick={() => locked && removeLockedStatusDimension(locked.attrId)}
+                    >
+                      Unlink
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => removeKey(key)}
+                      className="opacity-60 hover:opacity-100"
+                    >
+                      <X size={12} />
+                    </button>
+                  )}
       </div>
 
                 {expandedKeys.has(key) && (
                   <div className="ml-4 space-y-1">
-                    {values.map((value, idx) => (
-                      <div key={idx} className="flex items-center gap-1">
-                        <input
-                    type="text"
-                          value={editingValue?.key === key && editingValue?.oldValue === value 
-                            ? editingValue.currentValue 
-                            : value}
-                          onChange={(e) => {
-                            // Update local state for immediate feedback, but mark as editing to prevent auto-generation
-                            if (!editingValue || editingValue.key !== key || editingValue.oldValue !== value) {
-                              setEditingValue({ key, oldValue: value, currentValue: value });
+                    {isLocked ? (
+                      <>
+                        <div className="flex flex-wrap gap-1">
+                          {values.map((value) => (
+                            <span
+                              key={value}
+                              className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] text-slate-700"
+                            >
+                              {value}
+                            </span>
+                          ))}
+                        </div>
+                        <div className="mt-2 flex items-center gap-2">
+                          <span className="text-[10px] text-gray-500">Describe this dimension:</span>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              locked &&
+                              doAttrDesc.openTable({
+                                doId: locked.objectId,
+                                doName: locked.objectName,
+                                attrId: locked.attrId,
+                                attrName: locked.attrName,
+                                values: locked.values || [],
+                              })
                             }
-                            setEditingValue(prev => prev ? { ...prev, currentValue: e.target.value } : null);
-                          }}
-                          onFocus={(e) => {
-                            setEditingValue({ key, oldValue: value, currentValue: value });
-                          }}
-                          onBlur={(e) => {
-                            const newValue = e.target.value.trim();
-                            if (newValue && newValue !== value) {
-                              updateValue(key, value, newValue);
+                            className="mac-btn px-2 py-1 text-[10px]"
+                          >
+                            Table
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              locked &&
+                              doAttrDesc.openFlow({
+                                doId: locked.objectId,
+                                doName: locked.objectName,
+                                attrId: locked.attrId,
+                                attrName: locked.attrName,
+                                values: locked.values || [],
+                              })
                             }
-                            setEditingValue(null);
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              e.currentTarget.blur();
-                            } else if (e.key === 'Escape') {
-                              setEditingValue(null);
-                              e.currentTarget.blur();
-                            }
-                          }}
-                          className="flex-1 text-xs border px-1.5 py-0.5 outline-none"
-                          placeholder="Value"
-                        />
-                        <button
-                          onClick={() => removeValue(key, value)}
-                          className="opacity-60 hover:opacity-100"
-                        >
-                          <X size={10} />
-                        </button>
-                      </div>
-                    ))}
-                    {addingValueFor === key ? (
-                      <div className="flex items-center gap-1 mt-1">
-                 <input
-                    type="text"
-                          value={newValueInput}
-                          onChange={(e) => setNewValueInput(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter' && newValueInput.trim()) {
-                              addValue(key, newValueInput);
-                              setNewValueInput('');
-                              setAddingValueFor(null);
-                            } else if (e.key === 'Escape') {
-                              setNewValueInput('');
-                              setAddingValueFor(null);
-                            }
-                          }}
-                          autoFocus
-                          className="flex-1 text-xs border px-1.5 py-0.5 outline-none"
-                          placeholder="Enter value..."
-                        />
-                        <button
-                          onClick={() => {
-                            if (newValueInput.trim()) {
-                              addValue(key, newValueInput);
-                              setNewValueInput('');
-                            }
-                            setAddingValueFor(null);
-                          }}
-                          className="opacity-80 hover:opacity-100"
-                        >
-                          <Plus size={10} />
-                        </button>
-                        <button
-                          onClick={() => {
-                            setNewValueInput('');
-                            setAddingValueFor(null);
-                          }}
-                          className="opacity-60 hover:opacity-100"
-                        >
-                          <X size={10} />
-                        </button>
-                      </div>
+                            className="mac-btn px-2 py-1 text-[10px]"
+                          >
+                            Flow
+                          </button>
+                        </div>
+                      </>
                     ) : (
-                      <button
-                        onClick={() => {
-                          setAddingValueFor(key);
-                          setNewValueInput('');
-                        }}
-                        className="text-[10px] opacity-80 hover:opacity-100 flex items-center gap-1 mt-1"
-                      >
-                        <Plus size={10} /> Add Value
-                      </button>
+                      <>
+                        {values.map((value, idx) => (
+                          <div key={idx} className="flex items-center gap-1">
+                            <input
+                              type="text"
+                              value={editingValue?.key === key && editingValue?.oldValue === value 
+                                ? editingValue.currentValue 
+                                : value}
+                              onChange={(e) => {
+                                // Update local state for immediate feedback, but mark as editing to prevent auto-generation
+                                if (!editingValue || editingValue.key !== key || editingValue.oldValue !== value) {
+                                  setEditingValue({ key, oldValue: value, currentValue: value });
+                                }
+                                setEditingValue(prev => prev ? { ...prev, currentValue: e.target.value } : null);
+                              }}
+                              onFocus={() => {
+                                setEditingValue({ key, oldValue: value, currentValue: value });
+                              }}
+                              onBlur={(e) => {
+                                const newValue = e.target.value.trim();
+                                if (newValue && newValue !== value) {
+                                  updateValue(key, value, newValue);
+                                }
+                                setEditingValue(null);
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.currentTarget.blur();
+                                } else if (e.key === 'Escape') {
+                                  setEditingValue(null);
+                                  e.currentTarget.blur();
+                                }
+                              }}
+                              className="flex-1 text-xs border px-1.5 py-0.5 outline-none"
+                              placeholder="Value"
+                            />
+                            <button
+                              onClick={() => removeValue(key, value)}
+                              className="opacity-60 hover:opacity-100"
+                            >
+                              <X size={10} />
+                            </button>
+                          </div>
+                        ))}
+                        {addingValueFor === key ? (
+                          <div className="flex items-center gap-1 mt-1">
+                            <input
+                              type="text"
+                              value={newValueInput}
+                              onChange={(e) => setNewValueInput(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' && newValueInput.trim()) {
+                                  addValue(key, newValueInput);
+                                  setNewValueInput('');
+                                  setAddingValueFor(null);
+                                } else if (e.key === 'Escape') {
+                                  setNewValueInput('');
+                                  setAddingValueFor(null);
+                                }
+                              }}
+                              autoFocus
+                              className="flex-1 text-xs border px-1.5 py-0.5 outline-none"
+                              placeholder="Enter value..."
+                            />
+                            <button
+                              onClick={() => {
+                                if (newValueInput.trim()) {
+                                  addValue(key, newValueInput);
+                                  setNewValueInput('');
+                                }
+                                setAddingValueFor(null);
+                              }}
+                              className="opacity-80 hover:opacity-100"
+                            >
+                              <Plus size={10} />
+                            </button>
+                            <button
+                              onClick={() => {
+                                setNewValueInput('');
+                                setAddingValueFor(null);
+                              }}
+                              className="opacity-60 hover:opacity-100"
+                            >
+                              <X size={10} />
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => {
+                              setAddingValueFor(key);
+                              setNewValueInput('');
+                            }}
+                            className="text-[10px] opacity-80 hover:opacity-100 flex items-center gap-1 mt-1"
+                          >
+                            <Plus size={10} /> Add Value
+                          </button>
+                        )}
+                        <div className="mt-2 flex items-center gap-2">
+                          <span className="text-[10px] text-gray-500">Describe this dimension:</span>
+                          <button
+                            type="button"
+                            onClick={() => dimensionDesc.openTable(key)}
+                            className="mac-btn px-2 py-1 text-[10px]"
+                          >
+                            Table
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => dimensionDesc.openFlow(key)}
+                            className="mac-btn px-2 py-1 text-[10px]"
+                          >
+                            Flow
+                          </button>
+                        </div>
+                      </>
                     )}
-                    <div className="mt-2 flex items-center gap-2">
-                      <span className="text-[10px] text-gray-500">
-                        Describe this dimension:
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => openDescriptionModal('flow', key)}
-                        className="mac-btn px-2 py-1 text-[10px]"
-                      >
-                        Flow
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => openDescriptionModal('table', key)}
-                        className="mac-btn px-2 py-1 text-[10px]"
-                      >
-                        Table
-                      </button>
-                    </div>
                   </div>
                 )}
             </div>
-            ))}
+            );
+            })}
             
              <button
               onClick={addKey}
@@ -1864,79 +1702,9 @@ export function LogicPanel({ node, doc, activeVariantId, roots, expandedNodes, o
           setShowMatrix(false);
         }}
       />
-      
-      {/* Dimension Description Modal */}
-      {showDescriptionModal && descriptionMode && (
-        <div className="fixed inset-0 z-[70] bg-black/40 flex items-center justify-center">
-          <div className="mac-window max-w-4xl w-[92vw] max-h-[90vh] flex flex-col">
-            <div className="mac-titlebar">
-              <div className="mac-title">
-                {descriptionMode === 'flow' ? 'Flow Description' : 'Table Description'}
-              </div>
-              <div className="absolute right-1 top-1/2 -translate-y-1/2">
-                <button type="button" onClick={closeDescriptionModal} className="mac-btn" title="Close">
-                  <X size={14} />
-                </button>
-              </div>
-            </div>
-            <div className="px-4 py-2 border-b">
-              <div className="text-[12px] font-bold truncate">
-                {node.content}
-                {descriptionDimensionKey ? ` – ${descriptionDimensionKey}` : ''}
-              </div>
-            </div>
-            <div className="p-4 overflow-auto flex-1">
-              {descriptionMode === 'flow' ? (
-                <DimensionFlowEditor
-                  initialNodes={flowNodes || undefined}
-                  initialEdges={flowEdges || undefined}
-                  onChange={({ nodes, edges }) => {
-                    setFlowNodes(nodes);
-                    setFlowEdges(edges);
-                  }}
-                  dimensionKey={descriptionDimensionKey || undefined}
-                  dimensionValues={
-                    descriptionDimensionKey
-                      ? keyValues.get(descriptionDimensionKey) || []
-                      : []
-                  }
-                />
-              ) : (
-                <DimensionTableEditor
-                  initialColumns={tableColumns || undefined}
-                  initialRows={tableRows || undefined}
-                  dimensionValues={
-                    descriptionDimensionKey
-                      ? keyValues.get(descriptionDimensionKey) || []
-                      : []
-                  }
-                  onChange={(cols, rows, mergedCells) => {
-                    setTableColumns(cols);
-                    setTableRows(rows);
-                    setTableMergedCells(mergedCells || null);
-                  }}
-                />
-              )}
-            </div>
-            <div className="border-t px-4 py-3 flex items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={closeDescriptionModal}
-                className="mac-btn"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleSaveDescription}
-                className="mac-btn mac-btn--primary"
-              >
-                Save to Markdown
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+
+      {dimensionDesc.modals}
+      {doAttrDesc.modals}
       </div>
     </div>
   );

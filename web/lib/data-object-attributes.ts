@@ -1,8 +1,19 @@
-export type DataObjectAttribute = {
-  id: string;
-  name: string;
-  sample?: string;
-};
+export type DataObjectAttributeType = 'text' | 'status';
+
+export type DataObjectAttribute =
+  | {
+      id: string;
+      name: string;
+      type?: 'text';
+      sample?: string;
+    }
+  | {
+      id: string;
+      name: string;
+      type: 'status';
+      values: string[];
+      sample?: string;
+    };
 
 type DataObjectDataShape = {
   attributes?: unknown;
@@ -22,9 +33,19 @@ export function loadDataObjectAttributes(data: unknown): DataObjectAttribute[] {
       if (!isRecord(a)) return null;
       const id = typeof a.id === 'string' ? a.id : '';
       const name = typeof a.name === 'string' ? a.name : '';
+      const typeRaw = typeof a.type === 'string' ? a.type : undefined;
       const sample = typeof a.sample === 'string' ? a.sample : undefined;
       if (!id || !name) return null;
-      return { id, name, sample };
+      if (typeRaw === 'status') {
+        const valsRaw = (a as Record<string, unknown>).values;
+        const values = Array.isArray(valsRaw)
+          ? (valsRaw as unknown[])
+              .map((v) => (typeof v === 'string' ? v.trim() : ''))
+              .filter((v) => v.length > 0)
+          : [];
+        return { id, name, type: 'status', values, sample };
+      }
+      return { id, name, type: 'text', sample };
     })
     .filter((x): x is DataObjectAttribute => x !== null);
 }

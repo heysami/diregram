@@ -8,7 +8,7 @@ import { DIAMOND_SIZE } from '@/lib/process-flow-diamond';
 import { calculateTextHeight } from '@/lib/text-measurement';
 import { encodeNewlines, decodeNewlines } from '@/lib/newline-encoding';
 import { ToolType } from './Toolbar';
-import { Move, Plus, Minus, Tag as TagIcon, Share2, Eye, ChevronRight, ChevronLeft, ChevronUp, ChevronDown } from 'lucide-react';
+import { Move, Plus, Minus, Tag as TagIcon, Share2, Eye } from 'lucide-react';
 import { getNodeStyle, getHubGroupStyle } from '@/lib/style-engine';
 import { useNexusStructure } from '@/hooks/use-nexus-structure';
 import { useLayoutAnimation } from '@/hooks/use-layout-animation';
@@ -63,6 +63,7 @@ import {
 import { useCanvasKeyboardFocus } from '@/hooks/use-canvas-keyboard-focus';
 import { useFlowlikeGlobalEnterTab } from '@/hooks/use-flowlike-global-enter-tab';
 import type { PresenceController, PresenceView } from '@/lib/presence';
+import { computeSafeViewport } from '@/lib/safe-viewport';
 
 interface Props {
   doc: Y.Doc;
@@ -170,6 +171,17 @@ interface Props {
 
   // Comments panel integration (Figma-style)
   onOpenComments?: (info: { targetKey: string; targetLabel?: string; scrollToThreadId?: string }) => void;
+
+  /**
+   * Optional text autocomplete for node content while editing.
+   * Used by conditional "Flow Description" to suggest dimension values.
+   */
+  textAutocompleteOptions?: string[];
+  /**
+   * Optional: show a link icon on nodes whose content matches one of these values.
+   * Used by conditional "Flow/Table Description" to indicate linked dimension values.
+   */
+  linkedTextOptions?: string[];
 }
 
 interface PendingAction {
@@ -206,6 +218,8 @@ export function NexusCanvas({
     focusTick,
     viewportResetTick,
     onOpenComments,
+    textAutocompleteOptions,
+    linkedTextOptions,
 }: Props) {
   const effectivePresenceView = presenceView;
   const [roots, setRoots] = useState<NexusNode[]>([]);
@@ -227,58 +241,23 @@ export function NexusCanvas({
   const pendingViewportFitRef = useRef(false);
   const fitToContentRef = useRef<(opts?: { resetZoom?: boolean; fitZoom?: boolean }) => void>(() => {});
 
-  const getSafeViewport = useCallback(() => {
-    const el = containerRef.current;
-    if (!el) return null;
-    const rect = el.getBoundingClientRect();
-    let safeLeft = rect.left;
-    let safeRight = rect.right;
-    let safeTop = rect.top;
-    let safeBottom = rect.bottom;
+  const [expandedNodeGhostResize, setExpandedNodeGhostResize] = useState<null | {
+    nodeId: string;
+    startClientX: number;
+    startClientY: number;
+    baseHeightPx: number;
+    extraHeightPx: number;
+    startWidthMult: number;
+    startHeightMult: number;
+    ghostWidthMult: number;
+    ghostHeightMult: number;
+  }>(null);
+  const expandedNodeGhostResizeRef = useRef<typeof expandedNodeGhostResize>(null);
 
-    const overlapsY = (a: DOMRect, b: DOMRect) => Math.min(a.bottom, b.bottom) > Math.max(a.top, b.top);
-
-    const view = effectivePresenceView;
-    const matchesView = (el: HTMLElement) => {
-      const attr = el.getAttribute('data-safe-panel-view');
-      if (!attr || attr.trim() === '' || attr.trim() === '*') return true;
-      const parts = attr
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean);
-      return parts.includes(view);
-    };
-    const isVisible = (el: HTMLElement) => {
-      if (!el.isConnected) return false;
-      const cs = window.getComputedStyle(el);
-      if (cs.display === 'none' || cs.visibility === 'hidden' || cs.opacity === '0') return false;
-      const r = el.getBoundingClientRect();
-      return r.width > 1 && r.height > 1;
-    };
-
-    const panels = Array.from(document.querySelectorAll<HTMLElement>('[data-safe-panel]')).filter(
-      (p) => matchesView(p) && isVisible(p),
-    );
-    panels.forEach((p) => {
-      const side = (p.getAttribute('data-safe-panel') || '').toLowerCase();
-      const pr = p.getBoundingClientRect();
-      if (!overlapsY(rect, pr)) return;
-      if (side === 'left') safeLeft = Math.max(safeLeft, pr.right);
-      if (side === 'right') safeRight = Math.min(safeRight, pr.left);
-    });
-
-    if (safeRight - safeLeft < 80) {
-      safeLeft = rect.left;
-      safeRight = rect.right;
-    }
-
-    const width = Math.max(1, safeRight - safeLeft);
-    const height = Math.max(1, safeBottom - safeTop);
-    const centerX = (safeLeft + safeRight) / 2 - rect.left; // canvas-local px
-    const centerY = (safeTop + safeBottom) / 2 - rect.top; // canvas-local px
-
-    return { rect, width, height, centerX, centerY };
-  }, [effectivePresenceView]);
+  const getSafeViewport = useCallback(
+    () => computeSafeViewport({ containerEl: containerRef.current, view: effectivePresenceView }),
+    [effectivePresenceView],
+  );
 
   // Broadcast current transform so the bottom toolbar can show x/y tooltip.
   useEffect(() => {
@@ -355,6 +334,7 @@ export function NexusCanvas({
   // Editing State
   const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState(''); 
+  const [editSuggestionIndex, setEditSuggestionIndex] = useState<number | null>(null);
   const [selectAllOnFocus, setSelectAllOnFocus] = useState(false);
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
   const lastCreateRef = useRef<{
@@ -382,6 +362,21 @@ export function NexusCanvas({
   const [hubNoteExtraTopByHubId, setHubNoteExtraTopByHubId] = useState<Record<string, number>>({});
   const [swimlaneBands, setSwimlaneBands] = useState<SwimlaneBandMetrics | null>(null);
   const [commentsTick, setCommentsTick] = useState(0);
+
+  const linkedTextSet = useMemo(() => {
+    const vals = Array.isArray(linkedTextOptions) ? linkedTextOptions : [];
+    return new Set(vals.map((v) => (v ?? '').trim()).filter(Boolean));
+  }, [linkedTextOptions]);
+
+  const editSuggestions = useMemo(() => {
+    if (!editingNodeId) return [];
+    const opts = Array.isArray(textAutocompleteOptions) ? textAutocompleteOptions : [];
+    const normalizedOpts = opts.map((v) => (v ?? '').trim()).filter(Boolean);
+    if (!normalizedOpts.length) return [];
+    const q = (editValue || '').trim().toLowerCase();
+    if (!q) return normalizedOpts.slice(0, 10);
+    return normalizedOpts.filter((v) => v.toLowerCase().includes(q)).slice(0, 10);
+  }, [editingNodeId, editValue, textAutocompleteOptions]);
 
   const [annotationEditorForId, setAnnotationEditorForId] = useState<string | null>(null);
   const [annotationDraft, setAnnotationDraft] = useState<string>('');
@@ -1224,15 +1219,19 @@ export function NexusCanvas({
   // ⚠️ EXPANDED NODE RESIZE: Use the modularized hook - do not modify resize logic here
   // All expanded node resize functionality is handled by useExpandedNodeResize hook
   // See: web/hooks/use-expanded-node-resize.ts
-  const { handleResize: handleResizeExpandedNode } = useExpandedNodeResize(
-    { doc, getRunningNumber },
-    {
+  const expandedNodeResizeConfig = useMemo(
+    () => ({
       step: 0.5,
       minWidth: 1,
       maxWidth: 10,
       minHeight: 1,
       maxHeight: 10,
-    }
+    }),
+    []
+  );
+  const { setSize: setExpandedNodeSize } = useExpandedNodeResize(
+    { doc, getRunningNumber },
+    expandedNodeResizeConfig
   );
 
   // ⚠️ EXPANDED GRID SIZE: Use the modularized hook - do not modify grid size logic here
@@ -1248,6 +1247,72 @@ export function NexusCanvas({
       visualMax: 10,
     }
   );
+
+  useEffect(() => {
+    expandedNodeGhostResizeRef.current = expandedNodeGhostResize;
+  }, [expandedNodeGhostResize]);
+
+  // Ghost resize interaction for expanded nodes:
+  // while dragging we show a preview outline only; commit the size on release.
+  useEffect(() => {
+    if (!expandedNodeGhostResize) return;
+
+    const cfg = expandedNodeResizeConfig;
+    const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+    const snap = (value: number) => {
+      const step = cfg.step;
+      if (!Number.isFinite(step) || step <= 0) return value;
+      return Math.round(value / step) * step;
+    };
+
+    const prevCursor = document.body.style.cursor;
+    const prevUserSelect = document.body.style.userSelect;
+    document.body.style.cursor = 'nwse-resize';
+    document.body.style.userSelect = 'none';
+
+    const onMove = (e: PointerEvent) => {
+      const current = expandedNodeGhostResizeRef.current;
+      if (!current) return;
+      if (e.cancelable) e.preventDefault();
+
+      const dxWorld = (e.clientX - current.startClientX) / (scale || 1);
+      const dyWorld = (e.clientY - current.startClientY) / (scale || 1);
+
+      const startWidthPx = NODE_WIDTH * current.startWidthMult;
+      const requestedWidthMult = (startWidthPx + dxWorld) / NODE_WIDTH;
+      const nextWidthMult = clamp(snap(requestedWidthMult), cfg.minWidth, cfg.maxWidth);
+
+      const baseH = current.baseHeightPx;
+      const requestedHeightMult =
+        baseH > 0 ? (baseH * current.startHeightMult + dyWorld) / baseH : current.startHeightMult;
+      const nextHeightMult = clamp(snap(requestedHeightMult), cfg.minHeight, cfg.maxHeight);
+
+      setExpandedNodeGhostResize((prev) => {
+        if (!prev) return prev;
+        if (prev.ghostWidthMult === nextWidthMult && prev.ghostHeightMult === nextHeightMult) return prev;
+        return { ...prev, ghostWidthMult: nextWidthMult, ghostHeightMult: nextHeightMult };
+      });
+    };
+
+    const onUp = () => {
+      const final = expandedNodeGhostResizeRef.current;
+      expandedNodeGhostResizeRef.current = null;
+      setExpandedNodeGhostResize(null);
+      if (!final) return;
+      setExpandedNodeSize(final.nodeId, { width: final.ghostWidthMult, height: final.ghostHeightMult });
+    };
+
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
+    return () => {
+      document.body.style.cursor = prevCursor;
+      document.body.style.userSelect = prevUserSelect;
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+    };
+  }, [expandedNodeGhostResize?.nodeId, expandedNodeResizeConfig, scale, setExpandedNodeSize]);
 
   useEffect(() => {
       let newLayout = calculateTreeLayout(visualTree, expandedNodes, doc, getRunningNumber, processFlowModeNodes, nodeMap, processNodeTypes);
@@ -2176,6 +2241,34 @@ export function NexusCanvas({
 
     const node = nodeMap.get(editingNodeId);
     if (!node) return;
+
+    // Autocomplete (optional): Arrow keys + Enter to apply suggestion without committing edit.
+    if (editSuggestions.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setEditSuggestionIndex((prev) => {
+          if (prev === null) return 0;
+          return Math.min(prev + 1, editSuggestions.length - 1);
+        });
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setEditSuggestionIndex((prev) => {
+          if (prev === null) return editSuggestions.length - 1;
+          return Math.max(prev - 1, -1);
+        });
+        return;
+      }
+      if (e.key === 'Enter' && !e.shiftKey) {
+        if (editSuggestionIndex !== null && editSuggestionIndex >= 0 && editSuggestionIndex < editSuggestions.length) {
+          e.preventDefault();
+          setEditValue(editSuggestions[editSuggestionIndex]);
+          setEditSuggestionIndex(null);
+          return;
+        }
+      }
+    }
 
     if (e.key === 'Enter' && !e.shiftKey) {
         // Editing mode: Enter commits text only (does NOT create nodes).
@@ -4388,33 +4481,72 @@ export function NexusCanvas({
                                         // This will be handled by ExpandedNodeView
                                     }}
                                 />
-                                {/* Resize arrow buttons */}
-                                {/* Right edge - width controls + column count controls */}
-                                <div className="absolute top-1/2 -right-6 -translate-y-1/2 flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-opacity z-20">
-                                  {/* Visual width (card) */}
-                                  <div className="flex flex-col gap-1">
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        handleResizeExpandedNode(node.id, 'width+');
-                                      }}
-                                      className="p-1 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors cursor-pointer"
-                                      title="Increase width"
-                                    >
-                                      <ChevronRight size={12} />
-                                    </button>
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        handleResizeExpandedNode(node.id, 'width-');
-                                      }}
-                                      className="p-1 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors cursor-pointer"
-                                      title="Decrease width"
-                                    >
-                                      <ChevronLeft size={12} />
-                                    </button>
+                                {/* Ghost resize overlay + corner handle (bottom-right) */}
+                                {expandedNodeGhostResize?.nodeId === node.id && (
+                                  <div
+                                    className="absolute top-0 left-0 border-2 border-dashed border-blue-500 bg-blue-500/5 pointer-events-none z-30"
+                                    style={{
+                                      width: NODE_WIDTH * expandedNodeGhostResize.ghostWidthMult,
+                                      height:
+                                        expandedNodeGhostResize.baseHeightPx * expandedNodeGhostResize.ghostHeightMult +
+                                        expandedNodeGhostResize.extraHeightPx,
+                                    }}
+                                  >
+                                    <div className="absolute -top-7 right-0 text-[10px] bg-blue-600 text-white px-1.5 py-0.5 rounded">
+                                      {expandedNodeGhostResize.ghostWidthMult}×{expandedNodeGhostResize.ghostHeightMult}
+                                    </div>
                                   </div>
-                                  {/* Grid columns (+ / -) */}
+                                )}
+                                {!isDiamond && (
+                                  <button
+                                    type="button"
+                                    onPointerDown={(e) => {
+                                      e.stopPropagation();
+                                      e.preventDefault();
+
+                                      const currentWidthMult = metadata.width ?? 4;
+                                      const currentHeightMult = metadata.height ?? 4;
+
+                                      const baseHeightPx =
+                                        currentHeightMult > 0 ? nodeLayout.height / currentHeightMult : nodeLayout.height;
+
+                                      const extraHeightPx = (() => {
+                                        if (isProcessNode && (processNodeType === 'time' || processNodeType === 'loop')) {
+                                          const extraForIcon = 24;
+                                          const extraForLoopDropdown = processNodeType === 'loop' && isSelected ? 26 : 0;
+                                          return extraForIcon + extraForLoopDropdown;
+                                        }
+                                        return 0;
+                                      })();
+
+                                      const initial = {
+                                        nodeId: node.id,
+                                        startClientX: e.clientX,
+                                        startClientY: e.clientY,
+                                        baseHeightPx,
+                                        extraHeightPx,
+                                        startWidthMult: currentWidthMult,
+                                        startHeightMult: currentHeightMult,
+                                        ghostWidthMult: currentWidthMult,
+                                        ghostHeightMult: currentHeightMult,
+                                      };
+
+                                      expandedNodeGhostResizeRef.current = initial;
+                                      setExpandedNodeGhostResize(initial);
+                                      (e.currentTarget as HTMLButtonElement).setPointerCapture?.(e.pointerId);
+                                    }}
+                                    className={`absolute bottom-1 right-1 w-4 h-4 rounded-sm bg-blue-500/80 hover:bg-blue-600 transition-opacity z-30 cursor-nwse-resize ${
+                                      expandedNodeGhostResize?.nodeId === node.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                                    }`}
+                                    title="Resize (drag corner)"
+                                    style={{ pointerEvents: 'auto' }}
+                                  >
+                                    <span className="sr-only">Resize</span>
+                                  </button>
+                                )}
+
+                                {/* Right edge - column count controls */}
+                                <div className="absolute top-1/2 -right-6 -translate-y-1/2 flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-opacity z-20">
                                   <div className="flex flex-col gap-1">
                                     <button
                                       onClick={(e) => {
@@ -4439,31 +4571,8 @@ export function NexusCanvas({
                                   </div>
                                 </div>
                             </div>
-                            {/* Bottom edge - height controls + row count controls - positioned outside the expanded node container */}
+                            {/* Bottom edge - row count controls - positioned outside the expanded node container */}
                             <div className="absolute bottom-0 left-1/2 -translate-x-1/2 translate-y-full flex flex-row gap-2 mt-2 opacity-0 group-hover:opacity-100 transition-opacity z-20">
-                                  {/* Visual height (card) */}
-                                  <div className="flex flex-row gap-1">
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        handleResizeExpandedNode(node.id, 'height+');
-                                      }}
-                                      className="p-1 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors cursor-pointer"
-                                      title="Increase height"
-                                    >
-                                      <ChevronDown size={12} />
-                                    </button>
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        handleResizeExpandedNode(node.id, 'height-');
-                                      }}
-                                      className="p-1 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors cursor-pointer"
-                                      title="Decrease height"
-                                    >
-                                      <ChevronUp size={12} />
-                                    </button>
-                                  </div>
                                   {/* Grid rows (+ / -) */}
                                   <div className="flex flex-row gap-1">
                                     <button
@@ -4504,44 +4613,76 @@ export function NexusCanvas({
                                 {node.icon}
                               </div>
                             )}
-                            <textarea 
-                                ref={inputRef}
-                                value={editValue || ''} 
-                                className="w-full text-center bg-transparent focus:outline-none min-w-[50px] text-inherit resize-none relative z-[2]"
-                                onClick={(e) => e.stopPropagation()}
-                                onBlur={() => { commitEdit(); setEditingNodeId(null); }}
-                                onKeyDown={handleInputKeyDown}
-                                onChange={(e) => setEditValue(e.target.value)}
-                                style={{
-                                    lineHeight: '1.5',
-                                    paddingTop: '0',
-                                    paddingBottom: '0',
-                                    maxHeight: 'none', // Allow unlimited growth for multi-line content
-                                }}
-                                onInput={(e) => {
-                                    // Auto-resize textarea to fit content
-                                    const target = e.target as HTMLTextAreaElement;
-                                    const lineCount = (target.value.match(/\n/g) || []).length + 1;
-                                    
-                                    // Account for parent padding (py-2 = 8px top + 8px bottom = 16px total)
-                                    const availableHeight = nodeLayout.height - 16;
-                                    
-                                    if (lineCount === 1) {
-                                        // For single-line text, set height to fill available space for proper centering
-                                        target.style.minHeight = `${availableHeight}px`;
-                                        target.style.height = `${availableHeight}px`;
-                                    } else {
-                                        // For multi-line text, allow it to grow beyond node height while editing
-                                        target.style.minHeight = '24px'; // Minimum for one line
-                                        target.style.height = 'auto';
-                                        // Allow growth beyond availableHeight for multi-line content
-                                        const newHeight = Math.max(24, target.scrollHeight);
-                                        target.style.height = `${newHeight}px`;
-                                    }
-                                    target.style.paddingTop = '0';
-                                    target.style.paddingBottom = '0';
-                                }}
-                            />
+                            <div className="relative w-full">
+                              <textarea 
+                                  ref={inputRef}
+                                  value={editValue || ''} 
+                                  className="w-full text-center bg-transparent focus:outline-none min-w-[50px] text-inherit resize-none relative z-[2]"
+                                  onClick={(e) => e.stopPropagation()}
+                                  onBlur={() => { commitEdit(); setEditingNodeId(null); }}
+                                  onKeyDown={handleInputKeyDown}
+                                  onChange={(e) => {
+                                    setEditValue(e.target.value);
+                                    setEditSuggestionIndex(null);
+                                  }}
+                                  style={{
+                                      lineHeight: '1.5',
+                                      paddingTop: '0',
+                                      paddingBottom: '0',
+                                      maxHeight: 'none', // Allow unlimited growth for multi-line content
+                                  }}
+                                  onInput={(e) => {
+                                      // Auto-resize textarea to fit content
+                                      const target = e.target as HTMLTextAreaElement;
+                                      const lineCount = (target.value.match(/\n/g) || []).length + 1;
+                                      
+                                      // Account for parent padding (py-2 = 8px top + 8px bottom = 16px total)
+                                      const availableHeight = nodeLayout.height - 16;
+                                      
+                                      if (lineCount === 1) {
+                                          // For single-line text, set height to fill available space for proper centering
+                                          target.style.minHeight = `${availableHeight}px`;
+                                          target.style.height = `${availableHeight}px`;
+                                      } else {
+                                          // For multi-line text, allow it to grow beyond node height while editing
+                                          target.style.minHeight = '24px'; // Minimum for one line
+                                          target.style.height = 'auto';
+                                          // Allow growth beyond availableHeight for multi-line content
+                                          const newHeight = Math.max(24, target.scrollHeight);
+                                          target.style.height = `${newHeight}px`;
+                                      }
+                                      target.style.paddingTop = '0';
+                                      target.style.paddingBottom = '0';
+                                  }}
+                              />
+                              {editSuggestions.length > 0 && (
+                                <div
+                                  className="absolute z-50 mt-1 left-1/2 -translate-x-1/2 w-[260px] bg-white border border-slate-200 rounded shadow-lg max-h-44 overflow-y-auto text-left"
+                                  onMouseDown={(e) => {
+                                    // Keep focus on textarea (avoid blur/commit).
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                  }}
+                                >
+                                  {editSuggestions.map((s, idx) => (
+                                    <div
+                                      key={`${s}-${idx}`}
+                                      onMouseDown={(e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        setEditValue(s);
+                                        setEditSuggestionIndex(null);
+                                      }}
+                                      className={`px-2 py-1 text-[11px] cursor-pointer hover:bg-blue-50 ${
+                                        idx === editSuggestionIndex ? 'bg-blue-100' : ''
+                                      }`}
+                                    >
+                                      {s}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
                         </div>
                     ) : (
                         <div 
@@ -4568,7 +4709,14 @@ export function NexusCanvas({
                             )}
                             <div className="w-full break-words whitespace-pre-wrap overflow-hidden flex items-center justify-center">
                               {(processNodeType === 'end' || processNodeType === 'goto') ? '' : (
-                                <span className="mac-label-plate">{node.content}</span>
+                                <span className="mac-label-plate inline-flex items-center gap-1">
+                                  {linkedTextSet.size > 0 && linkedTextSet.has((node.content || '').trim()) ? (
+                                    <span className="text-slate-500" title="Linked to a dimension value">
+                                      <Link2 size={12} />
+                                    </span>
+                                  ) : null}
+                                  <span>{node.content}</span>
+                                </span>
                               )}
                             </div>
                             {isProcessNode && isInProcessFlowMode && processNodeType === 'loop' && isSelected && (() => {

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Split } from 'lucide-react';
+import { Link2, Split } from 'lucide-react';
 import { TableRow, MergedCell } from '../DimensionTableEditor';
 import { getMergedCell, isMergedCell, isMergedCellSpan } from './tableUtils';
 import { isCellInSelection, CellSelection } from './selectionUtils';
@@ -9,6 +9,7 @@ interface Props {
   row: TableRow;
   colId: string;
   mergedCells: Map<string, MergedCell>;
+  linkedValuesSet: Set<string>;
   selectionStart: CellSelection | null;
   selectedCell: CellSelection | null;
   editingCell: CellSelection | null;
@@ -34,6 +35,7 @@ export function TableDataCell({
   row,
   colId,
   mergedCells,
+  linkedValuesSet,
   selectionStart,
   selectedCell,
   editingCell,
@@ -61,7 +63,8 @@ export function TableDataCell({
   const value = row.cells[colId] || '';
   const editing = isEditing(row.id, colId, editingCell);
   const isSelected = isCellInSelection(row.id, colId, selectionStart, selectedCell, rows, getAllColumnIds) && !editing;
-  const showSuggestions = editing && suggestions.length > 0 && row.rowType === 'header';
+  const showSuggestions = editing && suggestions.length > 0;
+  const isLinked = !editing && linkedValuesSet.has(value.trim());
 
   const baseBg = getCellBackgroundColor(row.rowType, isSelected);
   const outlineClasses = getCellOutlineClasses(isSelected);
@@ -133,12 +136,17 @@ export function TableDataCell({
         </div>
       ) : (
         <div
-          className={`w-full text-[11px] px-1 py-0.5 min-h-[20px] cursor-cell select-none whitespace-pre-wrap ${
+          className={`w-full text-[11px] px-1 py-0.5 min-h-[20px] cursor-cell select-none whitespace-pre-wrap flex items-start gap-1 ${
             row.rowType === 'header' ? 'font-semibold' : ''
           } ${isSelected ? 'text-blue-900' : ''}`}
           onDoubleClick={() => onDoubleClick(row.id, colId)}
         >
-          {value || '\u00A0'}
+          {isLinked ? (
+            <span className="mt-[1px] text-slate-400" title="Linked to a dimension value">
+              <Link2 size={12} />
+            </span>
+          ) : null}
+          <span className="flex-1">{value || '\u00A0'}</span>
         </div>
       )}
       {merged && isSelected && (

@@ -13,6 +13,9 @@ import type { ToolType } from '@/components/Toolbar';
 import { buildDataObjectCommentTargetKey, getThread, observeComments } from '@/lib/node-comments';
 import { calculateTextHeightCustom } from '@/lib/text-measurement';
 import type { PresenceController } from '@/lib/presence';
+import { computeSafeViewport } from '@/lib/safe-viewport';
+import { useAutoCenterOnce } from '@/hooks/use-auto-center-once';
+import { usePointerPan } from '@/hooks/use-pointer-pan';
 
 type MultiplicityMark = 'one' | 'many' | 'unknown';
 
@@ -234,27 +237,13 @@ export function DataObjectsCanvas({
 
   const focusSet = useMemo(() => {
     if (!selectedId) return null;
-    const adj = new Map<string, Set<string>>();
+    // Focus = selected + DIRECT neighbors (1-hop), not the entire connected component.
+    const focused = new Set<string>([selectedId]);
     graph.edges.forEach((e) => {
-      if (!adj.has(e.fromId)) adj.set(e.fromId, new Set());
-      if (!adj.has(e.toId)) adj.set(e.toId, new Set());
-      adj.get(e.fromId)!.add(e.toId);
-      adj.get(e.toId)!.add(e.fromId);
+      if (e.fromId === selectedId) focused.add(e.toId);
+      if (e.toId === selectedId) focused.add(e.fromId);
     });
-
-    const seen = new Set<string>();
-    const queue: string[] = [selectedId];
-    while (queue.length) {
-      const cur = queue.shift()!;
-      if (seen.has(cur)) continue;
-      seen.add(cur);
-      const nexts = adj.get(cur);
-      if (!nexts) continue;
-      nexts.forEach((n) => {
-        if (!seen.has(n)) queue.push(n);
-      });
-    }
-    return seen;
+    return focused;
   }, [graph.edges, selectedId]);
 
   const renderEdges = useMemo(() => {
@@ -272,16 +261,7 @@ export function DataObjectsCanvas({
     return out;
   }, [effectiveGraph.edges]);
 
-  const visibleObjects = useMemo(
-    () =>
-      effectiveGraph.objects.filter((o) => {
-        if (!focusSet) return true;
-        if (focusSet.has(o.id)) return true;
-        const inlined = inlinedByParent.get(o.id) || [];
-        return inlined.some((child) => focusSet.has(child.id));
-      }),
-    [effectiveGraph.objects, focusSet, inlinedByParent],
-  );
+  const visibleObjects = useMemo(() => effectiveGraph.objects, [effectiveGraph.objects]);
 
   const { layoutNodes, bounds, cardHeightById } = useMemo(() => {
     // Increase parent card height based on how many inlined items it has.
@@ -337,57 +317,34 @@ export function DataObjectsCanvas({
 
   const [scale, setScale] = useState(1);
   const [pan, setPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
-  const [isDragging, setIsDragging] = useState(false);
   const [isSpaceHeld, setIsSpaceHeld] = useState(false);
-  const dragRef = useRef<{ startX: number; startY: number; panX: number; panY: number } | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const getSafeViewport = useCallback(() => computeSafeViewport({ containerEl: containerRef.current, view: 'dataObjects' }), []);
 
-  const getSafeViewport = useCallback(() => {
-    const el = containerRef.current;
-    if (!el) return null;
-    const rect = el.getBoundingClientRect();
-    let safeLeft = rect.left;
-    let safeRight = rect.right;
-    const overlapsY = (a: DOMRect, b: DOMRect) => Math.min(a.bottom, b.bottom) > Math.max(a.top, b.top);
-
-    const matchesView = (p: HTMLElement) => {
-      const attr = p.getAttribute('data-safe-panel-view');
-      if (!attr || attr.trim() === '' || attr.trim() === '*') return true;
-      const parts = attr
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean);
-      return parts.includes('dataObjects');
-    };
-    const isVisible = (p: HTMLElement) => {
-      if (!p.isConnected) return false;
-      const cs = window.getComputedStyle(p);
-      if (cs.display === 'none' || cs.visibility === 'hidden' || cs.opacity === '0') return false;
-      const r = p.getBoundingClientRect();
-      return r.width > 1 && r.height > 1;
-    };
-
-    const panels = Array.from(document.querySelectorAll<HTMLElement>('[data-safe-panel]')).filter(
-      (p) => matchesView(p) && isVisible(p),
-    );
-    panels.forEach((p) => {
-      const side = (p.getAttribute('data-safe-panel') || '').toLowerCase();
-      const pr = p.getBoundingClientRect();
-      if (!overlapsY(rect, pr)) return;
-      if (side === 'left') safeLeft = Math.max(safeLeft, pr.right);
-      if (side === 'right') safeRight = Math.min(safeRight, pr.left);
-    });
-
-    if (safeRight - safeLeft < 80) {
-      safeLeft = rect.left;
-      safeRight = rect.right;
-    }
-    const centerX = (safeLeft + safeRight) / 2 - rect.left;
-    const centerY = rect.height / 2;
-    const width = Math.max(1, safeRight - safeLeft);
-    const height = Math.max(1, rect.height);
-    return { rect, width, height, centerX, centerY };
+  const isInteractiveTarget = useCallback((t: EventTarget | null) => {
+    const target = t as HTMLElement | null;
+    if (!target) return false;
+    return !!target.closest?.('[data-do-card], [data-do-bubble], [data-do-annotation], [data-do-popover]');
   }, []);
+
+  const panGesture = usePointerPan({
+    enabled: activeTool !== 'comment' && activeTool !== 'annotation',
+    // If something is selected (or Space held), allow panning from anywhere.
+    allowFromInteractive: !!selectedId || isSpaceHeld,
+    isInteractiveTarget,
+    onPanBy: ({ dx, dy }) => {
+      setPan((p) => ({ x: p.x + dx, y: p.y + dy }));
+    },
+    onPointerMove: (evt) => {
+      // Multiplayer cursor (world-space in graph coords)
+      if (!presence) return;
+      const r = containerRef.current?.getBoundingClientRect();
+      if (!r) return;
+      const worldX = (evt.clientX - r.left - pan.x) / scale;
+      const worldY = (evt.clientY - r.top - pan.y) / scale;
+      presence.setCursor({ x: worldX, y: worldY });
+    },
+  });
 
   // Broadcast current transform so the bottom toolbar can show x/y tooltip.
   useEffect(() => {
@@ -480,8 +437,7 @@ export function DataObjectsCanvas({
     const onKeyUp = (e: KeyboardEvent) => {
       if (e.key !== ' ') return;
       setIsSpaceHeld(false);
-      dragRef.current = null;
-      setIsDragging(false);
+      // Pointer capture handles drag cancellation; just end "space held" mode.
     };
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
@@ -516,9 +472,12 @@ export function DataObjectsCanvas({
     return () => window.removeEventListener('diregram:dataobjectsTool', onTool as EventListener);
   }, [fitToContent, openManage, zoomIn, zoomOut]);
 
-  // Auto-center selection
-  useEffect(() => {
-    if (!selectedId) return;
+  // Auto-center selection (once per selection change; never fight dragging)
+  useAutoCenterOnce({
+    key: selectedId,
+    blocked: panGesture.isDragging || !!panGesture.dragRef.current,
+    center: () => {
+      if (!selectedId) return;
     const el = containerRef.current;
     if (!el) return;
     const safe = getSafeViewport();
@@ -535,7 +494,8 @@ export function DataObjectsCanvas({
     const targetPanX = safe.centerX - cx;
     const targetPanY = safe.centerY - cy;
     setPan({ x: targetPanX, y: targetPanY });
-  }, [selectedId, inlineChildToParent, layoutNodes, cardHeightById, scale, getSafeViewport]);
+    },
+  });
 
   const saveAnnotation = (dataObjectId: string, annotation: string | null | undefined) => {
     const store = loadDataObjects(doc);
@@ -577,46 +537,12 @@ export function DataObjectsCanvas({
       <div
         className="absolute inset-0"
         ref={containerRef}
-        onMouseDown={(e) => {
-          if (e.button !== 0) return;
-          // In note tools, prioritize clicking on objects/bubbles over panning.
-          if (activeTool === 'comment' || activeTool === 'annotation') return;
-          const target = e.target as HTMLElement;
-          const isOverInteractive =
-            !!target?.closest?.('[data-do-card], [data-do-bubble], [data-do-annotation], [data-do-popover]');
-          // Default: only pan when clicking empty space. If Space is held, pan anywhere.
-          if (isOverInteractive && !isSpaceHeld) return;
-          setIsDragging(true);
-          dragRef.current = { startX: e.clientX, startY: e.clientY, panX: pan.x, panY: pan.y };
-        }}
-        onMouseUp={() => {
-          dragRef.current = null;
-          setIsDragging(false);
-        }}
-        onMouseMove={(e) => {
-          // Preserve existing panning behavior
-          if (dragRef.current) {
-            const dx = e.clientX - dragRef.current.startX;
-            const dy = e.clientY - dragRef.current.startY;
-            setPan({ x: dragRef.current.panX + dx, y: dragRef.current.panY + dy });
-          }
-
-          // Multiplayer cursor (world-space in graph coords)
-          if (!presence) return;
-          const r = containerRef.current?.getBoundingClientRect();
-          if (!r) return;
-          const worldX = (e.clientX - r.left - pan.x) / scale;
-          const worldY = (e.clientY - r.top - pan.y) / scale;
-          presence.setCursor({ x: worldX, y: worldY });
-        }}
+        {...panGesture.handlers}
         onBlur={() => {
-          // Safety: if we lose focus while dragging, stop panning so other UI stays clickable.
-          dragRef.current = null;
-          setIsDragging(false);
+          // Safety: if we lose focus mid-interaction, stop publishing cursor.
+          if (presence) presence.setCursor(null);
         }}
         onMouseLeave={() => {
-          dragRef.current = null;
-          setIsDragging(false);
           if (presence) presence.setCursor(null);
         }}
         onWheel={(e) => {
@@ -634,13 +560,14 @@ export function DataObjectsCanvas({
           cursor:
             activeTool === 'comment' || activeTool === 'annotation'
               ? 'default'
-              : isDragging
+              : panGesture.isDragging
                 ? 'grabbing'
                 : isSpaceHeld
                   ? 'grab'
                   : 'default',
         }}
         onClick={() => {
+          if (panGesture.consumeDidPan()) return;
           setSelectedId(null);
           setAnnotationEditForId(null);
           setAnnotationPopoverPos(null);
@@ -682,7 +609,7 @@ export function DataObjectsCanvas({
             style={{ overflow: 'visible' }}
           >
             {renderEdges.map((e, idx) => {
-              if (focusSet && !(focusSet.has(e.fromId) && focusSet.has(e.toId))) return null;
+              const isEdgeFocused = !focusSet || (focusSet.has(e.fromId) && focusSet.has(e.toId));
               const fromRaw = layoutNodes.get(e.fromId);
               const toRaw = layoutNodes.get(e.toId);
               const fromH = cardHeightById.get(e.fromId);
@@ -710,14 +637,13 @@ export function DataObjectsCanvas({
               const startAngle = (Math.atan2(tStart.y, tStart.x) * 180) / Math.PI;
               const endAngle = (Math.atan2(tEnd.y, tEnd.x) * 180) / Math.PI + 180;
               return (
-                <g key={`${e.fromId}-${e.toId}-${e.kind}-${idx}`}>
+                <g key={`${e.fromId}-${e.toId}-${e.kind}-${idx}`} opacity={isEdgeFocused ? 0.95 : 0.12}>
                   <path
                     d={d}
                     stroke="#000000"
                     strokeWidth={isAttribute ? 1.2 : 1.6}
                     fill="none"
                     strokeDasharray={isAttribute ? '4 4' : undefined}
-                    opacity={0.95}
                   />
                   <MultiplicityGlyph at={startAt} angleDeg={startAngle || angleDeg} kind={mult.start} />
                   <MultiplicityGlyph at={endAt} angleDeg={endAngle} kind={mult.end} />
@@ -730,6 +656,8 @@ export function DataObjectsCanvas({
             const ln = layoutNodes.get(o.id);
             if (!ln) return null;
             const inlined = inlinedByParent.get(o.id) || [];
+            const isFocused =
+              !focusSet || focusSet.has(o.id) || inlined.some((child) => focusSet.has(child.id));
             const ann = dataStore.objects.find((x) => x.id === o.id)?.annotation;
             const attrs = attrsById.get(o.id) || [];
             const attrsToShow = attrs.slice(0, 6);
@@ -743,12 +671,15 @@ export function DataObjectsCanvas({
                 <div
                   className={`absolute rounded-lg border shadow-sm px-3 py-2 select-none ${
                     o.missing ? 'bg-red-50 border-red-200' : 'bg-white border-gray-200'
-                  } ${isSelected ? 'ring-2 ring-blue-400' : ''}`}
+                  } ${isSelected ? 'ring-2 ring-blue-400' : ''} ${
+                    selectedId && !isFocused ? 'opacity-25 hover:opacity-60 transition-opacity' : ''
+                  }`}
                   data-do-card
                   style={{ left: ln.x, top: ln.y, width: ln.width, height: cardH }}
                   title={o.id}
                   onClick={(e) => {
                     e.stopPropagation();
+                    if (panGesture.consumeDidPan()) return;
                     if (activeTool === 'annotation') {
                       const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
                       setAnnotationEditForId(o.id);
@@ -766,9 +697,10 @@ export function DataObjectsCanvas({
                     }
                     setSelectedId((cur) => (cur === o.id ? null : o.id));
                   }}
-                  onMouseDown={(e) => {
-                    // Prevent starting a pan drag when pressing on a card.
-                    e.stopPropagation();
+                  onPointerDown={(e) => {
+                    // When nothing is selected and Space isn't held, clicking on cards shouldn't start a pan.
+                    // (Pan start is handled at the container in capture phase.)
+                    if (!selectedId && !isSpaceHeld) e.stopPropagation();
                   }}
                 >
                   {showComments && (hasComment || activeTool === 'comment') && (
@@ -847,6 +779,7 @@ export function DataObjectsCanvas({
                       top: ln.y + cardH + 8,
                       width: ln.width,
                       pointerEvents: 'auto',
+                      opacity: selectedId && !isFocused ? 0.25 : 1,
                     }}
                     onClick={(e) => {
                       e.stopPropagation();

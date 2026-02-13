@@ -10,10 +10,24 @@ export interface ExpandedGridNodePersisted {
   icon?: string; // emoji / ascii shown above text
   color?: string; // semantic color name (e.g. "slate", "blue")
   uiType?: ExpandedGridUiType;
+  /**
+   * Advanced UI configs for richer "inner node" previews.
+   * These are purely presentational; they do not affect graph semantics.
+   */
+  uiTabs?: ExpandedGridUiTab[]; // tabs / wizard / sideNav (shared schema)
+  uiSections?: ExpandedGridUiSection[]; // collapsible sections
+  textVariant?: ExpandedGridTextVariant; // text node variant
+  textAlign?: ExpandedGridTextAlign; // text node alignment
   dataObjectId?: string; // link to shared data object store
   // Optional: selected attributes of the linked object (multi-select)
   // Special id: "__objectName__" represents the object's name.
   dataObjectAttributeIds?: string[];
+  /**
+   * Applies to ALL selected attributes for this link target.
+   * - data: render as read-only data
+   * - input: render as input form controls
+   */
+  dataObjectAttributeMode?: ExpandedGridAttributeRenderMode;
   /**
    * If set, this grid node is auto-managed by a direct child node of the expanded node
    * (identified by its linked data object id). While the child exists+linked, the
@@ -46,7 +60,56 @@ export type ExpandedGridUiType =
   | 'button'
   | 'navOut'
   | 'filter'
-  | 'tabs';
+  | 'tabs'
+  | 'wizard'
+  | 'sideNav'
+  | 'dropdown'
+  | 'collapsible'
+  | 'text';
+
+export type ExpandedGridTextVariant =
+  | 'h1'
+  | 'h2'
+  | 'h3'
+  | 'h4'
+  | 'h5'
+  | 'h6'
+  | 'normal'
+  | 'small';
+
+export type ExpandedGridTextAlign = 'left' | 'center' | 'right';
+
+export type ExpandedGridAttributeRenderMode = 'data' | 'input';
+
+export type ExpandedGridUiItem = {
+  id: string;
+  label: string;
+  icon?: string;
+  dataObjectId?: string;
+  dataObjectAttributeIds?: string[];
+  dataObjectAttributeMode?: ExpandedGridAttributeRenderMode;
+};
+
+export type ExpandedGridUiTab = {
+  id: string;
+  label: string;
+  icon?: string;
+  items?: ExpandedGridUiItem[];
+  dataObjectId?: string;
+  dataObjectAttributeIds?: string[];
+  dataObjectAttributeMode?: ExpandedGridAttributeRenderMode;
+};
+
+export type ExpandedGridUiSection = {
+  id: string;
+  label: string;
+  icon?: string;
+  items?: ExpandedGridUiItem[];
+  collapsedByDefault?: boolean;
+  dataObjectId?: string;
+  dataObjectAttributeIds?: string[];
+  dataObjectAttributeMode?: ExpandedGridAttributeRenderMode;
+};
 
 export type ExpandedGridRelationKind = 'attribute' | 'relation' | 'none';
 export type ExpandedGridRelationCardinality = 'one' | 'oneToMany' | 'manyToMany';
@@ -63,6 +126,90 @@ function makeRuntimeNodes(loaded: unknown, runningNumber: number): { nodes: Expa
   if (!Array.isArray(loaded)) return { nodes: [], hadPersistedIds: false, hadMissingKeys: false };
   let hadPersistedIds = false;
   let hadMissingKeys = false;
+
+  const sanitizeIcon = (x: unknown): string | undefined => (typeof x === 'string' && x.trim().length ? x : undefined);
+  const sanitizeLabel = (x: unknown): string => (typeof x === 'string' ? x.trim() : '');
+  const sanitizeId = (x: unknown, fallback: string): string => {
+    const s = typeof x === 'string' ? x.trim() : '';
+    return s.length ? s : fallback;
+  };
+  const readItems = (raw: unknown, fallbackPrefix: string): ExpandedGridUiItem[] | undefined => {
+    if (!Array.isArray(raw)) return undefined;
+    const items = (raw as unknown[]).map((it, idx) => {
+      const rec = it as Record<string, unknown>;
+      const label = sanitizeLabel(rec?.label);
+      if (!label) return null;
+      return {
+        id: sanitizeId(rec?.id, `${fallbackPrefix}-item-${idx + 1}`),
+        label,
+        icon: sanitizeIcon(rec?.icon),
+        dataObjectId: typeof rec?.dataObjectId === 'string' ? (rec.dataObjectId as string) : undefined,
+        dataObjectAttributeIds: Array.isArray(rec?.dataObjectAttributeIds)
+          ? (rec.dataObjectAttributeIds as unknown[])
+              .map((x) => (typeof x === 'string' ? x.trim() : ''))
+              .filter(Boolean)
+          : undefined,
+        dataObjectAttributeMode:
+          typeof rec?.dataObjectAttributeMode === 'string' && (rec.dataObjectAttributeMode === 'data' || rec.dataObjectAttributeMode === 'input')
+            ? (rec.dataObjectAttributeMode as ExpandedGridAttributeRenderMode)
+            : undefined,
+      } satisfies ExpandedGridUiItem;
+    }).filter((x): x is ExpandedGridUiItem => x !== null);
+    return items.length ? items : undefined;
+  };
+  const readTabs = (raw: unknown, fallbackPrefix: string): ExpandedGridUiTab[] | undefined => {
+    if (!Array.isArray(raw)) return undefined;
+    const tabs = (raw as unknown[]).map((t, idx) => {
+      const rec = t as Record<string, unknown>;
+      const label = sanitizeLabel(rec?.label);
+      if (!label) return null;
+      const id = sanitizeId(rec?.id, `${fallbackPrefix}-tab-${idx + 1}`);
+      return {
+        id,
+        label,
+        icon: sanitizeIcon(rec?.icon),
+        items: readItems(rec?.items, `${fallbackPrefix}-${id}`),
+        dataObjectId: typeof rec?.dataObjectId === 'string' ? (rec.dataObjectId as string) : undefined,
+        dataObjectAttributeIds: Array.isArray(rec?.dataObjectAttributeIds)
+          ? (rec.dataObjectAttributeIds as unknown[])
+              .map((x) => (typeof x === 'string' ? x.trim() : ''))
+              .filter(Boolean)
+          : undefined,
+        dataObjectAttributeMode:
+          typeof rec?.dataObjectAttributeMode === 'string' && (rec.dataObjectAttributeMode === 'data' || rec.dataObjectAttributeMode === 'input')
+            ? (rec.dataObjectAttributeMode as ExpandedGridAttributeRenderMode)
+            : undefined,
+      } satisfies ExpandedGridUiTab;
+    }).filter((x): x is ExpandedGridUiTab => x !== null);
+    return tabs.length ? tabs : undefined;
+  };
+  const readSections = (raw: unknown, fallbackPrefix: string): ExpandedGridUiSection[] | undefined => {
+    if (!Array.isArray(raw)) return undefined;
+    const sections = (raw as unknown[]).map((s, idx) => {
+      const rec = s as Record<string, unknown>;
+      const label = sanitizeLabel(rec?.label);
+      if (!label) return null;
+      const id = sanitizeId(rec?.id, `${fallbackPrefix}-section-${idx + 1}`);
+      return {
+        id,
+        label,
+        icon: sanitizeIcon(rec?.icon),
+        items: readItems(rec?.items, `${fallbackPrefix}-${id}`),
+        collapsedByDefault: typeof rec?.collapsedByDefault === 'boolean' ? (rec.collapsedByDefault as boolean) : undefined,
+        dataObjectId: typeof rec?.dataObjectId === 'string' ? (rec.dataObjectId as string) : undefined,
+        dataObjectAttributeIds: Array.isArray(rec?.dataObjectAttributeIds)
+          ? (rec.dataObjectAttributeIds as unknown[])
+              .map((x) => (typeof x === 'string' ? x.trim() : ''))
+              .filter(Boolean)
+          : undefined,
+        dataObjectAttributeMode:
+          typeof rec?.dataObjectAttributeMode === 'string' && (rec.dataObjectAttributeMode === 'data' || rec.dataObjectAttributeMode === 'input')
+            ? (rec.dataObjectAttributeMode as ExpandedGridAttributeRenderMode)
+            : undefined,
+      } satisfies ExpandedGridUiSection;
+    }).filter((x): x is ExpandedGridUiSection => x !== null);
+    return sections.length ? sections : undefined;
+  };
 
   const nodes = loaded
     .map((raw, idx) => {
@@ -92,6 +239,20 @@ function makeRuntimeNodes(loaded: unknown, runningNumber: number): { nodes: Expa
         icon: typeof r.icon === 'string' ? r.icon : undefined,
         color: typeof r.color === 'string' ? r.color : undefined,
         uiType: typeof r.uiType === 'string' ? (r.uiType as ExpandedGridUiType) : undefined,
+        uiTabs: readTabs((r as unknown as Record<string, unknown>).uiTabs, stableKey),
+        uiSections: readSections((r as unknown as Record<string, unknown>).uiSections, stableKey),
+        textVariant: (() => {
+          const rec = r as unknown as Record<string, unknown>;
+          const v = typeof rec.textVariant === 'string' ? rec.textVariant : '';
+          const allowed: ExpandedGridTextVariant[] = ['h1','h2','h3','h4','h5','h6','normal','small'];
+          return allowed.includes(v as ExpandedGridTextVariant) ? (v as ExpandedGridTextVariant) : undefined;
+        })(),
+        textAlign: (() => {
+          const rec = r as unknown as Record<string, unknown>;
+          const v = typeof rec.textAlign === 'string' ? rec.textAlign : '';
+          const allowed: ExpandedGridTextAlign[] = ['left','center','right'];
+          return allowed.includes(v as ExpandedGridTextAlign) ? (v as ExpandedGridTextAlign) : undefined;
+        })(),
         dataObjectId: typeof r.dataObjectId === 'string' ? r.dataObjectId : undefined,
         dataObjectAttributeIds: (() => {
           const rec = r as unknown as Record<string, unknown>;
@@ -101,6 +262,12 @@ function makeRuntimeNodes(loaded: unknown, runningNumber: number): { nodes: Expa
             .map((x) => (typeof x === 'string' ? x.trim() : ''))
             .filter(Boolean);
           return ids.length ? ids : undefined;
+        })(),
+        dataObjectAttributeMode: (() => {
+          const rec = r as unknown as Record<string, unknown>;
+          const mode = rec.dataObjectAttributeMode;
+          if (mode === 'data' || mode === 'input') return mode as ExpandedGridAttributeRenderMode;
+          return undefined;
         })(),
         sourceChildDataObjectId:
           typeof (r as unknown as Record<string, unknown>).sourceChildDataObjectId === 'string'
@@ -181,8 +348,13 @@ export function saveExpandedGridNodesToMarkdown(
     icon: n.icon,
     color: n.color,
     uiType: n.uiType,
+    uiTabs: (n as unknown as Record<string, unknown>).uiTabs as ExpandedGridUiTab[] | undefined,
+    uiSections: (n as unknown as Record<string, unknown>).uiSections as ExpandedGridUiSection[] | undefined,
+    textVariant: (n as unknown as Record<string, unknown>).textVariant as ExpandedGridTextVariant | undefined,
+    textAlign: (n as unknown as Record<string, unknown>).textAlign as ExpandedGridTextAlign | undefined,
     dataObjectId: n.dataObjectId,
     dataObjectAttributeIds: (n as unknown as Record<string, unknown>).dataObjectAttributeIds as string[] | undefined,
+    dataObjectAttributeMode: (n as unknown as Record<string, unknown>).dataObjectAttributeMode as ExpandedGridAttributeRenderMode | undefined,
     sourceChildDataObjectId: n.sourceChildDataObjectId,
     sourceFlowNodeId: (n as unknown as Record<string, unknown>).sourceFlowNodeId as string | undefined,
     relationKind: n.relationKind,

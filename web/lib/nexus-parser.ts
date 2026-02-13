@@ -153,6 +153,17 @@ export function parseNexusMarkdown(text: string): NexusNode[] {
     const sfidMatch = line.match(/<!--\s*sfid:([^>]+)\s*-->/);
     const sfid = sfidMatch ? sfidMatch[1].trim() : undefined;
 
+    // Extract linked Data Object status attribute ids (if any).
+    // Format: <!-- dostatus:attr-1,attr-2 -->
+    const doStatusMatch = line.match(/<!--\s*dostatus:([^>]*)\s*-->/i);
+    const doStatusAttrIds =
+      doStatusMatch?.[1]
+        ? doStatusMatch[1]
+            .split(',')
+            .map((s) => s.trim())
+            .filter((s) => s.length > 0)
+        : undefined;
+
     // Remove annotation comments before parsing (these should never be visible as node content)
     let cleanedLine = line.replace(/<!--\s*expanded:\d+\s*-->/, '');
     cleanedLine = cleanedLine.replace(/<!--\s*desc:[^>]*\s*-->/, '');
@@ -161,6 +172,7 @@ export function parseNexusMarkdown(text: string): NexusNode[] {
     cleanedLine = cleanedLine.replace(/<!--\s*expid:\d+\s*-->/, '');
     cleanedLine = cleanedLine.replace(/<!--\s*icon:[\s\S]*?\s*-->/, '');
     cleanedLine = cleanedLine.replace(/<!--\s*do:[^>]*\s*-->/, '');
+    cleanedLine = cleanedLine.replace(/<!--\s*dostatus:[^>]*\s*-->/i, '');
     cleanedLine = stripDoAttrsFromLine(cleanedLine);
     cleanedLine = cleanedLine.replace(/<!--\s*tags:[^>]*\s*-->/, '');
     cleanedLine = cleanedLine.replace(/<!--\s*uiType:[^>]*\s*-->/, '');
@@ -288,12 +300,13 @@ export function parseNexusMarkdown(text: string): NexusNode[] {
       tags: tags && tags.length > 0 ? tags : undefined,
       isFlowNode: isFlowNode || undefined,
       metadata:
-        isFlowTabRoot || fid || isSystemFlowRoot || sfid
+        isFlowTabRoot || fid || isSystemFlowRoot || sfid || (doStatusAttrIds && doStatusAttrIds.length)
           ? ({
               ...(isFlowTabRoot ? { flowTab: true } : {}),
               ...(fid ? { fid } : {}),
               ...(isSystemFlowRoot ? { systemFlow: true } : {}),
               ...(sfid ? { sfid } : {}),
+              ...(doStatusAttrIds && doStatusAttrIds.length ? { doStatusAttrIds } : {}),
             } as Record<string, unknown>)
           : undefined,
     };

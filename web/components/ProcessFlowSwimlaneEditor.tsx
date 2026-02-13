@@ -17,6 +17,16 @@ type Props = {
     lanes: LaneDef[];
   }) => void;
   autoPromptConnectorLabelOnFork?: boolean;
+  /**
+   * Hide lane management UI (Add Lane button + lane legend pills).
+   * Useful when reusing this editor in single-lane contexts that shouldn't
+   * expose "lane" semantics.
+   */
+  hideLaneUI?: boolean;
+  /**
+   * Disable forking (Enter key), which otherwise creates a new lane.
+   */
+  disableForking?: boolean;
 };
 
 let localCounter = 1;
@@ -38,6 +48,8 @@ export function ProcessFlowSwimlaneEditor({
   initialLanes,
   onChange,
   autoPromptConnectorLabelOnFork = false,
+  hideLaneUI = false,
+  disableForking = false,
 }: Props) {
   const [lanes, setLanes] = useState<LaneDef[]>(() => {
     const base = initialLanes?.length ? initialLanes : [{ id: 'branch-1', label: 'Lane 1' }];
@@ -241,6 +253,14 @@ export function ProcessFlowSwimlaneEditor({
   const svgHeight = Math.max(500, lanes.length * (ROW_HEIGHT + GAP_Y) + 200);
   const svgWidth = 4000;
 
+  const addStepInActiveLane = () => {
+    const selected = selectedNodeId ? nodeById.get(selectedNodeId) : null;
+    const laneId = selected ? laneIdForNode(selected) : lanes[0]?.id;
+    if (!laneId) return;
+    const newId = addStepAfter(laneId, selected?.id);
+    setSelectedNodeId(newId);
+  };
+
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center justify-between">
@@ -248,63 +268,76 @@ export function ProcessFlowSwimlaneEditor({
           Process-node flow format · Validation exits: <span className="font-semibold">Yes</span> (top) /{' '}
           <span className="font-semibold">No</span> (bottom). Double-click a connector to add details.
         </div>
-        <button
-          type="button"
-          onClick={addLane}
-          className="inline-flex items-center gap-1 text-[11px] text-purple-600 hover:text-purple-800"
-        >
-          <Plus size={12} /> Add Lane
-        </button>
+        {hideLaneUI ? (
+          <button
+            type="button"
+            onClick={addStepInActiveLane}
+            className="inline-flex items-center gap-1 text-[11px] text-purple-600 hover:text-purple-800"
+            title="Add step (Tab)"
+          >
+            <Plus size={12} /> Add Step
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={addLane}
+            className="inline-flex items-center gap-1 text-[11px] text-purple-600 hover:text-purple-800"
+          >
+            <Plus size={12} /> Add Lane
+          </button>
+        )}
       </div>
 
       <div className="relative border border-slate-300 rounded-lg bg-slate-50/80 overflow-hidden min-h-[260px]">
         {/* Lane legend */}
-        <div className="absolute top-2 left-2 z-10 flex flex-wrap gap-2">
-          {lanes.map((lane, idx) => (
-            <div
-              key={lane.id}
-              className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 shadow-sm bg-white/90 border-slate-200"
-            >
-              <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-slate-800 text-[9px] text-white">
-                {String.fromCharCode(65 + idx)}
-              </span>
-              <input
-                type="text"
-                value={lane.label}
-                onChange={(e) =>
-                  setLanes((prev) => prev.map((l) => (l.id === lane.id ? { ...l, label: e.target.value } : l)))
-                }
-                className="w-24 truncate border-none bg-transparent text-[10px] font-medium text-slate-700 focus:outline-none focus:ring-0"
-                placeholder="Lane label"
-              />
-              <button
-                type="button"
-                onClick={() => {
-                  const laneNodes = nodesByLane.get(lane.id) || [];
-                  const last = laneNodes[laneNodes.length - 1];
-                  const newId = addStepAfter(lane.id, last?.id);
-                  setSelectedNodeId(newId);
-                }}
-                className="ml-1 p-0.5 text-[9px] opacity-70 hover:opacity-100"
-                title="Add step"
+        {!hideLaneUI && (
+          <div className="absolute top-2 left-2 z-10 flex flex-wrap gap-2">
+            {lanes.map((lane, idx) => (
+              <div
+                key={lane.id}
+                className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 shadow-sm bg-white/90 border-slate-200"
               >
-                <Plus size={10} />
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  if (lanes.length <= 1) return;
-                  setLanes((prev) => prev.filter((l) => l.id !== lane.id));
-                  setNodes((prev) => prev.filter((n) => laneIdForNode(n) !== lane.id));
-                }}
-                className="p-0.5 text-[9px] opacity-70 hover:opacity-100"
-                title="Remove lane"
-              >
-                <Trash2 size={10} />
-              </button>
-            </div>
-          ))}
-        </div>
+                <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-slate-800 text-[9px] text-white">
+                  {String.fromCharCode(65 + idx)}
+                </span>
+                <input
+                  type="text"
+                  value={lane.label}
+                  onChange={(e) =>
+                    setLanes((prev) => prev.map((l) => (l.id === lane.id ? { ...l, label: e.target.value } : l)))
+                  }
+                  className="w-24 truncate border-none bg-transparent text-[10px] font-medium text-slate-700 focus:outline-none focus:ring-0"
+                  placeholder="Lane label"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    const laneNodes = nodesByLane.get(lane.id) || [];
+                    const last = laneNodes[laneNodes.length - 1];
+                    const newId = addStepAfter(lane.id, last?.id);
+                    setSelectedNodeId(newId);
+                  }}
+                  className="ml-1 p-0.5 text-[9px] opacity-70 hover:opacity-100"
+                  title="Add step"
+                >
+                  <Plus size={10} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (lanes.length <= 1) return;
+                    setLanes((prev) => prev.filter((l) => l.id !== lane.id));
+                    setNodes((prev) => prev.filter((n) => laneIdForNode(n) !== lane.id));
+                  }}
+                  className="p-0.5 text-[9px] opacity-70 hover:opacity-100"
+                  title="Remove lane"
+                >
+                  <Trash2 size={10} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* Canvas */}
         <div
@@ -322,6 +355,13 @@ export function ProcessFlowSwimlaneEditor({
               setSelectedNodeId(newId);
             } else if (e.key === 'Enter') {
               e.preventDefault();
+              if (disableForking) {
+                // In single-lane mode, keep Enter consistent with "create next step"
+                // (instead of forking into a new lane).
+                const newId = addStepAfter(laneId, selected?.id);
+                setSelectedNodeId(newId);
+                return;
+              }
               if (selected) {
                 const newId = forkFromNode(selected.id);
                 if (newId) setSelectedNodeId(newId);

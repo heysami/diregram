@@ -113,6 +113,40 @@ This directory contains modularized React hooks that encapsulate specific functi
 
 **When NOT to modify**: Treat as **DO NOT REGRESS**. See `web/AI_STABILITY_NOTES.md`.
 
+## use-condition-dimension-description-modals.tsx
+
+**Purpose**: Centralizes Conditional hub **dimension** descriptions (Table + Flow modals) including markdown parsing, running-number linkage, and persistence.
+
+**Key Features**:
+- Single source of truth for `## Condition Dimension Descriptions` section
+- Maintains `<!-- desc:table:<key>:<rn>,flow:<key>:<rn> -->` anchors on tree lines
+- Updates ` ```dimension-descriptions``` ` registry consistently
+- Uses `NexusCanvas` (Flow Tab style) for Flow descriptions
+
+**When to use**: Use from conditional node UI to open/save dimension Table/Flow descriptions.
+
+## use-data-object-attribute-description-modals.tsx
+
+**Purpose**: Shared Table/Flow description modals for **Data Object status attributes** (single source of truth used by both Data Object inspector and conditional locked dimensions).
+
+**Key Features**:
+- Single source of truth for `## Data Object Attribute Descriptions` section
+- Uses `NexusCanvas` (Flow Tab style) for Flow descriptions
+- Provides `textAutocompleteOptions` + linked indicators based on status values
+
+**When to use**: Whenever you need to edit/view status attribute descriptions anywhere in the UI.
+
+## use-linked-data-object-status-dimensions.ts
+
+**Purpose**: Conditional hub integration for a linked Data Object’s status attributes as **locked** dimensions.
+
+**Key Features**:
+- Persists selection via `<!-- dostatus:attr-1,attr-2 -->` on the hub line
+- Derives dimension keys/values from the Data Object attribute (non-editable in the conditional UI)
+- Provides `effectiveKeyValues` merged with user-defined dimensions
+
+**When to use**: Only in conditional hub logic where `<!-- do:do-X -->` is present and status attributes should be exposed as locked dimensions.
+
 ## use-expanded-node-resize.ts
 
 **Purpose**: Manages all expanded node resize functionality including width/height adjustments and metadata persistence.
@@ -149,16 +183,16 @@ This directory contains modularized React hooks that encapsulate specific functi
 
 ### dimension-description-matcher.ts
 
-**Purpose**: Handles matching nodes to dimension descriptions using running numbers from markdown comments. Prevents incorrect matching when nodes have duplicate content.
+**Purpose**: Matches nodes to conditional dimension descriptions using running numbers from markdown anchors/registries.
 
 **Key Features**:
-- Extracts running numbers from `<!-- desc:flow:Status:1,table:Priority:2 -->` comments in markdown
+- Extracts running numbers from `<!-- desc:... -->` comments in markdown
 - Matches nodes by lineIndex (most reliable, handles duplicate content)
 - Falls back to content matching for backward compatibility
 - Includes duplicate content guard (returns null if multiple entries have same content)
 - Modularized to prevent breaking when new features are added
 
-**When to use**: Use `matchNodeToDimensionDescription()` when loading dimension descriptions to match nodes correctly.
+**When to use**: Use when loading/saving conditional dimension descriptions to keep runningNumber linkage stable across edits.
 
 **When NOT to modify**: Do not modify this module when adding new features. All dimension description matching logic is encapsulated here to prevent breaking existing functionality.
 
