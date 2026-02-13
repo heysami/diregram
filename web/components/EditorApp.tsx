@@ -40,12 +40,35 @@ import type { TagViewState } from '@/types/tagging';
 import { ImportMarkdownModal } from '@/components/ImportMarkdownModal';
 import { ensureLocalFileStore, type LocalFile } from '@/lib/local-file-store';
 import { loadFileSnapshot, saveFileSnapshot } from '@/lib/local-doc-snapshots';
+import { useAuth } from '@/hooks/use-auth';
+
+type ActiveFileMeta = {
+  id: string;
+  name: string;
+  folderId: string | null;
+  roomName: string;
+  canEdit: boolean;
+  initialContent?: string;
+};
+
+function normalizeEmail(s: string) {
+  return s.trim().toLowerCase();
+}
+
+function canEditFromAccess(access: any, userEmail: string | null) {
+  const people = access?.people;
+  if (!Array.isArray(people) || people.length === 0) return false;
+  if (!userEmail) return false;
+  const e = normalizeEmail(userEmail);
+  return people.some((p: any) => normalizeEmail(String(p?.email || '')) === e && String(p?.role || 'view') === 'edit');
+}
 
 export function EditorApp() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { configured, ready, user } = useAuth();
 
-  const [activeFile, setActiveFile] = useState<LocalFile | null>(null);
+  const [activeFile, setActiveFile] = useState<ActiveFileMeta | null>(null);
   const activeRoomName = activeFile?.roomName || 'nexus-demo';
 
   const { doc, provider, status, presence, undo, redo, canUndo, canRedo } = useYjs(activeRoomName);
@@ -133,21 +156,102 @@ export function EditorApp() {
     setSelectedExpandedGridNode,
   });
 
-  // Editor opens ONE file, chosen via ?file=<id>. If missing/invalid, go back to home.
+  // Editor opens ONE file, chosen via ?file=<id>.
+  // - Supabase mode: file id is a UUID from DB; RLS enforces access.
+  // - Local mode: file id is from localStorage.
   useEffect(() => {
-    const store = ensureLocalFileStore();
     const fileIdFromUrl = searchParams?.get('file');
-    const file = fileIdFromUrl ? store.files.find((f) => f.id === fileIdFromUrl) || null : null;
-    if (!file) {
-      router.replace('/');
+    if (!fileIdFromUrl) {
+      router.replace('/workspace');
       return;
     }
-    setActiveFile(file);
-  }, [searchParams, router]);
 
-  // Local persistence (v1): snapshot the markdown per fileId to localStorage.
-  // - Restores snapshot only if the remote doc is empty after initial sync.
-  // - Saves on change (debounced).
+    let cancelled = false;
+
+    // Local mode
+    if (!configured) {
+      const store = ensureLocalFileStore();
+      const file = store.files.find((f) => f.id === fileIdFromUrl) || null;
+      if (!file) {
+        router.replace('/workspace');
+        return;
+      }
+      setActiveFile({
+        id: file.id,
+        name: file.name,
+        folderId: file.folderId,
+        roomName: file.roomName,
+        canEdit: true,
+        initialContent: loadFileSnapshot(file.id) || '',
+      });
+      return;
+    }
+
+    // Supabase mode (async)
+    (async () => {
+      if (!ready) return;
+      // Create a client on-demand (safe client-side).
+      const { createClient } = await import('@/lib/supabase');
+      const supabase = createClient();
+      if (!supabase) return;
+
+      try {
+        // Fetch file row; RLS ensures only allowed files are returned.
+        const { data: fileRow, error: fileErr } = await supabase
+          .from('files')
+          .select('id,name,folder_id,room_name,content,access,owner_id')
+          .eq('id', fileIdFromUrl)
+          .single();
+        if (fileErr || !fileRow) throw fileErr || new Error('File not found');
+
+        const folderId = fileRow.folder_id as string | null;
+        const { data: folderRow } = folderId
+          ? await supabase.from('folders').select('id,owner_id,access').eq('id', folderId).maybeSingle()
+          : { data: null as any };
+
+        const isOwner = user?.id && fileRow.owner_id === user.id;
+        const canEdit =
+          !!isOwner ||
+          canEditFromAccess(fileRow.access, user?.email || null) ||
+          canEditFromAccess(folderRow?.access, user?.email || null);
+
+        if (!canEdit) {
+          // Read-only mode isn't supported by the editor yet.
+          router.replace('/workspace');
+          return;
+        }
+
+        const roomName = (fileRow.room_name as string | null) || `file-${fileRow.id}`;
+        if (!fileRow.room_name) {
+          // best-effort
+          supabase.from('files').update({ room_name: roomName }).eq('id', fileRow.id).then(() => {});
+        }
+
+        // Touch "last opened"
+        supabase.from('files').update({ last_opened_at: new Date().toISOString() }).eq('id', fileRow.id).then(() => {});
+
+        if (cancelled) return;
+        setActiveFile({
+          id: fileRow.id,
+          name: fileRow.name,
+          folderId,
+          roomName,
+          canEdit: true,
+          initialContent: (fileRow.content as string) || '',
+        });
+      } catch {
+        router.replace('/workspace');
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [searchParams, configured, ready, user?.id, user?.email, router]);
+
+  // Persistence:
+  // - Local-only mode: localStorage snapshot
+  // - Supabase mode: also save to `files.content` (debounced) and restore if doc empty
   const saveTimerRef = useRef<number | null>(null);
   useEffect(() => {
     if (!doc || !provider || !activeFile) return;
@@ -157,7 +261,7 @@ export function EditorApp() {
     const maybeRestore = () => {
       const current = yText.toString();
       if (current.trim().length > 0) return;
-      const snap = loadFileSnapshot(fileId);
+      const snap = activeFile.initialContent || loadFileSnapshot(fileId);
       if (!snap || snap.trim().length === 0) return;
       doc.transact(() => {
         yText.delete(0, yText.length);
@@ -179,7 +283,15 @@ export function EditorApp() {
       if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
       saveTimerRef.current = window.setTimeout(() => {
         saveTimerRef.current = null;
-        saveFileSnapshot(fileId, yText.toString());
+        const next = yText.toString();
+        saveFileSnapshot(fileId, next);
+        if (configured) {
+          import('@/lib/supabase').then(({ createClient }) => {
+            const supabase = createClient();
+            if (!supabase) return;
+            supabase.from('files').update({ content: next, updated_at: new Date().toISOString() }).eq('id', fileId).then(() => {});
+          });
+        }
       }, 250);
     };
 
@@ -194,7 +306,7 @@ export function EditorApp() {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (provider as any).off?.('synced', onSynced);
     };
-  }, [doc, provider, activeFile?.id]);
+  }, [doc, provider, activeFile?.id, configured]);
 
   // Keep presence view in sync with the active app view.
   useEffect(() => {
@@ -850,7 +962,7 @@ export function EditorApp() {
         onOpenImportMarkdown={() => setShowImportMarkdown(true)}
         activeFileName={activeFile?.name}
         onlineCount={presence ? 1 + presence.peers.length : undefined}
-        onGoHome={() => router.push('/')}
+        onGoHome={() => router.push('/workspace')}
       />
 
       <ImportMarkdownModal

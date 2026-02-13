@@ -25,7 +25,7 @@ export function FilesPanel({ activeFileId, onOpenFile }: Props) {
   //   initial render can cause server HTML to differ from client HTML -> hydration mismatch.
   // - Therefore we render a deterministic empty store first, then load the real store after mount.
   const [store, setStore] = useState<LocalFileStore>(() => ({
-    version: 1,
+    version: 3,
     folders: [],
     files: [],
     lastOpenedFileId: null,
@@ -180,10 +180,10 @@ export function FilesPanel({ activeFileId, onOpenFile }: Props) {
       }}
     >
       <div className="mac-titlebar">
-        <div className="mac-title">Files</div>
+        <div className="mac-title">Workspace</div>
       </div>
       <div className="mac-toolstrip justify-between">
-        <div className="text-[11px] font-semibold">Local workspace</div>
+        <div className="text-[11px] opacity-70">Double-click to open</div>
         <div className="flex items-center gap-1">
           <button
             type="button"

@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/hooks/use-auth';
+import { LogOut, UserRound } from 'lucide-react';
 
 export function AuthStatus() {
   const router = useRouter();
@@ -30,8 +31,14 @@ export function AuthStatus() {
 
   return (
     <div className="flex items-center gap-2">
-      <button type="button" className="mac-btn" onClick={() => router.push('/account')} title="Account">
-        {user.email || 'Account'}
+      <button
+        type="button"
+        className="mac-btn flex items-center gap-1.5"
+        onClick={() => router.push('/account')}
+        title="Account"
+      >
+        <UserRound size={14} />
+        <span>{user.email || 'Account'}</span>
       </button>
       <button
         type="button"
@@ -40,8 +47,10 @@ export function AuthStatus() {
           await signOut();
           router.push('/');
         }}
+        aria-label="Log out"
+        title="Log out"
       >
-        Log out
+        <LogOut size={14} />
       </button>
     </div>
   );

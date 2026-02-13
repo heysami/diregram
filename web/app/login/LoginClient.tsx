@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient, isSupabaseConfigured } from '@/lib/supabase';
+import { isLocalAdminLoginEnabled, LOCAL_ADMIN_USERNAME, setLocalAdminSession } from '@/lib/local-admin-session';
 
 export default function LoginClient() {
   const router = useRouter();
@@ -25,7 +26,7 @@ export default function LoginClient() {
         <div className="flex items-center gap-4">
           <h1 className="text-[13px] font-bold tracking-tight">
             <span aria-hidden className="mr-1 select-none"></span>
-            NexusMap <span className="text-[11px] font-normal opacity-70">Login</span>
+            Diregram <span className="text-[11px] font-normal opacity-70">Login</span>
           </h1>
         </div>
         <button type="button" className="mac-btn" onClick={() => router.push('/')}>
@@ -72,7 +73,13 @@ export default function LoginClient() {
                       setError(null);
                       setLoading(true);
                       try {
-                        const next = searchParams?.get('next') || '/';
+                        const next = searchParams?.get('next') || '/workspace';
+                        const input = email.trim().toLowerCase();
+                        if (isLocalAdminLoginEnabled() && input === LOCAL_ADMIN_USERNAME) {
+                          setLocalAdminSession();
+                          router.replace(next.startsWith('/') ? next : '/');
+                          return;
+                        }
                         const { error: err } = await supabase.auth.signInWithOtp({
                           email: email.trim(),
                           options: {

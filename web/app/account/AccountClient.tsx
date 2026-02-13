@@ -11,12 +11,14 @@ export default function AccountClient() {
     <main className="mac-desktop flex h-screen flex-col">
       <header className="mac-menubar px-4 flex items-center justify-between shrink-0 z-10 relative">
         <div className="flex items-center gap-4">
-          <h1 className="text-[13px] font-bold tracking-tight">
-            <span aria-hidden className="mr-1 select-none"></span>
-            NexusMap <span className="text-[11px] font-normal opacity-70">Account</span>
-          </h1>
+          <button type="button" onClick={() => router.push('/')} className="text-left">
+            <h1 className="text-[13px] font-bold tracking-tight">
+              <span aria-hidden className="mr-1 select-none"></span>
+              Diregram <span className="text-[11px] font-normal opacity-70">Account</span>
+            </h1>
+          </button>
         </div>
-        <button type="button" className="mac-btn" onClick={() => router.push('/')}>
+        <button type="button" className="mac-btn" onClick={() => router.push('/workspace')}>
           Home
         </button>
       </header>

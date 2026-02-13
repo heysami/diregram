@@ -2,6 +2,7 @@
 
 import { Download, Database, FlaskConical, Workflow, Network } from 'lucide-react';
 import { AuthStatus } from '@/components/AuthStatus';
+import { useRouter } from 'next/navigation';
 
 export type AppView = 'main' | 'flows' | 'systemFlow' | 'dataObjects' | 'testing';
 
@@ -17,15 +18,19 @@ type Props = {
 };
 
 export function AppHeader({ activeView, onChangeView, status, onClearDatabase, onOpenImportMarkdown, activeFileName, onlineCount, onGoHome }: Props) {
+  const router = useRouter();
+
   return (
     <header className="mac-menubar px-4 flex items-center justify-between shrink-0 z-10 relative">
       <div className="flex items-center gap-4">
-        <h1 className="text-[13px] font-bold tracking-tight">
-          <span aria-hidden className="mr-1 select-none"></span>
-          NexusMap <span className="text-[11px] font-normal opacity-70">Phase 2</span>
-        </h1>
+        <button type="button" onClick={() => router.push('/')} className="text-left">
+          <h1 className="text-[13px] font-bold tracking-tight">
+            <span aria-hidden className="mr-1 select-none"></span>
+            Diregram <span className="text-[11px] font-normal opacity-70">Editor</span>
+          </h1>
+        </button>
         {onGoHome ? (
-          <button type="button" onClick={onGoHome} className="mac-btn" title="Back to home">
+          <button type="button" onClick={onGoHome} className="mac-btn" title="Go to workspace">
             Home
           </button>
         ) : null}
