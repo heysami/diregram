@@ -11,7 +11,9 @@ export default function LoginClient() {
   const configured = isSupabaseConfigured();
   const [supabase, setSupabase] = useState<ReturnType<typeof createClient>>(null);
   const [email, setEmail] = useState('');
-  const [sent, setSent] = useState(false);
+  const [step, setStep] = useState<'email' | 'code'>('email');
+  const [emailSentTo, setEmailSentTo] = useState<string>('');
+  const [code, setCode] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -46,59 +48,138 @@ export default function LoginClient() {
               </div>
             ) : !supabase ? (
               <div className="text-xs opacity-80">Loading…</div>
-            ) : sent ? (
-              <div className="text-xs">
-                Check your email for a magic link. After signing in, you’ll be redirected back automatically (or you can go Home).
-              </div>
             ) : (
               <>
-                <div className="text-xs opacity-80">Enter your email and we’ll send a magic link.</div>
-                <input
-                  className="mac-field w-full"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="you@company.com"
-                  inputMode="email"
-                />
+                {step === 'email' ? (
+                  <>
+                    <div className="text-xs opacity-80">Enter your email and we’ll send a sign-in code.</div>
+                    <input
+                      className="mac-field w-full"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      placeholder="you@company.com"
+                      inputMode="email"
+                    />
+                  </>
+                ) : (
+                  <>
+                    <div className="text-xs opacity-80">
+                      Enter the code from your email{emailSentTo ? ` (${emailSentTo})` : ''}.
+                    </div>
+                    <input
+                      className="mac-field w-full"
+                      value={code}
+                      onChange={(e) => setCode(e.target.value)}
+                      placeholder="123456"
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                    />
+                  </>
+                )}
                 {error ? <div className="text-xs">{error}</div> : null}
                 <div className="flex items-center justify-end gap-2">
                   <button type="button" className="mac-btn" onClick={() => router.push('/')}>
                     Cancel
                   </button>
+                  {step === 'code' ? (
+                    <button
+                      type="button"
+                      className="mac-btn"
+                      disabled={loading}
+                      onClick={async () => {
+                        setError(null);
+                        setLoading(true);
+                        try {
+                          const next = searchParams?.get('next') || '/workspace';
+                          const { error: err } = await supabase.auth.signInWithOtp({
+                            email: emailSentTo,
+                            options: {
+                              emailRedirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(
+                                next.startsWith('/') ? next : '/',
+                              )}`,
+                            },
+                          });
+                          if (err) setError(err.message);
+                          else {
+                            setCode('');
+                          }
+                        } finally {
+                          setLoading(false);
+                        }
+                      }}
+                    >
+                      Resend code
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     className="mac-btn mac-btn--primary"
-                    disabled={loading || !email.trim()}
+                    disabled={loading || (step === 'email' ? !email.trim() : !code.trim())}
                     onClick={async () => {
                       setError(null);
                       setLoading(true);
                       try {
                         const next = searchParams?.get('next') || '/workspace';
-                        const input = email.trim().toLowerCase();
-                        if (isLocalAdminLoginEnabled() && input === LOCAL_ADMIN_USERNAME) {
-                          setLocalAdminSession();
-                          router.replace(next.startsWith('/') ? next : '/');
-                          return;
+                        if (step === 'email') {
+                          const input = email.trim().toLowerCase();
+                          if (isLocalAdminLoginEnabled() && input === LOCAL_ADMIN_USERNAME) {
+                            setLocalAdminSession();
+                            router.replace(next.startsWith('/') ? next : '/');
+                            return;
+                          }
+                          const emailTrimmed = email.trim();
+                          const { error: err } = await supabase.auth.signInWithOtp({
+                            email: emailTrimmed,
+                            options: {
+                              // Route handler exchanges the code for a session cookie (magic link fallback).
+                              emailRedirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(
+                                next.startsWith('/') ? next : '/',
+                              )}`,
+                            },
+                          });
+                          if (err) setError(err.message);
+                          else {
+                            setEmailSentTo(emailTrimmed);
+                            setCode('');
+                            setStep('code');
+                          }
+                        } else {
+                          const { error: err } = await supabase.auth.verifyOtp({
+                            email: emailSentTo,
+                            token: code.trim(),
+                            type: 'email',
+                          });
+                          if (err) {
+                            setError(err.message);
+                          } else {
+                            router.replace(next.startsWith('/') ? next : '/');
+                          }
                         }
-                        const { error: err } = await supabase.auth.signInWithOtp({
-                          email: email.trim(),
-                          options: {
-                            // Route handler exchanges the code for a session cookie.
-                            emailRedirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(
-                              next.startsWith('/') ? next : '/',
-                            )}`,
-                          },
-                        });
-                        if (err) setError(err.message);
-                        else setSent(true);
                       } finally {
                         setLoading(false);
                       }
                     }}
                   >
-                    Send link
+                    {step === 'email' ? 'Send code' : 'Verify'}
                   </button>
                 </div>
+                {step === 'code' ? (
+                  <div className="pt-1 flex items-center justify-between">
+                    <button
+                      type="button"
+                      className="mac-btn"
+                      disabled={loading}
+                      onClick={() => {
+                        setError(null);
+                        setCode('');
+                        setStep('email');
+                      }}
+                    >
+                      Change email
+                    </button>
+                    <div className="text-[11px] opacity-70">Tip: open the email on your phone and type the code here.</div>
+                  </div>
+                ) : null}
               </>
             )}
           </div>
