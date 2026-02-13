@@ -1211,7 +1211,11 @@ export function SystemFlowEditor({
 
         {/* Floating right panel (compact) */}
         <div className="absolute right-4 top-4 pointer-events-none">
-          <div className="mac-window w-[260px] overflow-hidden pointer-events-auto">
+          <div
+            className="mac-window w-[260px] overflow-hidden pointer-events-auto"
+            data-safe-panel="right"
+            data-safe-panel-view="systemFlow"
+          >
             <div className="mac-titlebar">
               <div className="mac-title">
                 {selectedBox ? 'Box' : selectedLink ? 'Link' : selectedZone ? 'Zone' : steps.length ? 'Steps' : 'System Flow'}

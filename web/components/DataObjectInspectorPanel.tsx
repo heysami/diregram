@@ -81,7 +81,11 @@ export function DataObjectInspectorPanel({
   };
 
   return (
-    <div className="absolute top-4 right-4 z-30 mac-window overflow-hidden w-[360px] max-w-[calc(100vw-2rem)]">
+    <div
+      className="absolute top-4 right-4 z-30 mac-window overflow-hidden w-[360px] max-w-[calc(100vw-2rem)]"
+      data-safe-panel="right"
+      data-safe-panel-view="dataObjects"
+    >
       <div className="mac-titlebar">
         <div className="mac-title">Data Object</div>
         <div className="absolute right-1 top-1/2 -translate-y-1/2">

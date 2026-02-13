@@ -949,62 +949,84 @@ export function FlowsCanvas({
               )}
             </div>
 
-            {/* Right inspector for lane/stage assignment */}
-            {swimlane && selectedNode ? (
-              <div className="absolute left-4 right-4 bottom-[104px] mac-window overflow-hidden">
-                <div className="mac-toolstrip justify-between">
-                  <div className="min-w-0 flex flex-col">
-                    <div className="text-xs font-semibold truncate">
-                    {selectedNode.content}
-                    </div>
-                    {selectedNodeRefSummary ? (
-                      <div className="text-[11px] opacity-70 truncate">{selectedNodeRefSummary}</div>
-                    ) : null}
+            {/* Compact top-right inspector for lane/stage assignment */}
+            {swimlane ? (
+              <div className="absolute right-4 top-4 z-50 pointer-events-none">
+                <div
+                  className="mac-window w-[260px] overflow-hidden pointer-events-auto"
+                  data-safe-panel="right"
+                  data-safe-panel-view="flows"
+                >
+                  <div className="mac-titlebar">
+                    <div className="mac-title">Node</div>
                   </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={openReferenceModal}
-                      className="mac-btn"
-                      title="Reference a process node from the main canvas"
-                    >
-                      Reference…
-                    </button>
-                    {selectedNodeRef ? (
-                      <button type="button" onClick={unassignReference} className="mac-btn" title="Unassign reference">
-                        Unassign
-                      </button>
-                    ) : null}
-                    <select
-                      className="mac-field h-7"
-                      value={effectiveLaneId(selectedNode)}
-                      onChange={(e) => {
-                        updatePlacement(selectedNode.id, { laneId: e.target.value });
-                        setCanvasFocusTick((n) => n + 1);
-                      }}
-                      title="Lane"
-                    >
-                      {swimlane.lanes.map((l) => (
-                        <option key={l.id} value={l.id}>
-                          {l.label}
-                        </option>
-                      ))}
-                    </select>
-                    <select
-                      className="mac-field h-7"
-                      value={String(safeStageIndex(swimlane, selectedNode.id, effectiveStageIdx(selectedNode)))}
-                      onChange={(e) => {
-                        updatePlacement(selectedNode.id, { stage: Number(e.target.value) });
-                        setCanvasFocusTick((n) => n + 1);
-                      }}
-                      title="Stage"
-                    >
-                      {swimlane.stages.map((s, idx) => (
-                        <option key={s.id} value={idx}>
-                          {s.label}
-                        </option>
-                      ))}
-                    </select>
+                  <div className="p-3 space-y-2">
+                    {selectedNode ? (
+                      <>
+                        <div className="min-w-0">
+                          <div className="text-xs font-semibold truncate">{selectedNode.content}</div>
+                          {selectedNodeRefSummary ? (
+                            <div className="text-[11px] opacity-70 truncate">{selectedNodeRefSummary}</div>
+                          ) : null}
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={openReferenceModal}
+                            className="mac-btn"
+                            title="Reference a process node from the main canvas"
+                          >
+                            Reference…
+                          </button>
+                          {selectedNodeRef ? (
+                            <button type="button" onClick={unassignReference} className="mac-btn" title="Unassign reference">
+                              Unassign
+                            </button>
+                          ) : null}
+                        </div>
+
+                        <div className="space-y-1">
+                          <div className="text-[11px] opacity-70">Lane</div>
+                          <select
+                            className="mac-field h-7 w-full"
+                            value={effectiveLaneId(selectedNode)}
+                            onChange={(e) => {
+                              updatePlacement(selectedNode.id, { laneId: e.target.value });
+                              setCanvasFocusTick((n) => n + 1);
+                            }}
+                            title="Lane"
+                          >
+                            {swimlane.lanes.map((l) => (
+                              <option key={l.id} value={l.id}>
+                                {l.label}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div className="space-y-1">
+                          <div className="text-[11px] opacity-70">Stage</div>
+                          <select
+                            className="mac-field h-7 w-full"
+                            value={String(safeStageIndex(swimlane, selectedNode.id, effectiveStageIdx(selectedNode)))}
+                            onChange={(e) => {
+                              updatePlacement(selectedNode.id, { stage: Number(e.target.value) });
+                              setCanvasFocusTick((n) => n + 1);
+                            }}
+                            title="Stage"
+                          >
+                            {swimlane.stages.map((s, idx) => (
+                              <option key={s.id} value={idx}>
+                                {s.label}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="text-xs text-slate-600">Select a node to edit lane/stage.</div>
+                    )}
                   </div>
                 </div>
               </div>

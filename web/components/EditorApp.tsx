@@ -1233,13 +1233,23 @@ export function EditorApp() {
 
         {/* Floating left window: markdown source (only on main canvas) */}
           {activeView === 'main' ? (
-          <div className="absolute left-4 top-14 bottom-24 z-50 pointer-events-auto" data-editor-left-panel>
+          <div
+            className="absolute left-4 top-14 bottom-24 z-50 pointer-events-auto"
+            data-editor-left-panel
+            data-safe-panel="left"
+            data-safe-panel-view="main"
+          >
               <NexusEditor doc={doc} />
             </div>
           ) : null}
 
           {/* Floating right window(s) */}
-          <div className="absolute right-4 top-4 bottom-24 z-50 pointer-events-auto" data-editor-right-panel>
+          <div
+            className="absolute right-4 top-4 bottom-24 z-50 pointer-events-auto"
+            data-editor-right-panel
+            data-safe-panel="right"
+            data-safe-panel-view="*"
+          >
           {activeTool === 'comment' ? (
             <CommentsPanel
               doc={doc}

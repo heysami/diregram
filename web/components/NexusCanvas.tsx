@@ -238,16 +238,34 @@ export function NexusCanvas({
 
     const overlapsY = (a: DOMRect, b: DOMRect) => Math.min(a.bottom, b.bottom) > Math.max(a.top, b.top);
 
-    const leftPanel = document.querySelector('[data-editor-left-panel]') as HTMLElement | null;
-    if (leftPanel) {
-      const pr = leftPanel.getBoundingClientRect();
-      if (overlapsY(rect, pr)) safeLeft = Math.max(safeLeft, pr.right);
-    }
-    const rightPanel = document.querySelector('[data-editor-right-panel]') as HTMLElement | null;
-    if (rightPanel) {
-      const pr = rightPanel.getBoundingClientRect();
-      if (overlapsY(rect, pr)) safeRight = Math.min(safeRight, pr.left);
-    }
+    const view = effectivePresenceView;
+    const matchesView = (el: HTMLElement) => {
+      const attr = el.getAttribute('data-safe-panel-view');
+      if (!attr || attr.trim() === '' || attr.trim() === '*') return true;
+      const parts = attr
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+      return parts.includes(view);
+    };
+    const isVisible = (el: HTMLElement) => {
+      if (!el.isConnected) return false;
+      const cs = window.getComputedStyle(el);
+      if (cs.display === 'none' || cs.visibility === 'hidden' || cs.opacity === '0') return false;
+      const r = el.getBoundingClientRect();
+      return r.width > 1 && r.height > 1;
+    };
+
+    const panels = Array.from(document.querySelectorAll<HTMLElement>('[data-safe-panel]')).filter(
+      (p) => matchesView(p) && isVisible(p),
+    );
+    panels.forEach((p) => {
+      const side = (p.getAttribute('data-safe-panel') || '').toLowerCase();
+      const pr = p.getBoundingClientRect();
+      if (!overlapsY(rect, pr)) return;
+      if (side === 'left') safeLeft = Math.max(safeLeft, pr.right);
+      if (side === 'right') safeRight = Math.min(safeRight, pr.left);
+    });
 
     if (safeRight - safeLeft < 80) {
       safeLeft = rect.left;
@@ -260,7 +278,7 @@ export function NexusCanvas({
     const centerY = (safeTop + safeBottom) / 2 - rect.top; // canvas-local px
 
     return { rect, width, height, centerX, centerY };
-  }, []);
+  }, [effectivePresenceView]);
 
   // Broadcast current transform so the bottom toolbar can show x/y tooltip.
   useEffect(() => {
@@ -1634,6 +1652,24 @@ export function NexusCanvas({
     initializedRef.current = true;
     pendingCenterNodeIdRef.current = null;
   }, [animatedLayout, layout, scale, getSafeViewport]);
+
+  const centerNodeInSafeViewport = useCallback(
+    (nodeId: string) => {
+      const l = layout[nodeId] || animatedLayout[nodeId];
+      const safe = getSafeViewport();
+      if (!l || !safe) return;
+      const cx = l.x + l.width / 2;
+      const cy = l.y + l.height / 2;
+      setOffset({
+        x: safe.centerX - cx * scale,
+        y: safe.centerY - cy * scale,
+      });
+      // Don't let any pending fit override manual centering.
+      pendingViewportFitRef.current = false;
+      initializedRef.current = true;
+    },
+    [animatedLayout, getSafeViewport, layout, scale],
+  );
 
   // External connector label editor request (Flow tab uses this to enforce detail labels on lane/stage transitions).
   const lastConnectorEditKeyRef = useRef<string | null>(null);
@@ -3912,6 +3948,10 @@ export function NexusCanvas({
                       }
                       if (activeTool !== 'line') {
                         onSelectNode(node.id);
+                        // Center the clicked node in the visible (panel-aware) viewport.
+                        if (activeTool === 'select') {
+                          centerNodeInSafeViewport(node.id);
+                        }
                       }
                     }}
                     onMouseDown={(e) => {

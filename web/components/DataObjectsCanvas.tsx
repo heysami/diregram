@@ -342,6 +342,53 @@ export function DataObjectsCanvas({
   const dragRef = useRef<{ startX: number; startY: number; panX: number; panY: number } | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
+  const getSafeViewport = useCallback(() => {
+    const el = containerRef.current;
+    if (!el) return null;
+    const rect = el.getBoundingClientRect();
+    let safeLeft = rect.left;
+    let safeRight = rect.right;
+    const overlapsY = (a: DOMRect, b: DOMRect) => Math.min(a.bottom, b.bottom) > Math.max(a.top, b.top);
+
+    const matchesView = (p: HTMLElement) => {
+      const attr = p.getAttribute('data-safe-panel-view');
+      if (!attr || attr.trim() === '' || attr.trim() === '*') return true;
+      const parts = attr
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+      return parts.includes('dataObjects');
+    };
+    const isVisible = (p: HTMLElement) => {
+      if (!p.isConnected) return false;
+      const cs = window.getComputedStyle(p);
+      if (cs.display === 'none' || cs.visibility === 'hidden' || cs.opacity === '0') return false;
+      const r = p.getBoundingClientRect();
+      return r.width > 1 && r.height > 1;
+    };
+
+    const panels = Array.from(document.querySelectorAll<HTMLElement>('[data-safe-panel]')).filter(
+      (p) => matchesView(p) && isVisible(p),
+    );
+    panels.forEach((p) => {
+      const side = (p.getAttribute('data-safe-panel') || '').toLowerCase();
+      const pr = p.getBoundingClientRect();
+      if (!overlapsY(rect, pr)) return;
+      if (side === 'left') safeLeft = Math.max(safeLeft, pr.right);
+      if (side === 'right') safeRight = Math.min(safeRight, pr.left);
+    });
+
+    if (safeRight - safeLeft < 80) {
+      safeLeft = rect.left;
+      safeRight = rect.right;
+    }
+    const centerX = (safeLeft + safeRight) / 2 - rect.left;
+    const centerY = rect.height / 2;
+    const width = Math.max(1, safeRight - safeLeft);
+    const height = Math.max(1, rect.height);
+    return { rect, width, height, centerX, centerY };
+  }, []);
+
   // Broadcast current transform so the bottom toolbar can show x/y tooltip.
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -386,8 +433,10 @@ export function DataObjectsCanvas({
   const fitToContent = useCallback(() => {
     const el = containerRef.current;
     if (!el) return;
-    const cw = el.clientWidth;
-    const ch = el.clientHeight;
+    const safe = getSafeViewport();
+    if (!safe) return;
+    const cw = safe.width;
+    const ch = safe.height;
     if (!cw || !ch) return;
     const PAD = 80;
     const w = Math.max(1, bounds.width + PAD * 2);
@@ -395,10 +444,10 @@ export function DataObjectsCanvas({
     const fit = clampScale(Math.min(cw / w, ch / h));
     setScale(fit);
     setPan({
-      x: (cw - bounds.width * fit) / 2,
-      y: (ch - bounds.height * fit) / 2,
+      x: safe.centerX - (bounds.width / 2) * fit,
+      y: safe.centerY - (bounds.height / 2) * fit,
     });
-  }, [bounds.width, bounds.height]);
+  }, [bounds.width, bounds.height, getSafeViewport]);
 
   const zoomIn = useCallback(() => {
     const el = containerRef.current;
@@ -472,19 +521,21 @@ export function DataObjectsCanvas({
     if (!selectedId) return;
     const el = containerRef.current;
     if (!el) return;
+    const safe = getSafeViewport();
+    if (!safe) return;
     const idToCenter = inlineChildToParent.get(selectedId) || selectedId;
     const ln = layoutNodes.get(idToCenter);
     if (!ln) return;
-    const cw = el.clientWidth;
-    const ch = el.clientHeight;
+    const cw = safe.width;
+    const ch = safe.height;
     if (!cw || !ch) return;
     const cardH = cardHeightById.get(idToCenter) ?? ln.height;
     const cx = (ln.x + ln.width / 2) * scale;
     const cy = (ln.y + cardH / 2) * scale;
-    const targetPanX = cw / 2 - cx;
-    const targetPanY = ch / 2 - cy;
+    const targetPanX = safe.centerX - cx;
+    const targetPanY = safe.centerY - cy;
     setPan({ x: targetPanX, y: targetPanY });
-  }, [selectedId, inlineChildToParent, layoutNodes, cardHeightById, scale]);
+  }, [selectedId, inlineChildToParent, layoutNodes, cardHeightById, scale, getSafeViewport]);
 
   const saveAnnotation = (dataObjectId: string, annotation: string | null | undefined) => {
     const store = loadDataObjects(doc);
