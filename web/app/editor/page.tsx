@@ -1,4 +1,4 @@
-import { EditorApp } from '@/components/EditorApp';
+import { EditorRouter } from '@/components/EditorRouter';
 import { Suspense } from 'react';
 import { RequireAuth } from '@/components/RequireAuth';
 
@@ -6,7 +6,7 @@ export default function EditorPage() {
   return (
     <Suspense fallback={null}>
       <RequireAuth>
-        <EditorApp />
+        <EditorRouter />
       </RequireAuth>
     </Suspense>
   );

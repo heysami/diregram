@@ -31,6 +31,8 @@ create table if not exists public.files (
   name text not null,
   folder_id uuid references public.folders(id),
   owner_id uuid references public.profiles(id) not null,
+  -- Document kind: diagram (existing), note, grid, vision
+  kind text default 'diagram',
   content text default '',
   room_name text,
   last_opened_at timestamptz,
@@ -45,6 +47,7 @@ create table if not exists public.files (
 -- Ensure columns exist on existing projects
 alter table public.profiles add column if not exists default_layout_direction text default 'horizontal';
 alter table public.files add column if not exists layout_direction text;
+alter table public.files add column if not exists kind text default 'diagram';
 
 -- 2) Profiles: allow inserting your own profile row
 alter table public.profiles enable row level security;

@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useRef, useCallback, Fragment } from 'react';
+import { useEffect, useLayoutEffect, useState, useMemo, useRef, useCallback, Fragment } from 'react';
 import { createPortal } from 'react-dom';
 import * as Y from 'yjs';
 import { parseNexusMarkdown } from '@/lib/nexus-parser';
@@ -16,6 +16,7 @@ import { useKeyboardNavigation } from '@/hooks/use-keyboard-navigation';
 import { useDragDrop } from '@/hooks/use-drag-drop';
 import { useCustomLines } from '@/hooks/use-custom-lines';
 import { useNodeMarqueeSelection } from '@/hooks/use-node-marquee-selection';
+import { useFollowSelectionViewport } from '@/hooks/use-follow-selection-viewport';
 import { buildConditionMatrixScenarios } from '@/lib/condition-matrix';
 import { ConditionMatrixOverlay } from '@/components/ConditionMatrixOverlay';
 import { ExpandedNodeView } from '@/components/ExpandedNodeView';
@@ -400,6 +401,27 @@ export function NexusCanvas({
   const [annotationDraft, setAnnotationDraft] = useState<string>('');
 
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const pendingEditSelectionRef = useRef<{ start: number; end: number } | null>(null);
+
+  // Preserve caret position in the controlled textarea while typing.
+  // Without this, any incidental focus/style/layout work can reset selection,
+  // causing new characters to insert at the beginning.
+  useLayoutEffect(() => {
+    if (!editingNodeId) {
+      pendingEditSelectionRef.current = null;
+      return;
+    }
+    const sel = pendingEditSelectionRef.current;
+    if (!sel) return;
+    const textarea = inputRef.current;
+    if (!textarea) return;
+    try {
+      textarea.setSelectionRange(sel.start, sel.end);
+    } catch {
+      // ignore
+    }
+    pendingEditSelectionRef.current = null;
+  }, [editValue, editingNodeId]);
 
   useEffect(() => {
     return observeComments(doc, () => setCommentsTick((t) => t + 1));
@@ -1695,7 +1717,13 @@ export function NexusCanvas({
     if (!node) return;
     setEditingNodeId(id);
     onSelectNode(id);
-    setEditValue(initialValue !== undefined ? initialValue : node.content); // Use content (clean text)
+    const nextValue = initialValue !== undefined ? initialValue : node.content; // Use content (clean text)
+    // When editing starts from a typed character, ensure the caret lands AFTER that character
+    // (otherwise subsequent typing inserts before it).
+    if (!selectAll) {
+      pendingEditSelectionRef.current = { start: nextValue.length, end: nextValue.length };
+    }
+    setEditValue(nextValue);
     setSelectAllOnFocus(selectAll);
   };
 
@@ -1732,6 +1760,7 @@ export function NexusCanvas({
                   startEditing(node.id, undefined, pendingAction.selectAll); 
               } else if (pendingAction.type === 'select') {
                   onSelectNode(node.id);
+                  onPendingSelectResolved(node.id);
                   if (containerRef.current) containerRef.current.focus();
               }
               setPendingAction(null);
@@ -1796,6 +1825,17 @@ export function NexusCanvas({
     [animatedLayout, getSafeViewport, layout, scale],
   );
 
+  const requestCenterOnFinalLayout = useCallback((nodeId: string) => {
+    pendingCenterNodeIdRef.current = nodeId;
+    pendingViewportFitRef.current = false;
+    initializedRef.current = true;
+  }, []);
+
+  const { followKeyboardNavigation, requestFollowAfterPendingSelect, onPendingSelectResolved } = useFollowSelectionViewport({
+    centerNow: centerNodeInSafeViewport,
+    requestCenterOnFinalLayout,
+  });
+
   // External connector label editor request (Flow tab uses this to enforce detail labels on lane/stage transitions).
   const lastConnectorEditKeyRef = useRef<string | null>(null);
   useEffect(() => {
@@ -1810,38 +1850,76 @@ export function NexusCanvas({
 
   // Focus management
   useEffect(() => {
-    if (editingNodeId && inputRef.current) {
-      inputRef.current.focus();
-      if (selectAllOnFocus) {
-        // For textarea, use setSelectionRange instead of select()
-        inputRef.current.setSelectionRange(0, inputRef.current.value.length);
-      }
-      // Center single-line text vertically
-      const textarea = inputRef.current;
-      const nodeLayout = layout[editingNodeId];
-      if (nodeLayout) {
-        const lineCount = (textarea.value.match(/\n/g) || []).length + 1;
-        
-        // Account for parent padding (py-2 = 8px top + 8px bottom = 16px total)
-        const availableHeight = nodeLayout.height - 16;
-        
-        if (lineCount === 1) {
-          // For single-line text, set height to fill available space for proper centering
-          textarea.style.minHeight = `${availableHeight}px`;
-          textarea.style.height = `${availableHeight}px`;
-        } else {
-          // For multi-line text, allow it to grow beyond node height while editing
-          textarea.style.minHeight = '24px'; // Minimum for one line
-          textarea.style.height = 'auto';
-          // Allow growth beyond availableHeight for multi-line content
-          const contentHeight = Math.max(24, textarea.scrollHeight);
-          textarea.style.height = `${contentHeight}px`;
-        }
-        textarea.style.paddingTop = '0';
-        textarea.style.paddingBottom = '0';
-      }
+    if (!editingNodeId) return;
+    const textarea = inputRef.current;
+    if (!textarea) return;
+
+    // IMPORTANT: Do not "refocus" on every layout change while typing.
+    // That can reset the caret/selection and make characters insert at the start.
+    if (document.activeElement !== textarea) {
+      textarea.focus();
     }
-  }, [editingNodeId, selectAllOnFocus, layout]);
+
+    if (selectAllOnFocus) {
+      // For textarea, use setSelectionRange instead of select()
+      textarea.setSelectionRange(0, textarea.value.length);
+      return;
+    }
+
+    // If we have a pending selection (e.g. edit started from a typed character),
+    // apply it at focus time too. This avoids a race where the restore effect
+    // runs before the textarea ref is ready.
+    const pending = pendingEditSelectionRef.current;
+    if (pending) {
+      try {
+        textarea.setSelectionRange(pending.start, pending.end);
+      } catch {
+        // ignore
+      }
+      pendingEditSelectionRef.current = null;
+      return;
+    }
+
+    // Fallback: some browsers place the caret at 0 on programmatic focus.
+    // If nothing is selected, move caret to end so typing appends naturally.
+    try {
+      if ((textarea.selectionStart ?? 0) === 0 && (textarea.selectionEnd ?? 0) === 0 && textarea.value.length > 0) {
+        const end = textarea.value.length;
+        textarea.setSelectionRange(end, end);
+      }
+    } catch {
+      // ignore
+    }
+  }, [editingNodeId, selectAllOnFocus]);
+
+  // While editing, keep the textarea height aligned to the node container.
+  // This must NOT call focus(), otherwise it can disrupt the caret.
+  useEffect(() => {
+    if (!editingNodeId) return;
+    const textarea = inputRef.current;
+    if (!textarea) return;
+    const nodeLayout = layout[editingNodeId];
+    if (!nodeLayout) return;
+
+    const lineCount = (textarea.value.match(/\n/g) || []).length + 1;
+    // Account for parent padding (py-2 = 8px top + 8px bottom = 16px total)
+    const availableHeight = nodeLayout.height - 16;
+
+    if (lineCount === 1) {
+      // For single-line text, set height to fill available space for proper centering
+      textarea.style.minHeight = `${availableHeight}px`;
+      textarea.style.height = `${availableHeight}px`;
+    } else {
+      // For multi-line text, allow it to grow beyond node height while editing
+      textarea.style.minHeight = '24px'; // Minimum for one line
+      textarea.style.height = 'auto';
+      // Allow growth beyond availableHeight for multi-line content
+      const contentHeight = Math.max(24, textarea.scrollHeight);
+      textarea.style.height = `${contentHeight}px`;
+    }
+    textarea.style.paddingTop = '0';
+    textarea.style.paddingBottom = '0';
+  }, [editingNodeId, layout, editValue]);
 
   const isFlowLike = !!swimlaneLayout || !!hideShowFlowToggle;
   const getIsFromFormField = useCallback((target: EventTarget | null) => {
@@ -2447,6 +2525,8 @@ export function NexusCanvas({
       if (navTarget) {
           e.preventDefault();
           onSelectNode(navTarget);
+          // Follow keyboard selection changes.
+          followKeyboardNavigation(navTarget);
           return;
       }
       
@@ -2465,7 +2545,11 @@ export function NexusCanvas({
           }
 
           const action = structure.moveNodeStructure(node, direction, nodeMap); // Pass nodeMap!
-          if (action) setPendingAction(action);
+          if (action) {
+            // After structural moves, ids can change (lineIndex-derived). Center once the pending select resolves.
+            requestFollowAfterPendingSelect();
+            setPendingAction(action);
+          }
       }
     
       if (e.key.length === 1 && !isCmd && !e.altKey && activeTool === 'select') {
@@ -4668,7 +4752,13 @@ export function NexusCanvas({
                                   onBlur={() => { commitEdit(); setEditingNodeId(null); }}
                                   onKeyDown={handleInputKeyDown}
                                   onChange={(e) => {
-                                    setEditValue(e.target.value);
+                                    const t = e.target as HTMLTextAreaElement;
+                                    // Capture caret before React updates the controlled value.
+                                    pendingEditSelectionRef.current = {
+                                      start: t.selectionStart ?? t.value.length,
+                                      end: t.selectionEnd ?? t.value.length,
+                                    };
+                                    setEditValue(t.value);
                                     setEditSuggestionIndex(null);
                                   }}
                                   style={{

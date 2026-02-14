@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { Plus, Merge } from 'lucide-react';
 import { getAllColumnIds as getAllColumnIdsUtil } from './table-editor/tableUtils';
 import { mergeCells as mergeCellsUtil, unmergeCell as unmergeCellUtil } from './table-editor/mergeUtils';
@@ -43,6 +43,7 @@ export interface TableRow {
 interface Props {
   initialColumns?: TableColumn[];
   initialRows?: TableRow[];
+  initialMergedCells?: Map<string, MergedCell>;
   dimensionValues?: string[];
   onChange?: (columns: TableColumn[], rows: TableRow[], mergedCells?: Map<string, MergedCell>) => void;
 }
@@ -86,6 +87,7 @@ const initializeRowCounter = (rows: TableRow[]) => {
 export function DimensionTableEditor({
   initialColumns,
   initialRows,
+  initialMergedCells,
   dimensionValues = [],
   onChange,
 }: Props) {
@@ -108,7 +110,7 @@ export function DimensionTableEditor({
         ],
   );
   const [rows, setRows] = useState<TableRow[]>(initialRowsNormalized);
-  const [mergedCells, setMergedCells] = useState<Map<string, MergedCell>>(new Map());
+  const [mergedCells, setMergedCells] = useState<Map<string, MergedCell>>(() => (initialMergedCells ? new Map(initialMergedCells) : new Map()));
 
   const commit = (nextCols: TableColumn[], nextRows: TableRow[]) => {
     // Normalize before committing so IDs remain stable/unique without needing
@@ -117,8 +119,17 @@ export function DimensionTableEditor({
     initializeRowCounter(normalizedRows);
     setColumns(nextCols);
     setRows(normalizedRows);
-    onChange?.(nextCols, normalizedRows, mergedCells);
   };
+
+  // Avoid update-depth loops: parent often passes a new inline `onChange` each render.
+  // We keep the latest callback in a ref and only trigger when table data changes.
+  const onChangeRef = useRef<Props['onChange']>(onChange);
+  useEffect(() => {
+    onChangeRef.current = onChange;
+  }, [onChange]);
+  useEffect(() => {
+    onChangeRef.current?.(columns, rows, mergedCells);
+  }, [columns, rows, mergedCells]);
 
   const visibleColumns = columns.filter((c) => !c.parentId);
   const childColumns = (parentId: string) => columns.filter((c) => c.parentId === parentId);

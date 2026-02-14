@@ -403,21 +403,21 @@ export function EditorApp() {
   }, [activeView]);
 
   useEffect(() => {
+    const isFromFormField = (target: EventTarget | null) => {
+      const el = target as HTMLElement | null;
+      if (!el) return false;
+      return (
+        el instanceof HTMLInputElement ||
+        el instanceof HTMLTextAreaElement ||
+        el instanceof HTMLSelectElement ||
+        el.isContentEditable ||
+        !!el.closest('input,textarea,select,[contenteditable="true"]')
+      );
+    };
+
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-      if (e.target instanceof HTMLSelectElement) return;
-
-      if (e.key.toLowerCase() === 'v') setActiveTool('select');
-      if (e.key.toLowerCase() === 'r') setActiveTool('node');
-      if (e.key.toLowerCase() === 'l') setActiveTool('line');
-      if (e.key.toLowerCase() === 'c') setActiveTool('comment');
-      if (e.key.toLowerCase() === 'a') setActiveTool('annotation');
-      if (e.key.toLowerCase() === 'd') changeView((v) => (v === 'dataObjects' ? 'main' : 'dataObjects'));
-      if (e.key.toLowerCase() === 'f') changeView((v) => (v === 'flows' ? 'main' : 'flows'));
-      if (e.key.toLowerCase() === 's') changeView((v) => (v === 'systemFlow' ? 'main' : 'systemFlow'));
-      if (e.key.toLowerCase() === 't') changeView((v) => (v === 'testing' ? 'main' : 'testing'));
-
       // Undo / Redo (per-user)
+      if (isFromFormField(e.target)) return;
       const isCmd = e.metaKey || e.ctrlKey;
       if (isCmd && e.key.toLowerCase() === 'z') {
         e.preventDefault();
@@ -431,7 +431,7 @@ export function EditorApp() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [changeView, undo, redo]);
+  }, [undo, redo]);
 
   const handleToolChange = (tool: ToolType) => {
     setActiveTool(tool);
@@ -1091,12 +1091,12 @@ export function EditorApp() {
                   type="button"
                   className={`mac-btn h-8 w-8 flex items-center justify-center ${activeView === 'flows' ? 'mac-btn--primary' : ''}`}
                   onClick={() => changeView('flows')}
-                  aria-label="Flow (F)"
+                  aria-label="Flow"
                 >
                   <Workflow size={16} />
                 </button>
                 <span className="mac-tooltip absolute left-1/2 top-[calc(100%+6px)] -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">
-                  Flow (F)
+                  Flow
                 </span>
               </div>
               <div className="relative group">
@@ -1104,12 +1104,12 @@ export function EditorApp() {
                   type="button"
                   className={`mac-btn h-8 w-8 flex items-center justify-center ${activeView === 'systemFlow' ? 'mac-btn--primary' : ''}`}
                   onClick={() => changeView('systemFlow')}
-                  aria-label="System Flow (S)"
+                  aria-label="System Flow"
                 >
                   <LayoutDashboard size={16} />
                 </button>
                 <span className="mac-tooltip absolute left-1/2 top-[calc(100%+6px)] -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">
-                  System Flow (S)
+                  System Flow
                 </span>
               </div>
               <div className="relative group">
@@ -1117,12 +1117,12 @@ export function EditorApp() {
                   type="button"
                   className={`mac-btn h-8 w-8 flex items-center justify-center ${activeView === 'dataObjects' ? 'mac-btn--primary' : ''}`}
                   onClick={() => changeView('dataObjects')}
-                  aria-label="Data Objects (D)"
+                  aria-label="Data Objects"
                 >
                   <Database size={16} />
                 </button>
                 <span className="mac-tooltip absolute left-1/2 top-[calc(100%+6px)] -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">
-                  Data Objects (D)
+                  Data Objects
                 </span>
               </div>
               <div className="relative group">
@@ -1130,12 +1130,12 @@ export function EditorApp() {
                   type="button"
                   className={`mac-btn h-8 w-8 flex items-center justify-center ${activeView === 'testing' ? 'mac-btn--primary' : ''}`}
                   onClick={() => changeView('testing')}
-                  aria-label="Testing (T)"
+                  aria-label="Testing"
                 >
                   <FlaskConical size={16} />
                 </button>
                 <span className="mac-tooltip absolute left-1/2 top-[calc(100%+6px)] -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">
-                  Testing (T)
+                  Testing
                 </span>
               </div>
           </div>
@@ -1321,6 +1321,7 @@ export function EditorApp() {
           >
           {activeTool === 'comment' ? (
             <CommentsPanel
+              key={commentPanel.targetKey || 'comments'}
               doc={doc}
               selectedTargetKey={commentPanel.targetKey}
               selectedTargetLabel={commentPanel.targetLabel}

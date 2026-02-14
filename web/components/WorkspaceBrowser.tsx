@@ -26,6 +26,8 @@ import {
   type LocalFile,
   type LocalFileStore,
 } from '@/lib/local-file-store';
+import { saveFileSnapshot } from '@/lib/local-doc-snapshots';
+import { makeStarterGridMarkdown } from '@/lib/grid-starter';
 
 type EditState = {
   folderId: string;
@@ -40,7 +42,7 @@ export function WorkspaceBrowser() {
 
   // Hydration-safe local store load (matches FilesPanel pattern)
   const [store, setStore] = useState<LocalFileStore>(() => ({
-    version: 3,
+    version: 5,
     folders: [],
     files: [],
     lastOpenedFileId: null,
@@ -55,8 +57,13 @@ export function WorkspaceBrowser() {
   const toastTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
-    setStore(ensureLocalFileStore());
-    setStoreReady(true);
+    // Avoid synchronous setState in effect body (lint + perf):
+    // load local storage snapshot on the next tick.
+    const t = window.setTimeout(() => {
+      setStore(ensureLocalFileStore());
+      setStoreReady(true);
+    }, 0);
+    return () => window.clearTimeout(t);
   }, []);
 
   useEffect(() => {
@@ -227,6 +234,25 @@ export function WorkspaceBrowser() {
               >
                 <Plus size={14} />
                 New map
+              </button>
+              <button
+                type="button"
+                className="mac-btn flex items-center gap-1.5"
+                disabled={!canEditActiveFolder}
+                title={!canEditActiveFolder ? 'No edit access' : 'New grid'}
+                onClick={() => {
+                  if (!canEditActiveFolder) return;
+                  setStore((prev) => {
+                    const { store: next, file } = createLocalFile(prev, 'New Grid', activeFolder.id, 'grid');
+                    // Pre-seed the document so the editor can restore it immediately.
+                    saveFileSnapshot(file.id, makeStarterGridMarkdown());
+                    queueMicrotask(() => openFile(file.id));
+                    return next;
+                  });
+                }}
+              >
+                <Plus size={14} />
+                New grid
               </button>
               <button
                 type="button"

@@ -25,7 +25,7 @@ export function FilesPanel({ activeFileId, onOpenFile }: Props) {
   //   initial render can cause server HTML to differ from client HTML -> hydration mismatch.
   // - Therefore we render a deterministic empty store first, then load the real store after mount.
   const [store, setStore] = useState<LocalFileStore>(() => ({
-    version: 3,
+    version: 5,
     folders: [],
     files: [],
     lastOpenedFileId: null,

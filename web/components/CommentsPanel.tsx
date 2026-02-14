@@ -11,9 +11,17 @@ type Props = {
   selectedTargetLabel?: string;
   onClose: () => void;
   scrollToThreadId?: string | null;
+  onActiveTargetKeyChange?: (next: string | null) => void;
 };
 
-export function CommentsPanel({ doc, selectedTargetKey, selectedTargetLabel, onClose, scrollToThreadId }: Props) {
+export function CommentsPanel({
+  doc,
+  selectedTargetKey,
+  selectedTargetLabel,
+  onClose,
+  scrollToThreadId,
+  onActiveTargetKeyChange,
+}: Props) {
   const [tick, setTick] = useState(0);
   const [draft, setDraft] = useState('');
   const [replyDraftByThreadId, setReplyDraftByThreadId] = useState<Record<string, string>>({});
@@ -26,11 +34,15 @@ export function CommentsPanel({ doc, selectedTargetKey, selectedTargetLabel, onC
     return observeComments(doc, () => setTick((t) => t + 1));
   }, [doc]);
 
-  useEffect(() => {
-    if (selectedTargetKey) setActiveTargetKey(selectedTargetKey);
-  }, [selectedTargetKey]);
+  const setActive = (next: string | null) => {
+    setActiveTargetKey(next);
+    onActiveTargetKeyChange?.(next);
+  };
 
-  const allThreads = useMemo(() => getAllThreads(doc), [doc, tick]);
+  const allThreads = useMemo(() => {
+    void tick;
+    return getAllThreads(doc);
+  }, [doc, tick]);
   const threadsList = useMemo(() => {
     const list = Object.entries(allThreads)
       .map(([k, t]) => ({ targetKey: k, thread: t }))
@@ -38,10 +50,10 @@ export function CommentsPanel({ doc, selectedTargetKey, selectedTargetLabel, onC
     return list;
   }, [allThreads]);
 
-  const thread: CommentThread | null = useMemo(
-    () => (activeTargetKey ? getThread(doc, activeTargetKey) : null),
-    [doc, activeTargetKey, tick],
-  );
+  const thread: CommentThread | null = useMemo(() => {
+    void tick;
+    return activeTargetKey ? getThread(doc, activeTargetKey) : null;
+  }, [doc, activeTargetKey, tick]);
 
   const activeLabel = useMemo(() => {
     if (activeTargetKey) {
@@ -156,7 +168,7 @@ export function CommentsPanel({ doc, selectedTargetKey, selectedTargetLabel, onC
                       else listItemRefs.current.delete(targetKey);
                     }}
                     type="button"
-                    onClick={() => setActiveTargetKey(targetKey)}
+                    onClick={() => setActive(targetKey)}
                     className={`w-full text-left rounded-md border px-2 py-2 ${
                       isActive ? 'border-blue-200 bg-blue-50' : 'border-slate-200 hover:bg-slate-50'
                     }`}
@@ -186,7 +198,7 @@ export function CommentsPanel({ doc, selectedTargetKey, selectedTargetLabel, onC
                   onClick={() => {
                     if (!activeTargetKey) return;
                     deleteThread(doc, activeTargetKey);
-                    setActiveTargetKey(null);
+                    setActive(null);
                   }}
                   className="p-1 rounded hover:bg-red-50 text-slate-500 hover:text-red-700"
                   title="Delete comment"

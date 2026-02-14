@@ -12,6 +12,8 @@ export type LocalFile = {
   folderId: string | null;
   /** Hocuspocus document name */
   roomName: string;
+  /** Document kind (default: diagram) */
+  kind?: import('@/lib/doc-kinds').DocKind;
   /** Per-file layout direction (default: horizontal/right) */
   layoutDirection?: 'horizontal' | 'vertical';
   createdAt: number;
@@ -20,7 +22,7 @@ export type LocalFile = {
 };
 
 export type LocalFileStore = {
-  version: 4;
+  version: 5;
   folders: LocalFolder[];
   files: LocalFile[];
   lastOpenedFileId: string | null;
@@ -129,11 +131,14 @@ function migrate(raw: unknown): LocalFileStore | null {
       const createdAt = typeof ff.createdAt === 'number' ? ff.createdAt : now();
       const lastOpenedAt = typeof ff.lastOpenedAt === 'number' ? ff.lastOpenedAt : createdAt;
       const layoutDirection = ff.layoutDirection === 'vertical' ? 'vertical' : 'horizontal';
+      const kind =
+        ff.kind === 'note' || ff.kind === 'grid' || ff.kind === 'vision' || ff.kind === 'diagram' ? ff.kind : 'diagram';
       return {
         id: typeof ff.id === 'string' ? ff.id : uuid(),
         name: typeof ff.name === 'string' ? ff.name : 'Map',
         folderId: typeof ff.folderId === 'string' ? ff.folderId : null,
         roomName: typeof ff.roomName === 'string' ? ff.roomName : `file-${uuid()}`,
+        kind,
         layoutDirection,
         createdAt,
         lastOpenedAt,
@@ -141,16 +146,16 @@ function migrate(raw: unknown): LocalFileStore | null {
       };
     });
 
-  // v1/v2/v3/v4 -> v4: normalize ACLs + layoutDirection and bump version
-  if (version === 1 || version === 2 || version === 3 || version === 4) {
-    return { version: 4, folders, files, lastOpenedFileId };
+  // v1..v5 -> v5: normalize ACLs + layoutDirection + kind
+  if (version === 1 || version === 2 || version === 3 || version === 4 || version === 5) {
+    return { version: 5, folders, files, lastOpenedFileId };
   }
   return null;
 }
 
 export function loadLocalFileStore(): LocalFileStore {
   if (typeof window === 'undefined') {
-    return { version: 4, folders: [], files: [], lastOpenedFileId: null };
+    return { version: 5, folders: [], files: [], lastOpenedFileId: null };
   }
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
@@ -169,11 +174,12 @@ export function loadLocalFileStore(): LocalFileStore {
     name: 'Demo Map',
     folderId: rootFolder.id,
     roomName: 'file-demo',
+    kind: 'diagram',
     layoutDirection: 'horizontal',
     createdAt,
     lastOpenedAt: createdAt,
   };
-  const initial: LocalFileStore = { version: 4, folders: [rootFolder], files: [demo], lastOpenedFileId: demo.id };
+  const initial: LocalFileStore = { version: 5, folders: [rootFolder], files: [demo], lastOpenedFileId: demo.id };
   saveLocalFileStore(initial);
   return initial;
 }
@@ -193,11 +199,12 @@ export function ensureLocalFileStore(): LocalFileStore {
     name: 'Demo Map',
     folderId: rootFolder.id,
     roomName: 'file-demo',
+    kind: 'diagram',
     layoutDirection: 'horizontal',
     createdAt,
     lastOpenedAt: createdAt,
   };
-  const next: LocalFileStore = { version: 4, folders: [rootFolder], files: [demo], lastOpenedFileId: demo.id };
+  const next: LocalFileStore = { version: 5, folders: [rootFolder], files: [demo], lastOpenedFileId: demo.id };
   saveLocalFileStore(next);
   return next;
 }
@@ -207,13 +214,19 @@ export function createLocalFolder(store: LocalFileStore, name: string, parentId:
   return { ...store, folders: [...store.folders, folder] };
 }
 
-export function createLocalFile(store: LocalFileStore, name: string, folderId: string | null): { store: LocalFileStore; file: LocalFile } {
+export function createLocalFile(
+  store: LocalFileStore,
+  name: string,
+  folderId: string | null,
+  kind: import('@/lib/doc-kinds').DocKind = 'diagram',
+): { store: LocalFileStore; file: LocalFile } {
   const createdAt = now();
   const file: LocalFile = {
     id: uuid(),
     name: name.trim() || 'New Map',
     folderId,
     roomName: `file-${uuid()}`,
+    kind,
     layoutDirection: 'horizontal',
     createdAt,
     lastOpenedAt: createdAt,

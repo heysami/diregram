@@ -1,4 +1,4 @@
-import { ArrowUpRight, Eye, Highlighter, MessageSquareText, MousePointer2, Move, Pin, Redo2, Settings2, Square, SquareDashed, Trash2, Undo2, ZoomIn, ZoomOut } from 'lucide-react';
+import { ArrowUpRight, Eye, Highlighter, MessageSquareText, MousePointer2, Move, Pencil, Pin, Redo2, Settings2, Square, SquareDashed, Trash2, Undo2, ZoomIn, ZoomOut } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import * as Y from 'yjs';
 import type { TagViewState } from '@/types/tagging';
@@ -191,19 +191,19 @@ export function Toolbar({
               isActive={activeTool === 'select'} 
               onClick={() => onToolChange('select')}
               icon={<MousePointer2 size={18} />}
-              label="Select (V)"
+              label="Select"
             />
             <ToolButton 
               isActive={activeTool === 'node'} 
               onClick={() => onToolChange('node')}
               icon={<Square size={18} />}
-              label="Node (R)"
+              label="Node"
             />
             <ToolButton 
               isActive={activeTool === 'line'} 
               onClick={() => onToolChange('line')}
               icon={<ArrowUpRight size={18} />}
-              label="Line (L)"
+              label="Line"
             />
           </>
         ) : null}
@@ -213,13 +213,13 @@ export function Toolbar({
           isActive={activeTool === 'comment'}
           onClick={() => onToolChange(activeTool === 'comment' ? 'select' : 'comment')}
           icon={<MessageSquareText size={18} />}
-          label="Comment (C)"
+          label="Comment"
         />
         <ToolButton
           isActive={activeTool === 'annotation'}
           onClick={() => onToolChange(activeTool === 'annotation' ? 'select' : 'annotation')}
           icon={<Highlighter size={18} />}
-          label="Annotation (A)"
+          label="Annotation"
         />
 
         {/* System Flow quick add tools (optional) */}

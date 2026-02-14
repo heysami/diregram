@@ -103,6 +103,8 @@ create table public.files (
   name text not null,
   folder_id uuid references public.folders(id),
   owner_id uuid references public.profiles(id) not null,
+  -- Document kind: diagram (existing), note, grid, vision
+  kind text default 'diagram',
   content text default '', -- Snapshot of the NexusMarkdown
   room_name text, -- Hocuspocus/Yjs doc name
   last_opened_at timestamptz,

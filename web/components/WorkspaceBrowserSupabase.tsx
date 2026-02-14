@@ -8,6 +8,7 @@ import { AccessPeopleEditor } from '@/components/AccessPeopleEditor';
 import type { AccessPerson } from '@/lib/local-file-store';
 import type { LayoutDirection } from '@/lib/layout-direction';
 import { fetchProfileDefaultLayoutDirection } from '@/lib/layout-direction-supabase';
+import { makeStarterGridMarkdown } from '@/lib/grid-starter';
 
 type DbFolder = {
   id: string;
@@ -27,6 +28,7 @@ type DbFile = {
   updated_at: string | null;
   access: { people?: AccessPerson[] } | null;
   layout_direction?: LayoutDirection | null;
+  kind?: string | null;
 };
 
 function nowIso() {
@@ -134,12 +136,13 @@ export function WorkspaceBrowserSupabase() {
 
       const { data: fileRows, error: fileErr } = await supabase
         .from('files')
-        .select('id,name,owner_id,folder_id,room_name,last_opened_at,updated_at,access')
+        .select('id,name,owner_id,folder_id,room_name,last_opened_at,updated_at,access,kind')
         .in('folder_id', folderIds);
       if (fileErr) throw fileErr;
       setFiles((fileRows || []) as DbFile[]);
-    } catch (e: any) {
-      setError(e?.message || 'Failed to load workspace');
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Failed to load workspace';
+      setError(msg);
     } finally {
       setLoading(false);
     }
@@ -224,8 +227,34 @@ export function WorkspaceBrowserSupabase() {
         room_name: roomName,
         last_opened_at: nowIso(),
         layout_direction: defaultLayout,
+        kind: 'diagram',
       })
-      .select('id,name,owner_id,folder_id,room_name,last_opened_at,updated_at,access,layout_direction')
+      .select('id,name,owner_id,folder_id,room_name,last_opened_at,updated_at,access,layout_direction,kind')
+      .single();
+    if (err) return showToast(err.message);
+    const file = data as unknown as DbFile;
+    setFiles((prev) => [file, ...prev]);
+    openFile(file);
+  };
+
+  const createGridFile = async (folderId: string) => {
+    if (!supabase || !userId) return;
+    const defaultLayout: LayoutDirection = await fetchProfileDefaultLayoutDirection(supabase, userId);
+    const roomName = `file-${crypto.randomUUID()}`;
+    const initialContent = makeStarterGridMarkdown();
+    const { data, error: err } = await supabase
+      .from('files')
+      .insert({
+        name: 'New Grid',
+        owner_id: userId,
+        folder_id: folderId,
+        room_name: roomName,
+        last_opened_at: nowIso(),
+        layout_direction: defaultLayout,
+        kind: 'grid',
+        content: initialContent,
+      })
+      .select('id,name,owner_id,folder_id,room_name,last_opened_at,updated_at,access,layout_direction,kind')
       .single();
     if (err) return showToast(err.message);
     const file = data as unknown as DbFile;
@@ -460,6 +489,16 @@ export function WorkspaceBrowserSupabase() {
               >
                 <Plus size={14} />
                 New map
+              </button>
+              <button
+                type="button"
+                className="mac-btn flex items-center gap-1.5"
+                disabled={!effectiveCanEditFolder(activeFolder, userId, userEmail)}
+                onClick={() => createGridFile(activeFolder.id)}
+                title={!effectiveCanEditFolder(activeFolder, userId, userEmail) ? 'No edit access' : 'New grid'}
+              >
+                <Plus size={14} />
+                New grid
               </button>
               <button
                 type="button"

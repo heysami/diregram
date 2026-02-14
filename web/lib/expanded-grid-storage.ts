@@ -1,5 +1,9 @@
 import * as Y from 'yjs';
 
+function notNull<T>(x: T | null): x is T {
+  return x !== null;
+}
+
 export interface ExpandedGridNodePersisted {
   /**
    * Stable identifier for the grid node (persisted).
@@ -154,7 +158,7 @@ function makeRuntimeNodes(loaded: unknown, runningNumber: number): { nodes: Expa
             ? (rec.dataObjectAttributeMode as ExpandedGridAttributeRenderMode)
             : undefined,
       } satisfies ExpandedGridUiItem;
-    }).filter((x): x is ExpandedGridUiItem => x !== null);
+    }).filter(notNull);
     return items.length ? items : undefined;
   };
   const readTabs = (raw: unknown, fallbackPrefix: string): ExpandedGridUiTab[] | undefined => {
@@ -180,7 +184,7 @@ function makeRuntimeNodes(loaded: unknown, runningNumber: number): { nodes: Expa
             ? (rec.dataObjectAttributeMode as ExpandedGridAttributeRenderMode)
             : undefined,
       } satisfies ExpandedGridUiTab;
-    }).filter((x): x is ExpandedGridUiTab => x !== null);
+    }).filter(notNull);
     return tabs.length ? tabs : undefined;
   };
   const readSections = (raw: unknown, fallbackPrefix: string): ExpandedGridUiSection[] | undefined => {
@@ -207,7 +211,7 @@ function makeRuntimeNodes(loaded: unknown, runningNumber: number): { nodes: Expa
             ? (rec.dataObjectAttributeMode as ExpandedGridAttributeRenderMode)
             : undefined,
       } satisfies ExpandedGridUiSection;
-    }).filter((x): x is ExpandedGridUiSection => x !== null);
+    }).filter(notNull);
     return sections.length ? sections : undefined;
   };
 
