@@ -16,8 +16,8 @@ export type DragHandleState = {
 export function useNoteDragHandle(opts: {
   editor: Editor | null;
   editorViewReadyTick: number;
-  editorWrapRef: React.RefObject<HTMLDivElement>;
-  scrollRef: React.RefObject<HTMLDivElement>;
+  editorWrapRef: React.RefObject<HTMLDivElement | null>;
+  scrollRef: React.RefObject<HTMLDivElement | null>;
 }) {
   const { editor, editorViewReadyTick, editorWrapRef, scrollRef } = opts;
 
