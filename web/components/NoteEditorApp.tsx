@@ -1,16 +1,14 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useYjs } from '@/hooks/use-yjs';
 import { useAuth } from '@/hooks/use-auth';
-import { useYjsNexusTextPersistence } from '@/hooks/use-yjs-nexus-text-persistence';
 import { ensureLocalFileStore } from '@/lib/local-file-store';
 import { loadFileSnapshot, saveFileSnapshot } from '@/lib/local-doc-snapshots';
-import { makeStarterGridMarkdown } from '@/lib/grid-starter';
-import { loadGridDoc, saveGridDoc, type GridDoc } from '@/lib/gridjson';
-import { GridEditor } from '@/components/grid/GridEditor';
-import { useLinkedDiagramDataObjects } from '@/hooks/use-linked-diagram-data-objects';
+import { makeStarterNoteMarkdown } from '@/lib/note-starter';
+import { NoteEditor } from '@/components/note/NoteEditor';
+import { useYjsNexusTextPersistence } from '@/hooks/use-yjs-nexus-text-persistence';
 
 type ActiveFileMeta = {
   id: string;
@@ -44,42 +42,22 @@ function canEditFromAccess(access: unknown, userEmail: string | null) {
   });
 }
 
-function stripLegacyTableJson(markdown: string): string {
-  return markdown.replace(/```tablejson\n[\s\S]*?\n```/g, '').trimEnd() + '\n';
-}
-
-export function GridEditorApp() {
+export function NoteEditorApp() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { configured, ready, supabase, user } = useAuth();
   const supabaseMode = configured && !user?.isLocalAdmin;
 
   const [activeFile, setActiveFile] = useState<ActiveFileMeta | null>(null);
-  const activeRoomName = activeFile?.roomName || 'grid-demo';
+  const activeRoomName = activeFile?.roomName || 'note-demo';
 
-  const { doc: yDoc, provider, status, undo, redo, canUndo, canRedo, connectedRoomName, synced } = useYjs(activeRoomName);
+  const { doc: yDoc, provider, status, connectedRoomName, synced } = useYjs(activeRoomName);
 
-  const [gridDoc, setGridDoc] = useState<GridDoc | null>(null);
-  const [rawMarkdown, setRawMarkdown] = useState<string>('');
-  const loadedSourceRef = useRef<'gridjson' | 'legacyTableJson' | 'default'>('default');
-
-  const {
-    diagramFiles,
-    linkedDiagramFileId,
-    setLinkedDiagramFileId,
-    linkedDiagramStatusLabel,
-    linkedDataObjectStore,
-    canEditLinkedDiagramFile,
-    upsertLinkedDataObject,
-  } = useLinkedDiagramDataObjects({
-    activeGridFileId: activeFile?.id || null,
-    activeFolderId: activeFile?.folderId || null,
-    gridDoc,
-    supabaseMode,
-    ready,
-    supabase: supabase || null,
-    user: user ? { id: user.id || null, email: user.email || null } : null,
-  });
+  const [commentPanel, setCommentPanel] = useState<{
+    targetKey: string | null;
+    targetLabel?: string;
+    scrollToThreadId?: string;
+  }>({ targetKey: null });
 
   // Load file metadata based on ?file=...
   useEffect(() => {
@@ -173,7 +151,7 @@ export function GridEditorApp() {
     synced,
     fileId: activeFile?.id || null,
     initialContent: activeFile?.initialContent,
-    makeStarterMarkdown: makeStarterGridMarkdown,
+    makeStarterMarkdown: makeStarterNoteMarkdown,
     loadSnapshot: loadFileSnapshot,
     saveSnapshot: saveFileSnapshot,
     persistRemote: supabaseMode
@@ -184,89 +162,37 @@ export function GridEditorApp() {
       : undefined,
   });
 
-  // Live-load gridjson on doc text changes (collab / undo)
-  useEffect(() => {
-    if (!yDoc) return;
-    const yText = yDoc.getText('nexus');
-    const update = () => {
-      const md = yText.toString();
-      const loaded = loadGridDoc(md);
-      loadedSourceRef.current = loaded.source;
-      setGridDoc(loaded.doc);
-      setRawMarkdown(md);
-    };
-    update();
-    yText.observe(update);
-    return () => yText.unobserve(update);
-  }, [yDoc]);
-
-  const gridWriteTimerRef = useRef<number | null>(null);
-  const writeGridToDoc = useCallback(
-    (nextDoc: GridDoc) => {
-      if (!yDoc) return;
-      const yText = yDoc.getText('nexus');
-      const current = yText.toString();
-      // If this was a legacy tablejson doc, strip the legacy block on first write.
-      const base = loadedSourceRef.current === 'legacyTableJson' ? stripLegacyTableJson(current) : current;
-      const next = saveGridDoc(base, nextDoc);
-      if (next === current) return;
-      yDoc.transact(() => {
-        yText.delete(0, yText.length);
-        yText.insert(0, next);
-      });
-      loadedSourceRef.current = 'gridjson';
-    },
-    [yDoc],
-  );
-
-  const handleGridChange = useCallback(
-    (next: GridDoc) => {
-      setGridDoc(next);
-      if (gridWriteTimerRef.current) window.clearTimeout(gridWriteTimerRef.current);
-      gridWriteTimerRef.current = window.setTimeout(() => {
-        gridWriteTimerRef.current = null;
-        writeGridToDoc(next);
-      }, 120);
-    },
-    [writeGridToDoc],
-  );
-
-  useEffect(() => {
-    return () => {
-      if (gridWriteTimerRef.current) window.clearTimeout(gridWriteTimerRef.current);
-      gridWriteTimerRef.current = null;
-    };
-  }, []);
-
   const statusLabel = useMemo(() => {
     if (status === 'connected') return 'Online';
     if (status === 'connecting') return 'Connecting…';
     return 'Offline';
   }, [status]);
 
+  const setMarkdown = useCallback(
+    (next: string) => {
+      if (!yDoc) return;
+      const yText = yDoc.getText('nexus');
+      const cur = yText.toString();
+      if (next === cur) return;
+      yDoc.transact(() => {
+        yText.delete(0, yText.length);
+        yText.insert(0, next);
+      });
+    },
+    [yDoc],
+  );
+
   if (!yDoc || !activeFile) return <div className="flex h-screen items-center justify-center text-xs opacity-80">Loading…</div>;
-  if (!gridDoc) return <div className="flex h-screen items-center justify-center text-xs opacity-80">Loading grid…</div>;
 
   return (
-    <GridEditor
-      doc={gridDoc}
+    <NoteEditor
       yDoc={yDoc}
-      onChange={handleGridChange}
-      statusLabel={statusLabel}
-      diagramFiles={diagramFiles}
-      linkedDiagramFileId={linkedDiagramFileId}
-      onLinkedDiagramFileIdChange={setLinkedDiagramFileId}
-      linkedDiagramStatusLabel={linkedDiagramStatusLabel || undefined}
-      linkedDataObjectStore={linkedDataObjectStore}
-      canEditLinkedDiagramFile={canEditLinkedDiagramFile}
-      upsertLinkedDataObject={upsertLinkedDataObject}
+      provider={provider}
       title={activeFile.name}
+      statusLabel={statusLabel}
       onBack={() => router.push('/workspace')}
-      onUndo={undo}
-      onRedo={redo}
-      canUndo={canUndo}
-      canRedo={canRedo}
-      rawMarkdown={rawMarkdown}
+      commentPanel={commentPanel}
+      onCommentPanelChange={setCommentPanel}
     />
   );
 }

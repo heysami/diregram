@@ -370,7 +370,7 @@ function coerceDoc(raw: unknown): GridDoc | null {
               const dataObjectLink: GridTableV1['dataObjectLink'] | undefined = (() => {
                 if (!linkRaw) return undefined;
                 const modeRaw = typeof linkRaw.mode === 'string' ? linkRaw.mode.trim() : '';
-                const mode: GridTableV1['dataObjectLink']['mode'] | undefined =
+                const mode: NonNullable<GridTableV1['dataObjectLink']>['mode'] | undefined =
                   modeRaw === 'kvRows' || modeRaw === 'columns' ? (modeRaw as any) : undefined;
                 const diagramFileId = typeof linkRaw.diagramFileId === 'string' ? linkRaw.diagramFileId.trim() : '';
                 const diagramRoomName = typeof linkRaw.diagramRoomName === 'string' ? linkRaw.diagramRoomName.trim() : '';

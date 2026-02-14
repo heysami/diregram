@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient, isSupabaseConfigured } from '@/lib/supabase';
 import { isLocalAdminLoginEnabled, LOCAL_ADMIN_USERNAME, setLocalAdminSession } from '@/lib/local-admin-session';
+import { DiregramMark } from '@/components/DiregramMark';
 
 export default function LoginClient() {
   const router = useRouter();
@@ -27,7 +28,9 @@ export default function LoginClient() {
       <header className="mac-menubar px-4 flex items-center justify-between shrink-0 z-10 relative">
         <div className="flex items-center gap-4">
           <h1 className="text-[13px] font-bold tracking-tight">
-            <span aria-hidden className="mr-1 select-none"></span>
+            <span aria-hidden className="mr-1 select-none inline-flex items-center align-middle">
+              <DiregramMark size={14} />
+            </span>
             Diregram <span className="text-[11px] font-normal opacity-70">Login</span>
           </h1>
         </div>

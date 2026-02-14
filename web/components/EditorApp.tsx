@@ -4,6 +4,7 @@ import '@/app/suppress-params-warning';
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useYjs } from '@/hooks/use-yjs';
+import { useYjsNexusTextPersistence } from '@/hooks/use-yjs-nexus-text-persistence';
 import { NexusEditor } from '@/components/NexusEditor';
 import { NexusCanvas } from '@/components/NexusCanvas';
 import { Toolbar, ToolType } from '@/components/Toolbar';
@@ -77,7 +78,7 @@ export function EditorApp() {
   const activeRoomName = activeFile?.roomName || 'nexus-demo';
   const [layoutDirection, setLayoutDirection] = useState<LayoutDirection>('horizontal');
 
-  const { doc, provider, status, presence, undo, redo, canUndo, canRedo } = useYjs(activeRoomName);
+  const { doc, provider, status, presence, undo, redo, canUndo, canRedo, connectedRoomName, synced } = useYjs(activeRoomName);
   const presenceRef = useRef<typeof presence>(null);
   const [activeTool, setActiveTool] = useState<ToolType>('select');
   const [mainLevel, setMainLevel] = useState(1);
@@ -333,64 +334,30 @@ export function EditorApp() {
     [activeFile?.id, supabaseMode],
   );
 
-  // Persistence:
-  // - Local-only mode: localStorage snapshot
-  // - Supabase mode: also save to `files.content` (debounced) and restore if doc empty
-  const saveTimerRef = useRef<number | null>(null);
-  useEffect(() => {
-    if (!doc || !provider || !activeFile) return;
-    const fileId = activeFile.id;
-    const yText = doc.getText('nexus');
-
-    const maybeRestore = () => {
-      const current = yText.toString();
-      if (current.trim().length > 0) return;
-      const snap = activeFile.initialContent || loadFileSnapshot(fileId);
-      if (!snap || snap.trim().length === 0) return;
-      doc.transact(() => {
-        yText.delete(0, yText.length);
-        yText.insert(0, snap);
-      });
-    };
-
-    // Attempt restore once the provider says we're synced.
-    const onSynced = () => {
-      maybeRestore();
-    };
-    // Hocuspocus provider supports .on('synced', ...)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (provider as any).on?.('synced', onSynced);
-    // Also try once immediately (safe because we only restore if empty).
-    maybeRestore();
-
-    const onTextChange = () => {
-      if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
-      saveTimerRef.current = window.setTimeout(() => {
-        saveTimerRef.current = null;
-        const next = yText.toString();
-        saveFileSnapshot(fileId, next);
-        if (supabaseMode) {
+  useYjsNexusTextPersistence({
+    doc,
+    provider,
+    activeRoomName,
+    connectedRoomName,
+    synced,
+    fileId: activeFile?.id || null,
+    initialContent: activeFile?.initialContent,
+    // Diagram files don't have a built-in starter; rely on existing snapshots / initialContent.
+    makeStarterMarkdown: () => '',
+    loadSnapshot: loadFileSnapshot,
+    saveSnapshot: saveFileSnapshot,
+    persistRemote: supabaseMode
+      ? (markdown) => {
+          const fileId = activeFile?.id;
+          if (!fileId) return;
           import('@/lib/supabase').then(({ createClient }) => {
             const supabase = createClient();
             if (!supabase) return;
-            supabase.from('files').update({ content: next, updated_at: new Date().toISOString() }).eq('id', fileId).then(() => {});
+            supabase.from('files').update({ content: markdown, updated_at: new Date().toISOString() }).eq('id', fileId).then(() => {});
           });
         }
-      }, 250);
-    };
-
-    // Save initial content too (covers new docs)
-    onTextChange();
-    yText.observe(onTextChange);
-
-    return () => {
-      yText.unobserve(onTextChange);
-      if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
-      saveTimerRef.current = null;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (provider as any).off?.('synced', onSynced);
-    };
-  }, [doc, provider, activeFile?.id, supabaseMode]);
+      : undefined,
+  });
 
   // Keep presence view in sync with the active app view.
   useEffect(() => {

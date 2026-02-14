@@ -7,6 +7,7 @@ import { ensureLocalFileStore } from '@/lib/local-file-store';
 import type { DocKind } from '@/lib/doc-kinds';
 import { EditorApp as DiagramEditorApp } from '@/components/EditorApp';
 import { GridEditorApp } from '@/components/GridEditorApp';
+import { NoteEditorApp } from '@/components/NoteEditorApp';
 
 function normalizeKind(raw: unknown): DocKind {
   return raw === 'note' || raw === 'grid' || raw === 'vision' || raw === 'diagram' ? raw : 'diagram';
@@ -71,6 +72,7 @@ export function EditorRouter() {
   if (!kind) return <div className="flex h-screen items-center justify-center text-xs opacity-80">Loading…</div>;
 
   if (kind === 'grid') return <GridEditorApp />;
+  if (kind === 'note') return <NoteEditorApp />;
   return <DiagramEditorApp />;
 }
 

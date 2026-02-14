@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, FileText, Folder, FolderPlus, Pencil, Trash2, Plus, Mail, Copy } from 'lucide-react';
+import { ArrowLeft, FileText, Folder, FolderPlus, Pencil, Trash2, Plus, Mail, Copy, Network, Eye, Table } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 import { AccessPeopleEditor } from '@/components/AccessPeopleEditor';
 import {
@@ -28,6 +28,20 @@ import {
 } from '@/lib/local-file-store';
 import { saveFileSnapshot } from '@/lib/local-doc-snapshots';
 import { makeStarterGridMarkdown } from '@/lib/grid-starter';
+import { makeStarterNoteMarkdown } from '@/lib/note-starter';
+import type { DocKind } from '@/lib/doc-kinds';
+
+function normalizeKind(raw: unknown): DocKind {
+  return raw === 'note' || raw === 'grid' || raw === 'vision' || raw === 'diagram' ? raw : 'diagram';
+}
+
+function KindIcon({ kind, size }: { kind: unknown; size: number }) {
+  const k = normalizeKind(kind);
+  if (k === 'grid') return <Table size={size} />;
+  if (k === 'note') return <FileText size={size} />;
+  if (k === 'vision') return <Eye size={size} />;
+  return <Network size={size} />;
+}
 
 type EditState = {
   folderId: string;
@@ -258,6 +272,25 @@ export function WorkspaceBrowser() {
                 type="button"
                 className="mac-btn flex items-center gap-1.5"
                 disabled={!canEditActiveFolder}
+                title={!canEditActiveFolder ? 'No edit access' : 'New note'}
+                onClick={() => {
+                  if (!canEditActiveFolder) return;
+                  setStore((prev) => {
+                    const { store: next, file } = createLocalFile(prev, 'New Note', activeFolder.id, 'note');
+                    // Pre-seed the document so the editor can restore it immediately.
+                    saveFileSnapshot(file.id, makeStarterNoteMarkdown());
+                    queueMicrotask(() => openFile(file.id));
+                    return next;
+                  });
+                }}
+              >
+                <Plus size={14} />
+                New note
+              </button>
+              <button
+                type="button"
+                className="mac-btn flex items-center gap-1.5"
+                disabled={!canEditActiveFolder}
                 title={!canEditActiveFolder ? 'No edit access' : 'Edit project'}
                 onClick={() => openEdit(activeFolder)}
               >
@@ -279,7 +312,7 @@ export function WorkspaceBrowser() {
                   className="mac-double-outline p-3 text-left hover:bg-gray-50 flex items-center justify-between gap-3 group"
                 >
                   <button type="button" className="flex items-center gap-2 min-w-0 flex-1" onClick={() => openFile(f.id)} title="Open">
-                    <FileText size={14} />
+                    <KindIcon kind={f.kind} size={14} />
                     <div className="text-xs font-semibold truncate">{f.name}</div>
                   </button>
 
@@ -422,7 +455,7 @@ export function WorkspaceBrowser() {
                               openFile(f.id);
                             }}
                           >
-                            <FileText size={12} />
+                            <KindIcon kind={f.kind} size={12} />
                             <span className="truncate">{f.name}</span>
                           </button>
                           <div className="flex items-center gap-1 opacity-0 group-hover/file:opacity-100 transition-opacity">

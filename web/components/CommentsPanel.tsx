@@ -34,6 +34,13 @@ export function CommentsPanel({
     return observeComments(doc, () => setTick((t) => t + 1));
   }, [doc]);
 
+  // Keep the panel selection in sync with the editor selection.
+  // Without this, clicking a heading/embed/range (or pressing "Add comment" in Notes)
+  // updates `selectedTargetKey`, but the panel can stay stuck on a previous/null target.
+  useEffect(() => {
+    setActiveTargetKey(selectedTargetKey);
+  }, [selectedTargetKey]);
+
   const setActive = (next: string | null) => {
     setActiveTargetKey(next);
     onActiveTargetKeyChange?.(next);

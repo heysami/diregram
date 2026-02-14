@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { useAuth } from '@/hooks/use-auth';
 import { normalizeLayoutDirection, type LayoutDirection } from '@/lib/layout-direction';
 import { fetchProfileDefaultLayoutDirection, updateProfileDefaultLayoutDirection } from '@/lib/layout-direction-supabase';
+import { DiregramMark } from '@/components/DiregramMark';
 
 export default function AccountClient() {
   const router = useRouter();
@@ -33,7 +34,9 @@ export default function AccountClient() {
         <div className="flex items-center gap-4">
           <button type="button" onClick={() => router.push('/')} className="text-left">
             <h1 className="text-[13px] font-bold tracking-tight">
-              <span aria-hidden className="mr-1 select-none"></span>
+              <span aria-hidden className="mr-1 select-none inline-flex items-center align-middle">
+                <DiregramMark size={14} />
+              </span>
               Diregram <span className="text-[11px] font-normal opacity-70">Account</span>
             </h1>
           </button>

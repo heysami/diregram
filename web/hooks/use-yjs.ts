@@ -7,6 +7,8 @@ import type { PresenceController, PresencePeer, PresenceState, PresenceView } fr
 export function useYjs(roomName: string) {
   const [doc, setDoc] = useState<Y.Doc | null>(null);
   const [provider, setProvider] = useState<HocuspocusProvider | null>(null);
+  const [connectedRoomName, setConnectedRoomName] = useState<string | null>(null);
+  const [synced, setSynced] = useState(false);
   const [status, setStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected');
   const [peers, setPeers] = useState<PresencePeer[]>([]);
   const [canUndo, setCanUndo] = useState(false);
@@ -18,6 +20,19 @@ export function useYjs(roomName: string) {
   const pendingCursorRef = useRef<PresenceState['cursor']>(null);
 
   useEffect(() => {
+    // IMPORTANT: when switching rooms, immediately clear prior doc/provider.
+    // Otherwise callers can momentarily see the *previous* Y.Doc while the UI has
+    // already switched to a new file id, causing seeding/persistence to write into
+    // the wrong doc and making the new note appear empty.
+    setDoc(null);
+    setProvider(null);
+    setConnectedRoomName(null);
+    setSynced(false);
+    setPeers([]);
+    setCanUndo(false);
+    setCanRedo(false);
+    setStatus('connecting');
+
     const yDoc = new Y.Doc();
     const wsUrl = process.env.NEXT_PUBLIC_COLLAB_SERVER_URL || 'ws://localhost:1234';
 
@@ -26,6 +41,8 @@ export function useYjs(roomName: string) {
     void yText;
     const commentsMap = yDoc.getMap('node-comments-v1');
     void commentsMap;
+    const noteFragment = yDoc.getXmlFragment('note');
+    void noteFragment;
     
     const hpProvider = new HocuspocusProvider({
       url: wsUrl,
@@ -36,10 +53,23 @@ export function useYjs(roomName: string) {
       },
     });
 
+    // Track initial sync. Different provider versions use slightly different events;
+    // we listen to both.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const p: any = hpProvider as any;
+    const onSynced = () => setSynced(true);
+    try {
+      p.on?.('synced', onSynced);
+      p.on?.('sync', onSynced);
+      if (p.synced === true) setSynced(true);
+    } catch {
+      // ignore
+    }
+
     // Per-user undo/redo:
     // - Each client gets its own UndoManager.
     // - We track only local-origin transactions (origin === null by default).
-    const um = new Y.UndoManager([yDoc.getText('nexus'), yDoc.getMap('node-comments-v1')], {
+    const um = new Y.UndoManager([yDoc.getText('nexus'), yDoc.getMap('node-comments-v1'), yDoc.getXmlFragment('note')], {
       trackedOrigins: new Set([null]),
       captureTimeout: 450,
     });
@@ -128,6 +158,7 @@ export function useYjs(roomName: string) {
 
     setDoc(yDoc);
     setProvider(hpProvider);
+    setConnectedRoomName(roomName);
 
     return () => {
       try {
@@ -145,6 +176,14 @@ export function useYjs(roomName: string) {
       }
       try {
         um.destroy();
+      } catch {
+        // ignore
+      }
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const pp: any = hpProvider as any;
+        pp.off?.('synced', onSynced);
+        pp.off?.('sync', onSynced);
       } catch {
         // ignore
       }
@@ -200,6 +239,8 @@ export function useYjs(roomName: string) {
   return {
     doc,
     provider,
+    connectedRoomName,
+    synced,
     status,
     presence,
     undo: () => undoManagerRef.current?.undo(),

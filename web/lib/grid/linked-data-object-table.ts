@@ -76,6 +76,7 @@ export function syncLinkedDataObjectTableStructure(opts: {
   const used = new Set<string>([objectNameColId]);
   const colIdByAttrId: Record<string, string> = {};
   const reserveOrAppend = (preferredColId: string | null): string => {
+    if (!t) throw new Error(`Table not found: ${tableId}`);
     if (preferredColId && t.colIds.includes(preferredColId) && !used.has(preferredColId)) {
       used.add(preferredColId);
       return preferredColId;
@@ -182,6 +183,7 @@ export function materializeLinkedDataObjectTable(opts: {
 
   const colIdByAttrId: Record<string, string> = {};
   const reserveOrAppend = (preferredColId: string | null): string => {
+    if (!t) throw new Error(`Table not found: ${tableId}`);
     if (preferredColId && t.colIds.includes(preferredColId) && !used.has(preferredColId)) {
       used.add(preferredColId);
       return preferredColId;

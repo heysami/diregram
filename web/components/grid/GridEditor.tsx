@@ -11,6 +11,7 @@ import { DatabaseView } from '@/components/grid/DatabaseView';
 import { MarkdownDocModal } from '@/components/grid/MarkdownDocModal';
 import { buildMarkdownDocViews } from '@/components/grid/markdown/markdownDocViews';
 import { CommentsPanel } from '@/components/CommentsPanel';
+import { EditorMenubar } from '@/components/EditorMenubar';
 import { useGridCommentTargetKeysForSheet } from '@/hooks/use-grid-comment-target-keys';
 import { getGridSheetIdFromCommentTargetKey } from '@/lib/grid-comments';
 
@@ -77,55 +78,51 @@ export function GridEditor({
 
   return (
     <main className="mac-desktop flex h-screen flex-col">
-      <header className="mac-menubar px-4 flex items-center justify-between shrink-0 z-10">
-        <div className="flex items-center gap-3 min-w-0">
-          {onBack ? (
-            <button type="button" className="mac-btn" onClick={onBack} title="Back to workspace">
-              Workspace
+      <EditorMenubar
+        status={statusLabel || ''}
+        activeFileName={title || 'Grid'}
+        onWorkspace={onBack || undefined}
+        rightContent={
+          <>
+            <button
+              type="button"
+              className={`mac-btn ${activeTool === 'comment' ? 'mac-btn--primary' : ''}`}
+              disabled={!yDoc}
+              onClick={() => {
+                if (!yDoc) return;
+                setActiveTool((prev) => {
+                  const next = prev === 'comment' ? 'select' : 'comment';
+                  if (next === 'comment') {
+                    setCommentPanel((p) => ({ ...p, targetKey: p.targetKey ?? null }));
+                  }
+                  return next;
+                });
+              }}
+              title={!yDoc ? 'Comments unavailable (doc not ready)' : 'Comment mode'}
+            >
+              <MessageSquare size={16} />
             </button>
-          ) : null}
-          <div className="text-[12px] font-bold tracking-tight truncate">{title || 'Grid'}</div>
-          {statusLabel ? <div className="text-[11px] opacity-70">{statusLabel}</div> : null}
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            className={`mac-btn ${activeTool === 'comment' ? 'mac-btn--primary' : ''}`}
-            disabled={!yDoc}
-            onClick={() => {
-              if (!yDoc) return;
-              setActiveTool((prev) => {
-                const next = prev === 'comment' ? 'select' : 'comment';
-                if (next === 'comment') {
-                  setCommentPanel((p) => ({ ...p, targetKey: p.targetKey ?? null }));
-                }
-                return next;
-              });
-            }}
-            title={!yDoc ? 'Comments unavailable (doc not ready)' : 'Comment mode'}
-          >
-            <MessageSquare size={16} />
-          </button>
-          <button type="button" className="mac-btn" onClick={onUndo} disabled={!canUndo}>
-            Undo
-          </button>
-          <button type="button" className="mac-btn" onClick={onRedo} disabled={!canRedo}>
-            Redo
-          </button>
-          <button
-            type="button"
-            className="mac-btn"
-            onClick={() => setShowMarkdown(true)}
-            disabled={!rawMarkdown}
-            title={!rawMarkdown ? 'Markdown not available yet' : 'View the raw markdown backing this file'}
-          >
-            Markdown
-          </button>
-          <button type="button" className="mac-btn" onClick={() => setShowSettings((v) => !v)} title="Grid settings">
-            <Settings2 size={16} />
-          </button>
-        </div>
-      </header>
+            <button type="button" className="mac-btn" onClick={onUndo} disabled={!canUndo}>
+              Undo
+            </button>
+            <button type="button" className="mac-btn" onClick={onRedo} disabled={!canRedo}>
+              Redo
+            </button>
+            <button
+              type="button"
+              className="mac-btn"
+              onClick={() => setShowMarkdown(true)}
+              disabled={!rawMarkdown}
+              title={!rawMarkdown ? 'Markdown not available yet' : 'View the raw markdown backing this file'}
+            >
+              Markdown
+            </button>
+            <button type="button" className="mac-btn" onClick={() => setShowSettings((v) => !v)} title="Grid settings">
+              <Settings2 size={16} />
+            </button>
+          </>
+        }
+      />
 
       <MarkdownDocModal
         isOpen={showMarkdown}

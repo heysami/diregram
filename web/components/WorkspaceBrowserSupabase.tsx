@@ -2,13 +2,15 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, Copy, FileText, Folder, FolderPlus, Mail, Pencil, Plus, Trash2 } from 'lucide-react';
+import { ArrowLeft, Copy, FileText, Folder, FolderPlus, Mail, Pencil, Plus, Trash2, Network, Eye, Table } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 import { AccessPeopleEditor } from '@/components/AccessPeopleEditor';
 import type { AccessPerson } from '@/lib/local-file-store';
 import type { LayoutDirection } from '@/lib/layout-direction';
 import { fetchProfileDefaultLayoutDirection } from '@/lib/layout-direction-supabase';
 import { makeStarterGridMarkdown } from '@/lib/grid-starter';
+import { makeStarterNoteMarkdown } from '@/lib/note-starter';
+import type { DocKind } from '@/lib/doc-kinds';
 
 type DbFolder = {
   id: string;
@@ -30,6 +32,18 @@ type DbFile = {
   layout_direction?: LayoutDirection | null;
   kind?: string | null;
 };
+
+function normalizeKind(raw: unknown): DocKind {
+  return raw === 'note' || raw === 'grid' || raw === 'vision' || raw === 'diagram' ? raw : 'diagram';
+}
+
+function KindIcon({ kind, size }: { kind: unknown; size: number }) {
+  const k = normalizeKind(kind);
+  if (k === 'grid') return <Table size={size} />;
+  if (k === 'note') return <FileText size={size} />;
+  if (k === 'vision') return <Eye size={size} />;
+  return <Network size={size} />;
+}
 
 function nowIso() {
   return new Date().toISOString();
@@ -262,6 +276,31 @@ export function WorkspaceBrowserSupabase() {
     openFile(file);
   };
 
+  const createNoteFile = async (folderId: string) => {
+    if (!supabase || !userId) return;
+    const defaultLayout: LayoutDirection = await fetchProfileDefaultLayoutDirection(supabase, userId);
+    const roomName = `file-${crypto.randomUUID()}`;
+    const initialContent = makeStarterNoteMarkdown();
+    const { data, error: err } = await supabase
+      .from('files')
+      .insert({
+        name: 'New Note',
+        owner_id: userId,
+        folder_id: folderId,
+        room_name: roomName,
+        last_opened_at: nowIso(),
+        layout_direction: defaultLayout,
+        kind: 'note',
+        content: initialContent,
+      })
+      .select('id,name,owner_id,folder_id,room_name,last_opened_at,updated_at,access,layout_direction,kind')
+      .single();
+    if (err) return showToast(err.message);
+    const file = data as unknown as DbFile;
+    setFiles((prev) => [file, ...prev]);
+    openFile(file);
+  };
+
   const saveProject = async () => {
     if (!editProject || !supabase) return;
     setEditError(null);
@@ -411,7 +450,7 @@ export function WorkspaceBrowserSupabase() {
                               openFile(f);
                             }}
                           >
-                            <FileText size={12} />
+                            <KindIcon kind={f.kind} size={12} />
                             <span className="truncate">{f.name}</span>
                           </button>
 
@@ -504,6 +543,16 @@ export function WorkspaceBrowserSupabase() {
                 type="button"
                 className="mac-btn flex items-center gap-1.5"
                 disabled={!effectiveCanEditFolder(activeFolder, userId, userEmail)}
+                onClick={() => createNoteFile(activeFolder.id)}
+                title={!effectiveCanEditFolder(activeFolder, userId, userEmail) ? 'No edit access' : 'New note'}
+              >
+                <Plus size={14} />
+                New note
+              </button>
+              <button
+                type="button"
+                className="mac-btn flex items-center gap-1.5"
+                disabled={!effectiveCanEditFolder(activeFolder, userId, userEmail)}
                 title={!effectiveCanEditFolder(activeFolder, userId, userEmail) ? 'No edit access' : 'Edit project'}
                 onClick={() => setEditProject({ id: activeFolder.id, name: activeFolder.name, people: activeFolder.access?.people || [] })}
               >
@@ -519,7 +568,7 @@ export function WorkspaceBrowserSupabase() {
               .map((f) => (
                 <div key={f.id} className="mac-double-outline p-3 text-left hover:bg-gray-50 flex items-center justify-between gap-3 group">
                   <button type="button" className="flex items-center gap-2 min-w-0 flex-1" onClick={() => openFile(f)} title="Open">
-                    <FileText size={14} />
+                    <KindIcon kind={f.kind} size={14} />
                     <div className="text-xs font-semibold truncate">{f.name}</div>
                   </button>
                   <div className="flex items-center gap-2 shrink-0">
