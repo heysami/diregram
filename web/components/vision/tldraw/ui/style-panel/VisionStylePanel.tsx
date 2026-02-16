@@ -24,7 +24,7 @@ import { setVisionGradientUiState } from '@/components/vision/tldraw/ui/gradient
 import { getVisionActionVisibility } from '@/components/vision/tldraw/ui/style-panel/getVisionActionVisibility';
 import { coerceNxFx, isNxFxEmpty, makeEmptyNxFx, makeFxId, readNxFxFromMeta, writeNxFxToMeta } from '@/components/vision/tldraw/fx/nxfxTypes';
 import { toggleNxFxEditMode } from '@/components/vision/tldraw/fx/installVisionFxProxy';
-import { resolveStylePanelTargets } from '@/components/vision/tldraw/ui/style-panel/resolvePanelTargets';
+import { isNxFxProxy, resolveStylePanelTargets } from '@/components/vision/tldraw/ui/style-panel/resolvePanelTargets';
 import {
   RectCornerRoundnessSection,
   canConvertSelectionToVectorPoints,
