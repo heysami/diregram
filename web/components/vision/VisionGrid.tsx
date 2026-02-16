@@ -1,6 +1,6 @@
 'use client';
 
-import type { VisionDoc } from '@/lib/visionjson';
+import type { VisionDocV1 } from '@/lib/visionjson';
 
 export function visionCellKey(row: number, col: number) {
   return `r${row}c${col}`;
@@ -13,7 +13,7 @@ export function VisionGrid({
   tilePx = 24,
   showThumbs = false,
 }: {
-  doc: VisionDoc;
+  doc: VisionDocV1;
   selectedKey: string | null;
   onSelectKey: (key: string) => void;
   tilePx?: number;
