@@ -10,6 +10,7 @@ import type { LayoutDirection } from '@/lib/layout-direction';
 import { fetchProfileDefaultLayoutDirection } from '@/lib/layout-direction-supabase';
 import { makeStarterGridMarkdown } from '@/lib/grid-starter';
 import { makeStarterNoteMarkdown } from '@/lib/note-starter';
+import { makeStarterVisionMarkdown } from '@/lib/vision-starter';
 import type { DocKind } from '@/lib/doc-kinds';
 
 type DbFolder = {
@@ -301,6 +302,31 @@ export function WorkspaceBrowserSupabase() {
     openFile(file);
   };
 
+  const createVisionFile = async (folderId: string) => {
+    if (!supabase || !userId) return;
+    const defaultLayout: LayoutDirection = await fetchProfileDefaultLayoutDirection(supabase, userId);
+    const roomName = `file-${crypto.randomUUID()}`;
+    const initialContent = makeStarterVisionMarkdown();
+    const { data, error: err } = await supabase
+      .from('files')
+      .insert({
+        name: 'New Vision',
+        owner_id: userId,
+        folder_id: folderId,
+        room_name: roomName,
+        last_opened_at: nowIso(),
+        layout_direction: defaultLayout,
+        kind: 'vision',
+        content: initialContent,
+      })
+      .select('id,name,owner_id,folder_id,room_name,last_opened_at,updated_at,access,layout_direction,kind')
+      .single();
+    if (err) return showToast(err.message);
+    const file = data as unknown as DbFile;
+    setFiles((prev) => [file, ...prev]);
+    openFile(file);
+  };
+
   const saveProject = async () => {
     if (!editProject || !supabase) return;
     setEditError(null);
@@ -548,6 +574,16 @@ export function WorkspaceBrowserSupabase() {
               >
                 <Plus size={14} />
                 New note
+              </button>
+              <button
+                type="button"
+                className="mac-btn flex items-center gap-1.5"
+                disabled={!effectiveCanEditFolder(activeFolder, userId, userEmail)}
+                onClick={() => createVisionFile(activeFolder.id)}
+                title={!effectiveCanEditFolder(activeFolder, userId, userEmail) ? 'No edit access' : 'New vision'}
+              >
+                <Plus size={14} />
+                New vision
               </button>
               <button
                 type="button"

@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "tldraw/tldraw.css";
 
 /* ============================================================
    Classic Macintosh System 3-inspired theme (monochrome + bevel)
@@ -544,6 +545,187 @@ html[data-theme="mac3"] textarea:focus,
 html[data-theme="mac3"] select:focus {
   outline: 2px dotted var(--mac-black);
   outline-offset: 2px;
+}
+
+/* ============================================================
+   Vision / tldraw floating panel (match tldraw UI)
+   ============================================================ */
+.nx-tldraw-floating {
+  /* Match tldraw: tlui-style-panel__wrapper */
+  background-color: var(--tl-color-panel, var(--color-panel, rgba(255, 255, 255, 0.94)));
+  color: var(--tl-color-text, var(--color-text, #111));
+  border-radius: var(--tl-radius-3, 9px);
+  box-shadow: var(
+    --tl-shadow-2,
+    0px 0px 2px hsl(0, 0%, 0%, 16%),
+    0px 2px 3px hsl(0, 0%, 0%, 24%),
+    0px 2px 6px hsl(0, 0%, 0%, 0.1),
+    inset 0px 0px 0px 1px var(--tl-color-panel-contrast, rgba(255, 255, 255, 0.9))
+  );
+}
+
+.nx-tldraw-floating__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--color-divider, rgba(0, 0, 0, 0.12));
+  user-select: none;
+  cursor: grab;
+}
+
+.nx-tldraw-floating__header:active {
+  cursor: grabbing;
+}
+
+.nx-tldraw-floating__title {
+  font-size: 12px;
+  font-weight: 600;
+  opacity: 0.9;
+}
+
+.nx-tldraw-floating__body {
+  padding: 10px;
+}
+
+.nx-tlui-btn {
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid var(--color-divider, rgba(0, 0, 0, 0.14));
+  background: var(--color-panel, #fff);
+  color: inherit;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.nx-tlui-btn:disabled {
+  opacity: 0.45;
+}
+
+.nx-tlui-btn:active {
+  transform: translateY(0.5px);
+}
+
+.nx-tlui-iconbtn {
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: inherit;
+}
+
+.nx-tlui-iconbtn:hover {
+  background: var(--color-muted-1, rgba(0, 0, 0, 0.05));
+}
+
+.nx-tlui-squarebtn {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  border: 1px solid var(--color-divider, rgba(0, 0, 0, 0.14));
+  background: var(--color-panel, #fff);
+  color: inherit;
+}
+
+.nx-tlui-squarebtn:hover {
+  background: var(--color-muted-1, rgba(0, 0, 0, 0.05));
+}
+
+.nx-tlui-squarebtn:disabled {
+  opacity: 0.45;
+}
+
+.nx-tlui-squarebtn:active {
+  transform: translateY(0.5px);
+}
+
+/* Lightweight tooltip (tldraw-ish) */
+.nx-tooltip {
+  position: relative;
+  display: inline-flex;
+  overflow: visible;
+}
+
+.nx-tooltip::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  transform: translateX(-50%);
+  white-space: nowrap;
+  font-size: 11px;
+  line-height: 1;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: var(--color-panel, rgba(255, 255, 255, 0.96));
+  color: var(--color-text, #111);
+  border: 1px solid var(--color-divider, rgba(0, 0, 0, 0.16));
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.14);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease, transform 120ms ease;
+  z-index: 9999;
+}
+
+.nx-tooltip:hover::after,
+.nx-tooltip:focus-within::after {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+.nx-tlui-row {
+  position: relative;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+}
+
+.nx-tlui-row:hover {
+  background: var(--color-muted-1, rgba(0, 0, 0, 0.04));
+}
+
+.nx-tlui-row--selected {
+  background: var(--color-selected, rgba(0, 112, 243, 0.12));
+  border-color: var(--color-selected, rgba(0, 112, 243, 0.22));
+}
+
+.nx-tlui-row--drop {
+  border-color: var(--color-selected, rgba(0, 112, 243, 0.36));
+  box-shadow: 0 0 0 2px var(--color-selected, rgba(0, 112, 243, 0.18));
+}
+
+.nx-tlui-drop-line {
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  height: 2px;
+  background: var(--color-selected, #1a73e8);
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+.nx-tlui-input {
+  height: 26px;
+  width: 100%;
+  border-radius: 6px;
+  border: 1px solid var(--color-divider, rgba(0, 0, 0, 0.18));
+  padding: 0 8px;
+  font-size: 12px;
+  background: var(--color-panel, #fff);
+  color: var(--color-text, #111);
 }
 
 @keyframes shake {

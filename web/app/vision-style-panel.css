@@ -1,0 +1,336 @@
+/* ============================================================
+   Vision / tldraw right style panel (polished)
+   ============================================================ */
+.nx-vsp {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 10px 12px;
+  box-sizing: border-box;
+}
+
+.nx-vsp-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.nx-vsp-section + .nx-vsp-section {
+  padding-top: 10px;
+  border-top: 1px solid var(--color-divider, rgba(0, 0, 0, 0.10));
+}
+
+.nx-vsp-title {
+  font-size: 11px;
+  font-weight: 600;
+  opacity: 0.8;
+}
+
+.nx-vsp-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.nx-vsp-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.nx-vsp-icon {
+  width: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.7;
+}
+
+.nx-vsp-hint {
+  font-size: 11px;
+  opacity: 0.75;
+}
+
+.nx-vsp-field,
+.nx-vsp-select,
+.nx-vsp-number {
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid var(--color-divider, rgba(0, 0, 0, 0.12));
+  background: color-mix(in srgb, var(--color-panel, #fff) 92%, transparent);
+  color: inherit;
+  font-size: 12px;
+  line-height: 1;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.nx-vsp-field {
+  padding: 0 10px;
+  flex: 1 1 auto;
+}
+
+.nx-vsp-select {
+  padding: 0 10px;
+  flex: 1 1 auto;
+}
+
+.nx-vsp-number {
+  padding: 0 8px;
+}
+
+.nx-vsp-field:focus,
+.nx-vsp-select:focus,
+.nx-vsp-number:focus {
+  outline: 2px solid var(--color-selected, rgba(0, 112, 243, 0.35));
+  outline-offset: 1px;
+}
+
+.nx-vsp-range {
+  accent-color: var(--color-selected, #1a73e8);
+  height: 18px;
+  width: 100%;
+  min-width: 0;
+  display: block;
+}
+
+.nx-vsp-swatch {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid var(--color-divider, rgba(0, 0, 0, 0.12));
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.35),
+    0 1px 2px rgba(0, 0, 0, 0.06);
+  background: #000;
+  flex: 0 0 auto;
+}
+
+.nx-vsp-group {
+  border-radius: 12px;
+  border: 1px solid var(--color-divider, rgba(0, 0, 0, 0.10));
+  background: color-mix(in srgb, var(--color-panel, #fff) 96%, rgba(0, 0, 0, 0.02));
+  padding: 10px;
+}
+
+.nx-vsp-swatch:active {
+  transform: translateY(0.5px);
+}
+
+.nx-vsp-preview {
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid var(--color-divider, rgba(0, 0, 0, 0.14));
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  background-color: var(--color-panel, #fff);
+}
+
+.nx-vsp-previewLabel {
+  font-size: 11px;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.85);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+.nx-vsp-actionsGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(32px, 1fr));
+  gap: 8px;
+  align-items: center;
+  max-width: 100%;
+}
+
+/* Make tldraw's right panel wider in Vision */
+html[data-theme="vision"] .tlui-style-panel {
+  width: 296px;
+  max-width: 296px;
+}
+
+html[data-theme="vision"] .tlui-style-panel__wrapper {
+  overflow-x: hidden;
+}
+
+/* lightweight overlay for advanced editors */
+.nx-vsp-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+}
+
+.nx-vsp-overlayBackdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.nx-vsp-overlayPanel {
+  position: absolute;
+  top: 72px;
+  right: 16px;
+  width: min(420px, calc(100vw - 32px));
+  border-radius: 12px;
+  background: var(--tl-color-panel, rgba(255, 255, 255, 0.98));
+  color: var(--tl-color-text, #111);
+  box-shadow: var(--tl-shadow-3, 0 18px 50px rgba(0,0,0,0.18));
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  overflow: hidden;
+}
+
+.nx-vsp-overlayHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.10);
+}
+
+.nx-vsp-overlayTitle {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.nx-vsp-overlayClose {
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  background: rgba(255,255,255,0.9);
+  font-size: 12px;
+}
+
+.nx-vsp-overlayBody {
+  padding: 12px;
+}
+
+.nx-vsp-overlayGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.nx-vsp-overlayCell {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.nx-vsp-overlayCellLabel {
+  font-size: 11px;
+  opacity: 0.75;
+  font-weight: 600;
+}
+
+.nx-vsp-overlayLabel {
+  font-size: 12px;
+  opacity: 0.85;
+}
+
+.nx-vsp-miniBtn {
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  background: rgba(255,255,255,0.9);
+  font-size: 12px;
+}
+
+.nx-vsp-miniBtn:disabled {
+  opacity: 0.5;
+}
+
+/* Gradient stops editor */
+.nx-vsp-grad {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.nx-vsp-gradBar {
+  position: relative;
+  height: 32px;
+  border-radius: 10px;
+  border: 1px solid var(--color-divider, rgba(0, 0, 0, 0.14));
+  overflow: hidden;
+  cursor: crosshair;
+  background-color: var(--color-panel, #fff);
+}
+
+.nx-vsp-gradControls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.nx-vsp-gradStop {
+  position: absolute;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  border-radius: 5px;
+  border: 2px solid rgba(255, 255, 255, 0.95);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.28);
+  transform: translate(-50%, -50%);
+}
+
+.nx-vsp-gradStop.is-selected {
+  outline: 2px solid var(--color-selected, rgba(0, 112, 243, 0.7));
+  outline-offset: 1px;
+}
+
+.nx-vsp-gradColor {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid var(--color-divider, rgba(0, 0, 0, 0.12));
+  padding: 0;
+  background: transparent;
+}
+
+/* On-canvas gradient handles overlay */
+.nx-gh {
+  /* Render in a window-fixed overlay (portal to body). */
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+}
+
+.nx-ghSvg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.nx-ghLine {
+  stroke: rgba(26, 115, 232, 0.9);
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+.nx-ghDot {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border-radius: 6px;
+  transform: translate(-50%, -50%);
+  background: rgba(255, 255, 255, 0.98);
+  border: 2px solid rgba(26, 115, 232, 0.95);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.22);
+  pointer-events: all;
+}
+
+.nx-ghDot.is-dragging {
+  background: rgba(26, 115, 232, 0.95);
+  border-color: rgba(255, 255, 255, 0.95);
+}
+

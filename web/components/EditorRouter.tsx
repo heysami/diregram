@@ -8,6 +8,7 @@ import type { DocKind } from '@/lib/doc-kinds';
 import { EditorApp as DiagramEditorApp } from '@/components/EditorApp';
 import { GridEditorApp } from '@/components/GridEditorApp';
 import { NoteEditorApp } from '@/components/NoteEditorApp';
+import { VisionEditorApp } from '@/components/VisionEditorApp';
 
 function normalizeKind(raw: unknown): DocKind {
   return raw === 'note' || raw === 'grid' || raw === 'vision' || raw === 'diagram' ? raw : 'diagram';
@@ -73,6 +74,7 @@ export function EditorRouter() {
 
   if (kind === 'grid') return <GridEditorApp />;
   if (kind === 'note') return <NoteEditorApp />;
+  if (kind === 'vision') return <VisionEditorApp />;
   return <DiagramEditorApp />;
 }
 

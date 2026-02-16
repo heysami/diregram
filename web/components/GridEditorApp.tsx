@@ -11,6 +11,7 @@ import { makeStarterGridMarkdown } from '@/lib/grid-starter';
 import { loadGridDoc, saveGridDoc, type GridDoc } from '@/lib/gridjson';
 import { GridEditor } from '@/components/grid/GridEditor';
 import { useLinkedDiagramDataObjects } from '@/hooks/use-linked-diagram-data-objects';
+import { canEditFromAccess } from '@/lib/access-control';
 
 type ActiveFileMeta = {
   id: string;
@@ -23,25 +24,6 @@ type ActiveFileMeta = {
 
 function nowIso() {
   return new Date().toISOString();
-}
-
-function normalizeEmail(s: string) {
-  return s.trim().toLowerCase();
-}
-
-function canEditFromAccess(access: unknown, userEmail: string | null) {
-  if (!access || typeof access !== 'object') return false;
-  const people = (access as { people?: unknown }).people;
-  if (!Array.isArray(people) || people.length === 0) return false;
-  if (!userEmail) return false;
-  const e = normalizeEmail(userEmail);
-  return people.some((p) => {
-    if (!p || typeof p !== 'object') return false;
-    const rec = p as { email?: unknown; role?: unknown };
-    const email = typeof rec.email === 'string' ? normalizeEmail(rec.email) : '';
-    const role = typeof rec.role === 'string' ? rec.role : 'view';
-    return !!email && email === e && role === 'edit';
-  });
 }
 
 function stripLegacyTableJson(markdown: string): string {

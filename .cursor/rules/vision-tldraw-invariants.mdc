@@ -1,0 +1,18 @@
+---
+description: Vision tldraw invariants (no default shapes, boolean bundles)
+globs: web/components/vision/tldraw/**/*.{ts,tsx}
+alwaysApply: false
+---
+
+## Vision tldraw invariants
+
+- **No default tldraw vector shapes in docs**: any `geo/draw/line/highlight/note/arrow/text` should be auto-converted into Vision-native shapes (`nxrect`, `nxpath`, `nxtext`). Keep the conversion logic in `web/components/vision/tldraw/autoconvert/*` and the installer in `installAutoConvertVisionShapes.ts`.
+- **Do not re-enable generic tools** (`geo`, `shape`, `frame`, etc.) in the Vision toolbar. Only allow tools that are Vision-native or deterministically auto-converted (`web/components/vision/tldraw/ui/visionToolAllowlist.ts`).
+
+## Boolean bundles (non-destructive)
+
+- **Selection**: selecting a boolean result should select its **bundle group** (move together as a set).
+- **Sources visibility**: boolean sources must never visually render while bundled. Enforce via `meta.nxBooleanSource === true` and central helpers in `web/components/vision/tldraw/boolean/booleanSourceState.ts`.
+- **Auto recompute must be always-on**: install from editor mount (not from optional panels). Use `installAutoRecomputeBooleans` in `useTldrawTileController.ts`.
+- **Flatten** must clear boolean meta using explicit null/false (tldraw merges `meta` patches).
+

@@ -46,6 +46,7 @@ import { usePinnedTags } from '@/hooks/use-pinned-tags';
 import { useToolbarPinnedTags } from '@/hooks/use-toolbar-pinned-tags';
 import { Database, FlaskConical, LayoutDashboard, Network, Workflow } from 'lucide-react';
 import { normalizeLayoutDirection, type LayoutDirection } from '@/lib/layout-direction';
+import { canEditFromAccess } from '@/lib/access-control';
 
 type ActiveFileMeta = {
   id: string;
@@ -55,18 +56,6 @@ type ActiveFileMeta = {
   canEdit: boolean;
   initialContent?: string;
 };
-
-function normalizeEmail(s: string) {
-  return s.trim().toLowerCase();
-}
-
-function canEditFromAccess(access: any, userEmail: string | null) {
-  const people = access?.people;
-  if (!Array.isArray(people) || people.length === 0) return false;
-  if (!userEmail) return false;
-  const e = normalizeEmail(userEmail);
-  return people.some((p: any) => normalizeEmail(String(p?.email || '')) === e && String(p?.role || 'view') === 'edit');
-}
 
 export function EditorApp() {
   const router = useRouter();

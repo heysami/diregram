@@ -29,6 +29,7 @@ import {
 import { saveFileSnapshot } from '@/lib/local-doc-snapshots';
 import { makeStarterGridMarkdown } from '@/lib/grid-starter';
 import { makeStarterNoteMarkdown } from '@/lib/note-starter';
+import { makeStarterVisionMarkdown } from '@/lib/vision-starter';
 import type { DocKind } from '@/lib/doc-kinds';
 
 function normalizeKind(raw: unknown): DocKind {
@@ -286,6 +287,25 @@ export function WorkspaceBrowser() {
               >
                 <Plus size={14} />
                 New note
+              </button>
+              <button
+                type="button"
+                className="mac-btn flex items-center gap-1.5"
+                disabled={!canEditActiveFolder}
+                title={!canEditActiveFolder ? 'No edit access' : 'New vision'}
+                onClick={() => {
+                  if (!canEditActiveFolder) return;
+                  setStore((prev) => {
+                    const { store: next, file } = createLocalFile(prev, 'New Vision', activeFolder.id, 'vision');
+                    // Pre-seed the document so the editor can restore it immediately.
+                    saveFileSnapshot(file.id, makeStarterVisionMarkdown());
+                    queueMicrotask(() => openFile(file.id));
+                    return next;
+                  });
+                }}
+              >
+                <Plus size={14} />
+                New vision
               </button>
               <button
                 type="button"

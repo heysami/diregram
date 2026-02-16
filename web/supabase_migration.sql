@@ -48,6 +48,13 @@ create table if not exists public.files (
 alter table public.profiles add column if not exists default_layout_direction text default 'horizontal';
 alter table public.files add column if not exists layout_direction text;
 alter table public.files add column if not exists kind text default 'diagram';
+alter table public.files add column if not exists content text default '';
+alter table public.files add column if not exists thumbnail_url text;
+alter table public.files add column if not exists created_at timestamptz default now();
+alter table public.files add column if not exists updated_at timestamptz default now();
+alter table public.files add column if not exists folder_id uuid references public.folders(id);
+alter table public.folders add column if not exists parent_id uuid references public.folders(id);
+alter table public.folders add column if not exists created_at timestamptz default now();
 
 -- 2) Profiles: allow inserting your own profile row
 alter table public.profiles enable row level security;
@@ -176,5 +183,59 @@ create policy "Users can update owned or shared(edit) files" on public.files
       where f.id = files.folder_id
         and (auth.uid() = f.owner_id or public.access_can_edit(f.access))
     )
+  );
+
+-- 6) Storage: Vision image assets bucket + RLS
+-- Bucket is private; clients fetch via signed URLs.
+insert into storage.buckets (id, name, public)
+values ('vision-assets', 'vision-assets', false)
+on conflict (id) do nothing;
+
+-- Allow authenticated users to read/write only within:
+--   vision/<auth.uid()>/<fileId>/<cellKey>/<uuid>.<ext>
+drop policy if exists "Vision assets read own" on storage.objects;
+drop policy if exists "Vision assets insert own" on storage.objects;
+drop policy if exists "Vision assets update own" on storage.objects;
+drop policy if exists "Vision assets delete own" on storage.objects;
+
+create policy "Vision assets read own" on storage.objects
+  for select
+  to authenticated
+  using (
+    bucket_id = 'vision-assets'
+    and split_part(name, '/', 1) = 'vision'
+    and split_part(name, '/', 2) = auth.uid()::text
+  );
+
+create policy "Vision assets insert own" on storage.objects
+  for insert
+  to authenticated
+  with check (
+    bucket_id = 'vision-assets'
+    and split_part(name, '/', 1) = 'vision'
+    and split_part(name, '/', 2) = auth.uid()::text
+  );
+
+create policy "Vision assets update own" on storage.objects
+  for update
+  to authenticated
+  using (
+    bucket_id = 'vision-assets'
+    and split_part(name, '/', 1) = 'vision'
+    and split_part(name, '/', 2) = auth.uid()::text
+  )
+  with check (
+    bucket_id = 'vision-assets'
+    and split_part(name, '/', 1) = 'vision'
+    and split_part(name, '/', 2) = auth.uid()::text
+  );
+
+create policy "Vision assets delete own" on storage.objects
+  for delete
+  to authenticated
+  using (
+    bucket_id = 'vision-assets'
+    and split_part(name, '/', 1) = 'vision'
+    and split_part(name, '/', 2) = auth.uid()::text
   );
 

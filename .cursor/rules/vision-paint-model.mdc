@@ -1,0 +1,21 @@
+---
+description: Vision paint model (consistent solid/linear/radial/pattern across shapes)
+globs: web/components/vision/tldraw/**/*.{ts,tsx}
+alwaysApply: false
+---
+
+## Vision paint model (must stay consistent)
+
+- **Shared SVG paint defs** live in `web/components/vision/tldraw/paint/paintDefs.tsx`.
+  - Shapes should use `getPaintDefs` + `paintUrl` + `safeSvgId` instead of re-implementing gradients/patterns.
+- **Supported modes**: `solid`, `linear`, `radial`, `pattern`.
+- **Stops format**: JSON `GradientStop[]` (`offset` 0..1, `color` hex) using helpers in `web/components/vision/tldraw/lib/gradient-stops.ts`.
+- **Shapes that must follow this model**: `nxrect`, `nxpath`, `nxtext`.
+
+## Style panel targeting
+
+- The right panel must edit the *underlying* Vision shape when selection is a wrapper:
+  - boolean bundle group -> result shape
+  - `nxfx` proxy -> source shape
+- Centralize this in `web/components/vision/tldraw/ui/style-panel/resolvePanelTargets.ts`.
+
