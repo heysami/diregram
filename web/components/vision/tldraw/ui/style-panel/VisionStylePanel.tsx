@@ -3,17 +3,9 @@
 import { DefaultStylePanel, track, useEditor, useRelevantStyles, type TLUiStylePanelProps } from 'tldraw';
 import { DefaultDashStyle, DefaultFillStyle, DefaultSizeStyle } from '@tldraw/editor';
 import { DefaultColorStyle, DefaultLabelColorStyle } from '@tldraw/tlschema';
-import { ActionsSection } from '@/components/vision/tldraw/ui/style-panel/sections/ActionsSection';
-import { OpacitySection } from '@/components/vision/tldraw/ui/style-panel/sections/OpacitySection';
-import { NxFxEffectsSection, makeDefaultDropShadow, makeDefaultInnerShadow } from '@/components/vision/tldraw/ui/style-panel/sections/NxFxEffectsSection';
-import { NxFxDistortionSection } from '@/components/vision/tldraw/ui/style-panel/sections/NxFxDistortionSection';
-// NOTE: we intentionally use the same paint section for `nxpath` and `nxrect` so gradients behave consistently.
-import { NxRectCornersSection, NxRectPaintSection, NxRectStrokeSidesSection } from '@/components/vision/tldraw/ui/style-panel/sections/NxRectSections';
-import { NxRectLabelSection } from '@/components/vision/tldraw/ui/style-panel/sections/NxRectLabelSection';
-import { NxTextTypographySection } from '@/components/vision/tldraw/ui/style-panel/sections/NxTextTypographySection';
-import { TldrawFillSection, TldrawOutlineSection, TldrawTextSection } from '@/components/vision/tldraw/ui/style-panel/sections/TldrawSections';
+import { makeDefaultDropShadow, makeDefaultInnerShadow } from '@/components/vision/tldraw/ui/style-panel/sections/NxFxEffectsSection';
 import { clamp01, getFillVariant, getTldrawTokenHex, getVariantHex, makeTheme, nearestTokenForHex, toHexOrEmpty } from '@/components/vision/tldraw/ui/style-panel/color-utils';
-import { parseStopsJson, serializeStops } from '@/components/vision/tldraw/lib/gradient-stops';
+import { makeDefaultFillLayer, makeDefaultStrokeLayer, serializeFillLayers, serializeStrokeLayers } from '@/components/vision/tldraw/paint/nxPaintLayers';
 import {
   flattenBoolean,
   getFlattenInfoFromSelection,
@@ -22,17 +14,22 @@ import {
 } from '@/components/vision/tldraw/boolean/bundles';
 import { setVisionGradientUiState } from '@/components/vision/tldraw/ui/gradient-handles/visionGradientUiStore';
 import { getVisionActionVisibility } from '@/components/vision/tldraw/ui/style-panel/getVisionActionVisibility';
-import { coerceNxFx, isNxFxEmpty, makeEmptyNxFx, makeFxId, readNxFxFromMeta, writeNxFxToMeta } from '@/components/vision/tldraw/fx/nxfxTypes';
-import { toggleNxFxEditMode } from '@/components/vision/tldraw/fx/installVisionFxProxy';
-import { isNxFxProxy, resolveStylePanelTargets } from '@/components/vision/tldraw/ui/style-panel/resolvePanelTargets';
+import { coerceNxFx, makeEmptyNxFx, makeFxId, readNxFxFromMeta, writeNxFxToMeta } from '@/components/vision/tldraw/fx/nxfxTypes';
+import { resolveStylePanelTargets } from '@/components/vision/tldraw/ui/style-panel/resolvePanelTargets';
 import {
-  RectCornerRoundnessSection,
   canConvertSelectionToVectorPoints,
   convertSelectionToVectorPoints,
   getSelectedNodeId,
   isVectorPenActive,
   tryParseEditable,
 } from '@/components/vision/tldraw/vector-pen';
+import { VisionLayerSection } from '@/components/vision/tldraw/ui/style-panel/sections/VisionLayerSection';
+import { VisionFxSections } from '@/components/vision/tldraw/ui/style-panel/sections/VisionFxSections';
+import { VisionPathTypeSections } from '@/components/vision/tldraw/ui/style-panel/sections/VisionPathTypeSections';
+import { VisionRectTypeSections } from '@/components/vision/tldraw/ui/style-panel/sections/VisionRectTypeSections';
+import { VisionTextTypeSections } from '@/components/vision/tldraw/ui/style-panel/sections/VisionTextTypeSections';
+import { TldrawTypeSections } from '@/components/vision/tldraw/ui/style-panel/sections/TldrawTypeSections';
+import { VisionRectLabelSection } from '@/components/vision/tldraw/ui/style-panel/sections/VisionRectLabelSection';
 
 type NxPathLike = { id: string; type: string; props?: any };
 function isNxPathShape(s: any): s is NxPathLike {
@@ -75,7 +72,6 @@ export const VisionStylePanel = track(function VisionStylePanel(props: TLUiStyle
   }
   const firstFxTarget = fxTargets[0] || null;
   const firstFx = firstFxTarget ? (readNxFxFromMeta(firstFxTarget.meta) || makeEmptyNxFx()) : makeEmptyNxFx();
-  const hasFxOnSelection = Boolean(firstFxTarget && !isNxFxEmpty(firstFx));
 
   const styles =
     useRelevantStyles([DefaultColorStyle, DefaultLabelColorStyle, DefaultFillStyle, DefaultDashStyle, DefaultSizeStyle]) ||
@@ -205,22 +201,6 @@ export const VisionStylePanel = track(function VisionStylePanel(props: TLUiStyle
     }
   };
 
-  const updateStops = (json: string, which: 'fill' | 'stroke') => {
-    const key = which === 'fill' ? 'fillStops' : 'strokeStops';
-    updateNxTextProps((prev) => ({ ...prev, [key]: json }));
-  };
-
-  const updateStopEnd = (which: 'fill' | 'stroke', end: 'a' | 'b', hex: string) => {
-    const keyStops = which === 'fill' ? String(nxTexts[0]?.props?.fillStops || '') : String(nxTexts[0]?.props?.strokeStops || '');
-    const base = which === 'fill' ? String(nxTexts[0]?.props?.fill || '#111111') : String(nxTexts[0]?.props?.stroke || '#000000');
-    const stops = parseStopsJson(keyStops, base, base);
-    if (stops.length >= 2) {
-      if (end === 'a') stops[0] = { ...stops[0], color: hex };
-      else stops[stops.length - 1] = { ...stops[stops.length - 1], color: hex };
-    }
-    updateStops(serializeStops(stops), which);
-  };
-
   const updateFxMetaForTargets = (patch: (prev: any) => any) => {
     if (fxTargets.length === 0) return;
     try {
@@ -240,45 +220,39 @@ export const VisionStylePanel = track(function VisionStylePanel(props: TLUiStyle
     updateFxMetaForTargets((prevMeta) => writeNxFxToMeta(prevMeta, coerceNxFx(nextFx)));
   };
 
-  const selectionIsProxy = selectionCount === 1 && isNxFxProxy(selectedShapes[0]);
-
   return (
     <DefaultStylePanel {...props}>
       <div className="nx-vsp">
-        {showActionsWithVectorize ? (
-          <ActionsSection
-            editor={editor}
-            selectionCount={selectionCount}
-            showUngroup={showUngroup}
-            showFlatten={showFlatten}
-            showVectorize={canVectorize}
-            onUngroup={() => {
-              // If selection is a non-destructive boolean result/bundle, "Ungroup" should delete the
-              // boolean and restore the sources as independent shapes.
-              if (flattenInfo) {
-                unbundleBooleanToSources(editor, flattenInfo).catch(() => {});
-                return;
-              }
-              try {
-                const ids = editor.getSelectedShapeIds();
-                if (ids.length) editor.ungroupShapes(ids);
-              } catch {
-                // ignore
-              }
-            }}
-            onVectorize={() => {
-              convertSelectionToVectorPoints(editor).catch(() => {});
-            }}
-            onUnion={() => createBooleanFromSelection(editor, 'union').catch(() => {})}
-            onSubtract={() => createBooleanFromSelection(editor, 'subtract').catch(() => {})}
-            onIntersect={() => createBooleanFromSelection(editor, 'intersect').catch(() => {})}
-            onFlatten={() => flattenInfo && flattenBoolean(editor, flattenInfo).catch(() => {})}
-          />
-        ) : null}
-
-        <OpacitySection
-          value={opacityValue}
-          onChange={(v) => {
+        <VisionLayerSection
+          editor={editor}
+          selectionCount={selectionCount}
+          showActionsWithVectorize={showActionsWithVectorize}
+          showUngroup={showUngroup}
+          showFlatten={showFlatten}
+          showVectorize={canVectorize}
+          onUngroup={() => {
+            // If selection is a non-destructive boolean result/bundle, "Ungroup" should delete the
+            // boolean and restore the sources as independent shapes.
+            if (flattenInfo) {
+              unbundleBooleanToSources(editor, flattenInfo).catch(() => {});
+              return;
+            }
+            try {
+              const ids = editor.getSelectedShapeIds();
+              if (ids.length) editor.ungroupShapes(ids);
+            } catch {
+              // ignore
+            }
+          }}
+          onVectorize={() => {
+            convertSelectionToVectorPoints(editor).catch(() => {});
+          }}
+          onUnion={() => createBooleanFromSelection(editor, 'union').catch(() => {})}
+          onSubtract={() => createBooleanFromSelection(editor, 'subtract').catch(() => {})}
+          onIntersect={() => createBooleanFromSelection(editor, 'intersect').catch(() => {})}
+          onFlatten={() => flattenInfo && flattenBoolean(editor, flattenInfo).catch(() => {})}
+          opacityValue={opacityValue}
+          onChangeOpacity={(v) => {
             const vv = clamp01(v);
             try {
               editor.setOpacityForSelectedShapes(vv);
@@ -287,412 +261,323 @@ export const VisionStylePanel = track(function VisionStylePanel(props: TLUiStyle
               // ignore
             }
           }}
+          rectCorners={
+            nxRects.length > 0
+              ? {
+                  radiusUniform: !!nxRects[0]?.props?.radiusUniform,
+                  radius: Number(nxRects[0]?.props?.radius ?? 0) || 0,
+                  rtl: Number(nxRects[0]?.props?.radiusTL ?? nxRects[0]?.props?.radius ?? 0) || 0,
+                  rtr: Number(nxRects[0]?.props?.radiusTR ?? nxRects[0]?.props?.radius ?? 0) || 0,
+                  rbr: Number(nxRects[0]?.props?.radiusBR ?? nxRects[0]?.props?.radius ?? 0) || 0,
+                  rbl: Number(nxRects[0]?.props?.radiusBL ?? nxRects[0]?.props?.radius ?? 0) || 0,
+                  onSetUniformRadius: (r) =>
+                    updateNxRectProps((prev) => ({
+                      ...prev,
+                      radiusUniform: true,
+                      radius: r,
+                      radiusTL: r,
+                      radiusTR: r,
+                      radiusBR: r,
+                      radiusBL: r,
+                    })),
+                  onSetCorners: (next) =>
+                    updateNxRectProps((prev) => ({
+                      ...prev,
+                      radiusUniform: next.uniform,
+                      radius: next.uniform ? next.rtl : prev.radius,
+                      radiusTL: next.rtl,
+                      radiusTR: next.rtr,
+                      radiusBR: next.rbr,
+                      radiusBL: next.rbl,
+                    })),
+                }
+              : null
+          }
+          vectorRoundness={
+            nxPaths.length > 0
+              ? { shape: firstNx, editable, selectedNodeId, vectorPenActive }
+              : null
+          }
         />
 
-        {fxTargets.length ? (
-          <>
-            {hasFxOnSelection && firstFxTarget ? (
-              <div className="nx-vsp-section">
-                <div className="nx-vsp-title">FX</div>
-                <div className="nx-vsp-group">
-                  <div className="nx-vsp-row">
-                    <div className="nx-vsp-icon">✦</div>
-                    <button
-                      type="button"
-                      className="nx-vsp-miniBtn flex-1"
-                      onClick={() => {
-                        try {
-                          toggleNxFxEditMode(editor as any, String(firstFxTarget.id) as any);
-                        } catch {
-                          // ignore
-                        }
-                      }}
-                    >
-                      Toggle edit contents
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ) : null}
+        {/* Type-specific: paint stacks (vision shapes) or default tldraw styles */}
+        <VisionPathTypeSections
+          enabled={nxPaths.length > 0}
+          fillsJson={String(firstNx?.props?.fills || '') || undefined}
+          strokesJson={String(firstNx?.props?.strokes || '') || undefined}
+          legacyFill={{
+            solid: nxFillSolid,
+            mode: nxFillMode as any,
+            stopsJson: nxFillStopsJson,
+            pattern: nxFillPattern as any,
+            angle: nxFillAngle,
+          }}
+          legacyStroke={{
+            solid: nxStrokeSolid,
+            mode: nxStrokeMode as any,
+            stopsJson: nxStrokeStopsJson,
+            pattern: nxStrokePattern as any,
+            angle: nxStrokeAngle,
+            width: nxStrokeWidth,
+          }}
+          onConvertFillFromLegacy={() =>
+            updateNxProps((prev) => ({
+              ...prev,
+              fills: serializeFillLayers([
+                makeDefaultFillLayer({
+                  mode: nxFillMode as any,
+                  solid: nxFillSolid,
+                  stops: nxFillStopsJson,
+                  pattern: nxFillPattern as any,
+                  angle: nxFillAngle,
+                } as any),
+              ]),
+            }))
+          }
+          onConvertStrokeFromLegacy={() =>
+            updateNxProps((prev) => ({
+              ...prev,
+              strokes: serializeStrokeLayers([
+                makeDefaultStrokeLayer({
+                  mode: nxStrokeMode as any,
+                  solid: nxStrokeSolid,
+                  stops: nxStrokeStopsJson,
+                  pattern: nxStrokePattern as any,
+                  angle: nxStrokeAngle,
+                  width: nxStrokeWidth,
+                } as any),
+              ]),
+            }))
+          }
+          onChangeFillsJson={(json) => updateNxProps((prev) => ({ ...prev, fills: json }))}
+          onChangeStrokesJson={(json) => updateNxProps((prev) => ({ ...prev, strokes: json }))}
+          onActivateFillHandles={(layerId) => setVisionGradientUiState({ shapeId: String(firstNx?.id || ''), paint: 'fill', layerId })}
+          onActivateStrokeHandles={(layerId) => setVisionGradientUiState({ shapeId: String(firstNx?.id || ''), paint: 'stroke', layerId })}
+        />
 
-            <NxFxEffectsSection
-              fx={firstFx as any}
-              onChangeFx={(next) => setFxForTargets(next)}
-              onAddDropShadow={() => {
-                const id = makeFxId('ds');
-                setFxForTargets({ ...firstFx, effects: [...(firstFx.effects || []), makeDefaultDropShadow(id)] });
-              }}
-              onAddInnerShadow={() => {
-                const id = makeFxId('is');
-                setFxForTargets({ ...firstFx, effects: [...(firstFx.effects || []), makeDefaultInnerShadow(id)] });
-              }}
-            />
+        <VisionRectTypeSections
+          enabled={nxRects.length > 0}
+          fillsJson={String(nxRects[0]?.props?.fills || '') || undefined}
+          strokesJson={String(nxRects[0]?.props?.strokes || '') || undefined}
+          legacyFill={{
+            solid: String(nxRects[0]?.props?.fill || '#ffffff'),
+            mode: String(nxRects[0]?.props?.fillMode || 'solid') as any,
+            stopsJson: String(nxRects[0]?.props?.fillStops || ''),
+            pattern: String(nxRects[0]?.props?.fillPattern || 'stripes') as any,
+            angle: Number(nxRects[0]?.props?.fillAngle ?? 45) || 45,
+          }}
+          legacyStroke={{
+            solid: String(nxRects[0]?.props?.stroke || '#111111'),
+            mode: String(nxRects[0]?.props?.strokeMode || 'solid') as any,
+            stopsJson: String(nxRects[0]?.props?.strokeStops || ''),
+            pattern: String(nxRects[0]?.props?.strokePattern || 'dots') as any,
+            angle: Number(nxRects[0]?.props?.strokeAngle ?? 45) || 45,
+            width: Number(nxRects[0]?.props?.strokeWidth ?? 1) || 1,
+          }}
+          strokeStacksDisabledReason={
+            !Boolean(nxRects[0]?.props?.strokeUniform)
+              ? 'Outline layers require “Uniform” outline (disable per-side outline widths).'
+              : null
+          }
+          showStrokeSides={!String(nxRects[0]?.props?.strokes || '')}
+          strokeSides={{
+            uniform: !!nxRects[0]?.props?.strokeUniform,
+            width: Number(nxRects[0]?.props?.strokeWidth ?? 1) || 1,
+            top: Number(nxRects[0]?.props?.strokeTop ?? nxRects[0]?.props?.strokeWidth ?? 1) || 1,
+            right: Number(nxRects[0]?.props?.strokeRight ?? nxRects[0]?.props?.strokeWidth ?? 1) || 1,
+            bottom: Number(nxRects[0]?.props?.strokeBottom ?? nxRects[0]?.props?.strokeWidth ?? 1) || 1,
+            left: Number(nxRects[0]?.props?.strokeLeft ?? nxRects[0]?.props?.strokeWidth ?? 1) || 1,
+            onSetUniform: (v) =>
+              updateNxRectProps((prev) => ({
+                ...prev,
+                strokeUniform: v,
+              })),
+            onSetAll: (w) =>
+              updateNxRectProps((prev) => ({
+                ...prev,
+                strokeWidth: w,
+                strokeTop: w,
+                strokeRight: w,
+                strokeBottom: w,
+                strokeLeft: w,
+              })),
+            onSetSides: (next) =>
+              updateNxRectProps((prev) => ({
+                ...prev,
+                strokeTop: next.top,
+                strokeRight: next.right,
+                strokeBottom: next.bottom,
+                strokeLeft: next.left,
+              })),
+          }}
+          onConvertFillFromLegacy={() =>
+            updateNxRectProps((prev) => ({
+              ...prev,
+              fills: serializeFillLayers([
+                makeDefaultFillLayer({
+                  mode: String(prev?.fillMode || 'solid') as any,
+                  solid: String(prev?.fill || '#ffffff'),
+                  stops: String(prev?.fillStops || ''),
+                  pattern: String(prev?.fillPattern || 'stripes') as any,
+                  angle: Number(prev?.fillAngle ?? 45) || 45,
+                } as any),
+              ]),
+            }))
+          }
+          onConvertStrokeFromLegacy={() =>
+            updateNxRectProps((prev) => ({
+              ...prev,
+              strokes: serializeStrokeLayers([
+                makeDefaultStrokeLayer({
+                  mode: String(prev?.strokeMode || 'solid') as any,
+                  solid: String(prev?.stroke || '#111111'),
+                  stops: String(prev?.strokeStops || ''),
+                  pattern: String(prev?.strokePattern || 'dots') as any,
+                  angle: Number(prev?.strokeAngle ?? 45) || 45,
+                  width: Number(prev?.strokeWidth ?? 1) || 1,
+                } as any),
+              ]),
+            }))
+          }
+          onChangeFillsJson={(json) => updateNxRectProps((prev) => ({ ...prev, fills: json }))}
+          onChangeStrokesJson={(json) => updateNxRectProps((prev) => ({ ...prev, strokes: json }))}
+          onActivateFillHandles={(layerId) => setVisionGradientUiState({ shapeId: String(nxRects[0]?.id || ''), paint: 'fill', layerId })}
+          onActivateStrokeHandles={(layerId) => setVisionGradientUiState({ shapeId: String(nxRects[0]?.id || ''), paint: 'stroke', layerId })}
+        />
 
-            <NxFxDistortionSection
-              fx={firstFx as any}
-              onChangeFx={(next) => setFxForTargets(next)}
-              onAdd={(kind) => {
-                const id = makeFxId(kind);
-                const seed = Math.floor(Math.random() * 2147483647);
-                const d: any =
-                  kind === 'blur'
-                    ? { id, kind, enabled: true, radius: 8 }
-                    : kind === 'motionBlur'
-                      ? { id, kind, enabled: true, angleDeg: 0, distance: 18, samples: 10 }
-                      : kind === 'bloom'
-                        ? { id, kind, enabled: true, threshold: 0.75, radius: 16, intensity: 1.2 }
-                        : kind === 'glitch'
-                          ? { id, kind, enabled: true, strength: 0.35, rgbOffset: 3, scanlines: 0.25, seed }
-                          : kind === 'mosh'
-                            ? { id, kind, enabled: true, strength: 0.35, blockSize: 18, seed }
-                            : kind === 'grain'
-                              ? { id, kind, enabled: true, strength: 0.22, size: 1.2, seed }
-                              : { id, kind, enabled: true, strength: 0.45, scale: 6, seed };
-                setFxForTargets({ ...firstFx, distortions: [...(firstFx.distortions || []), d] });
-              }}
-            />
-          </>
-        ) : null}
+        <VisionTextTypeSections
+          enabled={nxTexts.length > 0}
+          typography={{
+            text: String(nxTexts[0]?.props?.text || ''),
+            fontSize: Number(nxTexts[0]?.props?.fontSize ?? 32) || 32,
+            align: String(nxTexts[0]?.props?.align || 'center') as any,
+            fontFamily: String(nxTexts[0]?.props?.fontFamily || 'Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif'),
+          }}
+          fillsJson={String(nxTexts[0]?.props?.fills || '') || undefined}
+          strokesJson={String(nxTexts[0]?.props?.strokes || '') || undefined}
+          legacyFill={{
+            solid: String(nxTexts[0]?.props?.fill || '#111111'),
+            mode: String(nxTexts[0]?.props?.fillMode || 'solid') as any,
+            stopsJson: String(nxTexts[0]?.props?.fillStops || ''),
+            pattern: String(nxTexts[0]?.props?.fillPattern || 'stripes') as any,
+            angle: 45,
+          }}
+          legacyStroke={{
+            solid: String(nxTexts[0]?.props?.stroke || '#000000'),
+            mode: String(nxTexts[0]?.props?.strokeMode || 'solid') as any,
+            stopsJson: String(nxTexts[0]?.props?.strokeStops || ''),
+            pattern: String(nxTexts[0]?.props?.strokePattern || 'dots') as any,
+            angle: 45,
+            width: Number(nxTexts[0]?.props?.strokeWidth ?? 0) || 0,
+          }}
+          onChangeTypography={(patch) => updateNxTextProps(patch)}
+          onConvertFillFromLegacy={() =>
+            updateNxTextProps((prev) => ({
+              ...prev,
+              fills: serializeFillLayers([
+                makeDefaultFillLayer({
+                  mode: String(prev?.fillMode || 'solid') as any,
+                  solid: String(prev?.fill || '#111111'),
+                  stops: String(prev?.fillStops || ''),
+                  pattern: String(prev?.fillPattern || 'stripes') as any,
+                  angle: 45,
+                } as any),
+              ]),
+            }))
+          }
+          onConvertStrokeFromLegacy={() =>
+            updateNxTextProps((prev) => ({
+              ...prev,
+              strokes: serializeStrokeLayers([
+                makeDefaultStrokeLayer({
+                  mode: String(prev?.strokeMode || 'solid') as any,
+                  solid: String(prev?.stroke || '#000000'),
+                  stops: String(prev?.strokeStops || ''),
+                  pattern: String(prev?.strokePattern || 'dots') as any,
+                  angle: 45,
+                  width: Number(prev?.strokeWidth ?? 0) || 0,
+                } as any),
+              ]),
+            }))
+          }
+          onChangeFillsJson={(json) => updateNxTextProps((prev) => ({ ...prev, fills: json }))}
+          onChangeStrokesJson={(json) => updateNxTextProps((prev) => ({ ...prev, strokes: json }))}
+          onActivateFillHandles={(layerId) => setVisionGradientUiState({ shapeId: String(nxTexts[0]?.id || ''), paint: 'fill', layerId })}
+          onActivateStrokeHandles={(layerId) => setVisionGradientUiState({ shapeId: String(nxTexts[0]?.id || ''), paint: 'stroke', layerId })}
+        />
 
-        {nxPaths.length > 0 ? (
-          <>
-            <NxRectPaintSection
-              title="Fill"
-              icon="F"
-              mode={nxFillMode as any}
-              solid={nxFillSolid}
-              a={nxFillA}
-              b={nxFillB}
-              angle={nxFillAngle}
-              pattern={nxFillPattern as any}
-              stopsJson={nxFillStopsJson}
-              showAngle={false}
-              onChangeMode={(m) => updateNxProps((prev) => ({ ...prev, fillMode: m }))}
-              onChangeSolid={(hex) => updateNxProps((prev) => ({ ...prev, fill: hex }))}
-              onChangeA={(hex) => updateNxProps((prev) => ({ ...prev, fillA: hex }))}
-              onChangeB={(hex) => updateNxProps((prev) => ({ ...prev, fillB: hex }))}
-              onChangeAngle={(deg) => updateNxProps((prev) => ({ ...prev, fillAngle: deg }))}
-              onChangePattern={(p) => updateNxProps((prev) => ({ ...prev, fillPattern: p }))}
-              onChangeStopsJson={(json) => updateNxProps((prev) => ({ ...prev, fillStops: json }))}
-              onActivateGradientHandles={() => setVisionGradientUiState({ shapeId: String(firstNx?.id || ''), paint: 'fill' })}
-            />
+        <TldrawTypeSections
+          enabled={!hasVisionSelection}
+          editor={editor}
+          fill={{
+            color: tldrawFillHex,
+            mixed: sharedColor?.type === 'mixed',
+            placeholder: sharedColor?.type === 'mixed' ? 'mixed' : '#rrggbb',
+            fillStyle,
+          }}
+          outline={{
+            color: tldrawOutlineHex,
+            mixed: sharedColor?.type === 'mixed',
+            placeholder: sharedColor?.type === 'mixed' ? 'mixed' : '#rrggbb',
+            dashStyle,
+          }}
+          text={{
+            color: tldrawTextHex,
+            mixed: sharedLabelColor?.type === 'mixed' || sharedColor?.type === 'mixed',
+            placeholder: sharedLabelColor?.type === 'mixed' || sharedColor?.type === 'mixed' ? 'mixed' : '#rrggbb',
+          }}
+          sizeNumber={sizeNumber}
+          sizeTokenFromNumber={sizeTokenFromNumber}
+          onPickPrimaryColor={setPrimaryColorFromHex}
+          onPickTextColor={setTextColorFromHex}
+        />
 
-            <NxRectPaintSection
-              title="Outline"
-              icon="O"
-              mode={nxStrokeMode as any}
-              solid={nxStrokeSolid}
-              a={nxStrokeA}
-              b={nxStrokeB}
-              angle={nxStrokeAngle}
-              pattern={nxStrokePattern as any}
-              stopsJson={nxStrokeStopsJson}
-              showAngle={false}
-              onChangeMode={(m) => updateNxProps((prev) => ({ ...prev, strokeMode: m }))}
-              onChangeSolid={(hex) => updateNxProps((prev) => ({ ...prev, stroke: hex }))}
-              onChangeA={(hex) => updateNxProps((prev) => ({ ...prev, strokeA: hex }))}
-              onChangeB={(hex) => updateNxProps((prev) => ({ ...prev, strokeB: hex }))}
-              onChangeAngle={(deg) => updateNxProps((prev) => ({ ...prev, strokeAngle: deg }))}
-              onChangePattern={(p) => updateNxProps((prev) => ({ ...prev, strokePattern: p }))}
-              onChangeStopsJson={(json) => updateNxProps((prev) => ({ ...prev, strokeStops: json }))}
-              onActivateGradientHandles={() => setVisionGradientUiState({ shapeId: String(firstNx?.id || ''), paint: 'stroke' })}
-            />
+        {/* FX (applies to any selection target) */}
+        <VisionFxSections
+          enabled={fxTargets.length > 0}
+          fx={firstFx as any}
+          onChangeFx={(next) => setFxForTargets(next)}
+          onAddDropShadow={() => {
+            const id = makeFxId('ds');
+            setFxForTargets({ ...firstFx, effects: [...(firstFx.effects || []), makeDefaultDropShadow(id)] });
+          }}
+          onAddInnerShadow={() => {
+            const id = makeFxId('is');
+            setFxForTargets({ ...firstFx, effects: [...(firstFx.effects || []), makeDefaultInnerShadow(id)] });
+          }}
+          onAddDistortion={(kind) => {
+            const id = makeFxId(kind);
+            const seed = Math.floor(Math.random() * 2147483647);
+            const d: any =
+              kind === 'blur'
+                ? { id, kind, enabled: true, radius: 8 }
+                : kind === 'motionBlur'
+                  ? { id, kind, enabled: true, angleDeg: 0, distance: 18, samples: 10 }
+                  : kind === 'bloom'
+                    ? { id, kind, enabled: true, threshold: 0.75, radius: 16, intensity: 1.2 }
+                    : kind === 'glitch'
+                      ? { id, kind, enabled: true, strength: 0.35, rgbOffset: 3, scanlines: 0.25, seed }
+                      : kind === 'mosh'
+                        ? { id, kind, enabled: true, strength: 0.35, blockSize: 18, seed }
+                        : kind === 'grain'
+                          ? { id, kind, enabled: true, strength: 0.22, size: 1.2, seed }
+                          : { id, kind, enabled: true, strength: 0.45, scale: 6, seed };
+            setFxForTargets({ ...firstFx, distortions: [...(firstFx.distortions || []), d] });
+          }}
+        />
 
-            <RectCornerRoundnessSection
-              editor={editor}
-              shape={firstNx}
-              editable={editable as any}
-              selectedNodeId={selectedNodeId}
-              vectorPenActive={vectorPenActive}
-            />
-          </>
-        ) : null}
-
-        {nxRects.length > 0 ? (
-          <>
-            <NxRectCornersSection
-              radiusUniform={!!nxRects[0]?.props?.radiusUniform}
-              radius={Number(nxRects[0]?.props?.radius ?? 0) || 0}
-              rtl={Number(nxRects[0]?.props?.radiusTL ?? nxRects[0]?.props?.radius ?? 0) || 0}
-              rtr={Number(nxRects[0]?.props?.radiusTR ?? nxRects[0]?.props?.radius ?? 0) || 0}
-              rbr={Number(nxRects[0]?.props?.radiusBR ?? nxRects[0]?.props?.radius ?? 0) || 0}
-              rbl={Number(nxRects[0]?.props?.radiusBL ?? nxRects[0]?.props?.radius ?? 0) || 0}
-              onSetUniformRadius={(r) =>
-                updateNxRectProps((prev) => ({
-                  ...prev,
-                  radiusUniform: true,
-                  radius: r,
-                  radiusTL: r,
-                  radiusTR: r,
-                  radiusBR: r,
-                  radiusBL: r,
-                }))
-              }
-              onSetCorners={(next) =>
-                updateNxRectProps((prev) => ({
-                  ...prev,
-                  radiusUniform: next.uniform,
-                  radius: next.uniform ? next.rtl : prev.radius,
-                  radiusTL: next.rtl,
-                  radiusTR: next.rtr,
-                  radiusBR: next.rbr,
-                  radiusBL: next.rbl,
-                }))
-              }
-            />
-
-            <NxRectLabelSection
-              label={String(nxRects[0]?.props?.label || '')}
-              labelSize={Number(nxRects[0]?.props?.labelSize ?? 18) || 18}
-              labelAlign={String(nxRects[0]?.props?.labelAlign || 'center') as any}
-              labelColor={String(nxRects[0]?.props?.labelColor || '#111111')}
-              onChangeLabel={(s) => updateNxRectProps((prev) => ({ ...prev, label: s }))}
-              onChangeLabelSize={(n) => updateNxRectProps((prev) => ({ ...prev, labelSize: n }))}
-              onChangeLabelAlign={(a) => updateNxRectProps((prev) => ({ ...prev, labelAlign: a }))}
-              onChangeLabelColor={(hex) => updateNxRectProps((prev) => ({ ...prev, labelColor: hex }))}
-            />
-
-            <NxRectStrokeSidesSection
-              uniform={!!nxRects[0]?.props?.strokeUniform}
-              width={Number(nxRects[0]?.props?.strokeWidth ?? 1) || 1}
-              top={Number(nxRects[0]?.props?.strokeTop ?? nxRects[0]?.props?.strokeWidth ?? 1) || 1}
-              right={Number(nxRects[0]?.props?.strokeRight ?? nxRects[0]?.props?.strokeWidth ?? 1) || 1}
-              bottom={Number(nxRects[0]?.props?.strokeBottom ?? nxRects[0]?.props?.strokeWidth ?? 1) || 1}
-              left={Number(nxRects[0]?.props?.strokeLeft ?? nxRects[0]?.props?.strokeWidth ?? 1) || 1}
-              onSetUniform={(v) =>
-                updateNxRectProps((prev) => ({
-                  ...prev,
-                  strokeUniform: v,
-                }))
-              }
-              onSetAll={(w) =>
-                updateNxRectProps((prev) => ({
-                  ...prev,
-                  strokeWidth: w,
-                  strokeTop: w,
-                  strokeRight: w,
-                  strokeBottom: w,
-                  strokeLeft: w,
-                }))
-              }
-              onSetSides={(next) =>
-                updateNxRectProps((prev) => ({
-                  ...prev,
-                  strokeTop: next.top,
-                  strokeRight: next.right,
-                  strokeBottom: next.bottom,
-                  strokeLeft: next.left,
-                }))
-              }
-            />
-
-            <NxRectPaintSection
-              title="Fill"
-              icon="F"
-              mode={(nxRects[0]?.props?.fillMode || 'solid') as any}
-              solid={String(nxRects[0]?.props?.fill || '#ffffff')}
-              a={String(nxRects[0]?.props?.fillA || nxRects[0]?.props?.fill || '#ffffff')}
-              b={String(nxRects[0]?.props?.fillB || '#111111')}
-              angle={Number(nxRects[0]?.props?.fillAngle ?? 45) || 45}
-              pattern={(nxRects[0]?.props?.fillPattern || 'stripes') as any}
-              stopsJson={String(nxRects[0]?.props?.fillStops || '')}
-              showAngle={false}
-              onChangeMode={(m) => updateNxRectProps((prev) => ({ ...prev, fillMode: m }))}
-              onChangeSolid={(hex) => updateNxRectProps((prev) => ({ ...prev, fill: hex }))}
-              onChangeA={(hex) => updateNxRectProps((prev) => ({ ...prev, fillA: hex }))}
-              onChangeB={(hex) => updateNxRectProps((prev) => ({ ...prev, fillB: hex }))}
-              onChangeAngle={(deg) => updateNxRectProps((prev) => ({ ...prev, fillAngle: deg }))}
-              onChangePattern={(p) => updateNxRectProps((prev) => ({ ...prev, fillPattern: p }))}
-              onChangeStopsJson={(json) => updateNxRectProps((prev) => ({ ...prev, fillStops: json }))}
-              onActivateGradientHandles={() =>
-                setVisionGradientUiState({ shapeId: String(nxRects[0]?.id || ''), paint: 'fill' })
-              }
-            />
-
-            <NxRectPaintSection
-              title="Outline"
-              icon="O"
-              mode={(nxRects[0]?.props?.strokeMode || 'solid') as any}
-              solid={String(nxRects[0]?.props?.stroke || '#111111')}
-              a={String(nxRects[0]?.props?.strokeA || nxRects[0]?.props?.stroke || '#111111')}
-              b={String(nxRects[0]?.props?.strokeB || '#ffffff')}
-              angle={Number(nxRects[0]?.props?.strokeAngle ?? 45) || 45}
-              pattern={(nxRects[0]?.props?.strokePattern || 'dots') as any}
-              stopsJson={String(nxRects[0]?.props?.strokeStops || '')}
-              showAngle={false}
-              onChangeMode={(m) => updateNxRectProps((prev) => ({ ...prev, strokeMode: m }))}
-              onChangeSolid={(hex) => updateNxRectProps((prev) => ({ ...prev, stroke: hex }))}
-              onChangeA={(hex) => updateNxRectProps((prev) => ({ ...prev, strokeA: hex }))}
-              onChangeB={(hex) => updateNxRectProps((prev) => ({ ...prev, strokeB: hex }))}
-              onChangeAngle={(deg) => updateNxRectProps((prev) => ({ ...prev, strokeAngle: deg }))}
-              onChangePattern={(p) => updateNxRectProps((prev) => ({ ...prev, strokePattern: p }))}
-              onChangeStopsJson={(json) => updateNxRectProps((prev) => ({ ...prev, strokeStops: json }))}
-              onActivateGradientHandles={() =>
-                setVisionGradientUiState({ shapeId: String(nxRects[0]?.id || ''), paint: 'stroke' })
-              }
-            />
-          </>
-        ) : null}
-
-        {nxTexts.length > 0 ? (
-          <>
-            <NxTextTypographySection
-              text={String(nxTexts[0]?.props?.text || '')}
-              fontSize={Number(nxTexts[0]?.props?.fontSize ?? 32) || 32}
-              align={String(nxTexts[0]?.props?.align || 'center') as any}
-              fontFamily={String(nxTexts[0]?.props?.fontFamily || 'Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif')}
-              onChangeText={(s) => updateNxTextProps((prev) => ({ ...prev, text: s }))}
-              onChangeFontSize={(n) => updateNxTextProps((prev) => ({ ...prev, fontSize: n }))}
-              onChangeAlign={(a) => updateNxTextProps((prev) => ({ ...prev, align: a }))}
-              onChangeFontFamily={(f) => updateNxTextProps((prev) => ({ ...prev, fontFamily: f }))}
-            />
-
-            <NxRectPaintSection
-              title="Text fill"
-              icon="∎"
-              mode={String(nxTexts[0]?.props?.fillMode || 'solid') as any}
-              solid={String(nxTexts[0]?.props?.fill || '#111111')}
-              a={parseStopsJson(String(nxTexts[0]?.props?.fillStops || ''), String(nxTexts[0]?.props?.fill || '#111111'), '#1a73e8')[0]?.color || '#111111'}
-              b={
-                parseStopsJson(String(nxTexts[0]?.props?.fillStops || ''), String(nxTexts[0]?.props?.fill || '#111111'), '#1a73e8').slice(-1)[0]
-                  ?.color || '#1a73e8'
-              }
-              angle={45}
-              pattern={String(nxTexts[0]?.props?.fillPattern || 'stripes') as any}
-              stopsJson={String(nxTexts[0]?.props?.fillStops || '')}
-              showAngle={false}
-              onChangeMode={(m) => updateNxTextProps((prev) => ({ ...prev, fillMode: m }))}
-              onChangeSolid={(hex) => updateNxTextProps((prev) => ({ ...prev, fill: hex }))}
-              onChangeA={(hex) => updateStopEnd('fill', 'a', hex)}
-              onChangeB={(hex) => updateStopEnd('fill', 'b', hex)}
-              onChangeAngle={() => {}}
-              onChangePattern={(p) => updateNxTextProps((prev) => ({ ...prev, fillPattern: p }))}
-              onChangeStopsJson={(json) => updateNxTextProps((prev) => ({ ...prev, fillStops: json }))}
-              onActivateGradientHandles={() => setVisionGradientUiState({ shapeId: String(nxTexts[0]?.id || ''), paint: 'fill' })}
-            />
-
-            <NxRectPaintSection
-              title="Text outline"
-              icon="⟂"
-              mode={String(nxTexts[0]?.props?.strokeMode || 'solid') as any}
-              solid={String(nxTexts[0]?.props?.stroke || '#000000')}
-              a={
-                parseStopsJson(String(nxTexts[0]?.props?.strokeStops || ''), String(nxTexts[0]?.props?.stroke || '#000000'), '#000000')[0]?.color ||
-                '#000000'
-              }
-              b={
-                parseStopsJson(String(nxTexts[0]?.props?.strokeStops || ''), String(nxTexts[0]?.props?.stroke || '#000000'), '#000000').slice(-1)[0]
-                  ?.color || '#000000'
-              }
-              angle={45}
-              pattern={String(nxTexts[0]?.props?.strokePattern || 'dots') as any}
-              stopsJson={String(nxTexts[0]?.props?.strokeStops || '')}
-              showAngle={false}
-              onChangeMode={(m) => updateNxTextProps((prev) => ({ ...prev, strokeMode: m }))}
-              onChangeSolid={(hex) => updateNxTextProps((prev) => ({ ...prev, stroke: hex }))}
-              onChangeA={(hex) => updateStopEnd('stroke', 'a', hex)}
-              onChangeB={(hex) => updateStopEnd('stroke', 'b', hex)}
-              onChangeAngle={() => {}}
-              onChangePattern={(p) => updateNxTextProps((prev) => ({ ...prev, strokePattern: p }))}
-              onChangeStopsJson={(json) => updateNxTextProps((prev) => ({ ...prev, strokeStops: json }))}
-              onActivateGradientHandles={() => setVisionGradientUiState({ shapeId: String(nxTexts[0]?.id || ''), paint: 'stroke' })}
-            />
-
-            <div className="nx-vsp-section">
-              <div className="nx-vsp-title">Outline width</div>
-              <div className="nx-vsp-group">
-                <div className="nx-vsp-stack">
-                  <div className="nx-vsp-row">
-                    <div className="nx-vsp-icon">⟂</div>
-                    <input
-                      className="nx-vsp-number w-[96px]"
-                      type="number"
-                      min={0}
-                      max={128}
-                      value={Math.round(Number(nxTexts[0]?.props?.strokeWidth ?? 0) || 0)}
-                      onChange={(e) =>
-                        updateNxTextProps((prev) => ({
-                          ...prev,
-                          strokeWidth: Math.max(0, Math.min(128, Math.round(Number(e.target.value || 0)))),
-                        }))
-                      }
-                      title="Outline width"
-                    />
-                    <div className="nx-vsp-hint flex-1">px</div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </>
-        ) : null}
-
-        {!hasVisionSelection ? (
-          <>
-            <TldrawFillSection
-              color={tldrawFillHex}
-              mixed={sharedColor?.type === 'mixed'}
-              placeholder={sharedColor?.type === 'mixed' ? 'mixed' : '#rrggbb'}
-              fillStyle={fillStyle}
-              onPickColor={(hex) => setPrimaryColorFromHex(hex, fillVariant)}
-              onCommitHex={(hex) => setPrimaryColorFromHex(hex, fillVariant)}
-              onChangeFillStyle={(v) => {
-                try {
-                  editor.setStyleForSelectedShapes(DefaultFillStyle as any, v as any);
-                  editor.setStyleForNextShapes(DefaultFillStyle as any, v as any);
-                } catch {
-                  // ignore
-                }
-              }}
-            />
-
-            <TldrawOutlineSection
-              color={tldrawOutlineHex}
-              mixed={sharedColor?.type === 'mixed'}
-              placeholder={sharedColor?.type === 'mixed' ? 'mixed' : '#rrggbb'}
-              sizeNumber={sizeNumber}
-              dashStyle={dashStyle}
-              onPickColor={(hex) => setPrimaryColorFromHex(hex, 'solid')}
-              onCommitHex={(hex) => setPrimaryColorFromHex(hex, 'solid')}
-              onChangeSizeNumber={(n) => {
-                const nn = Math.max(1, Math.min(4, Math.round(Number(n || 2))));
-                const token = sizeTokenFromNumber(nn);
-                try {
-                  editor.setStyleForSelectedShapes(DefaultSizeStyle as any, token as any);
-                  editor.setStyleForNextShapes(DefaultSizeStyle as any, token as any);
-                } catch {
-                  // ignore
-                }
-              }}
-              onChangeDashStyle={(v) => {
-                try {
-                  editor.setStyleForSelectedShapes(DefaultDashStyle as any, v as any);
-                  editor.setStyleForNextShapes(DefaultDashStyle as any, v as any);
-                } catch {
-                  // ignore
-                }
-              }}
-            />
-
-            <TldrawTextSection
-              color={tldrawTextHex}
-              mixed={sharedLabelColor?.type === 'mixed' || sharedColor?.type === 'mixed'}
-              placeholder={sharedLabelColor?.type === 'mixed' || sharedColor?.type === 'mixed' ? 'mixed' : '#rrggbb'}
-              sizeNumber={sizeNumber}
-              onPickColor={(hex) => setTextColorFromHex(hex)}
-              onCommitHex={(hex) => setTextColorFromHex(hex)}
-              onChangeSizeNumber={(n) => {
-                const nn = Math.max(1, Math.min(4, Math.round(Number(n || 2))));
-                const token = sizeTokenFromNumber(nn);
-                try {
-                  editor.setStyleForSelectedShapes(DefaultSizeStyle as any, token as any);
-                  editor.setStyleForNextShapes(DefaultSizeStyle as any, token as any);
-                } catch {
-                  // ignore
-                }
-              }}
-            />
-          </>
-        ) : null}
+        {/* Label (nxrect only) */}
+        <VisionRectLabelSection
+          enabled={nxRects.length > 0}
+          label={String(nxRects[0]?.props?.label || '')}
+          labelSize={Number(nxRects[0]?.props?.labelSize ?? 18) || 18}
+          labelAlign={String(nxRects[0]?.props?.labelAlign || 'center') as any}
+          labelColor={String(nxRects[0]?.props?.labelColor || '#111111')}
+          onChangeLabel={(s) => updateNxRectProps((prev) => ({ ...prev, label: s }))}
+          onChangeLabelSize={(n) => updateNxRectProps((prev) => ({ ...prev, labelSize: n }))}
+          onChangeLabelAlign={(a) => updateNxRectProps((prev) => ({ ...prev, labelAlign: a }))}
+          onChangeLabelColor={(hex) => updateNxRectProps((prev) => ({ ...prev, labelColor: hex }))}
+        />
       </div>
     </DefaultStylePanel>
   );

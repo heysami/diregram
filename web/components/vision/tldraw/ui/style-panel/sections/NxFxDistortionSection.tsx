@@ -1,6 +1,7 @@
 'use client';
 
-import { Plus, Trash2, ArrowUp, ArrowDown, Eye, EyeOff } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Eye, EyeOff, GripVertical, Plus, Trash2 } from 'lucide-react';
 import type { NxFxDistortion, NxFxRamp, NxFxRampStop, NxFxStack } from '@/components/vision/tldraw/fx/nxfxTypes';
 import { makeDefaultRamp } from '@/components/vision/tldraw/fx/nxfxTypes';
 
@@ -125,14 +126,35 @@ export function NxFxDistortionSection({
   onAdd: (kind: NxFxDistortion['kind']) => void;
 }) {
   const ds = fx.distortions || [];
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const sel = ds.find((d) => d.id === selectedId) || ds[0] || null;
+  const draggingRef = useRef<number | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
 
-  const move = (idx: number, dir: -1 | 1) => {
-    const j = idx + dir;
-    if (j < 0 || j >= ds.length) return;
-    const next = [...ds];
-    const tmp = next[idx];
-    next[idx] = next[j];
-    next[j] = tmp;
+  useEffect(() => {
+    if (selectedId && ds.some((d) => d.id === selectedId)) return;
+    setSelectedId(ds[0]?.id || null);
+  }, [ds, selectedId]);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      const el = menuRef.current;
+      if (!el) return;
+      if (el.contains(e.target as any)) return;
+      setMenuOpen(false);
+    };
+    window.addEventListener('mousedown', onDown, { passive: true });
+    return () => window.removeEventListener('mousedown', onDown);
+  }, [menuOpen]);
+
+  const move = (from: number, to: number) => {
+    if (from === to) return;
+    if (from < 0 || to < 0 || from >= ds.length || to >= ds.length) return;
+    const next = ds.slice();
+    const [it] = next.splice(from, 1);
+    next.splice(to, 0, it);
     onChangeFx({ ...fx, distortions: next });
   };
 
@@ -452,60 +474,113 @@ export function NxFxDistortionSection({
 
   return (
     <div className="nx-vsp-section">
-      <div className="nx-vsp-title">Distortion</div>
-      <div className="nx-vsp-group">
-        <div className="nx-vsp-row">
-          <div className="nx-vsp-icon">
+      <div className="nx-vsp-sectionHeader">
+        <div className="nx-vsp-title">Distortion</div>
+        <div className="nx-vsp-addWrap" ref={menuRef}>
+          <button type="button" className="nx-vsp-iconBtn" onClick={() => setMenuOpen((v) => !v)} title="Add distortion">
             <Plus size={14} />
-          </div>
-          <button type="button" className="nx-vsp-miniBtn" onClick={() => onAdd('blur')}>
-            Blur
           </button>
-          <button type="button" className="nx-vsp-miniBtn" onClick={() => onAdd('motionBlur')}>
-            Motion
-          </button>
-          <button type="button" className="nx-vsp-miniBtn" onClick={() => onAdd('bloom')}>
-            Bloom
-          </button>
-          <button type="button" className="nx-vsp-miniBtn" onClick={() => onAdd('glitch')}>
-            Glitch
-          </button>
-        </div>
-        <div className="nx-vsp-row">
-          <div className="nx-vsp-icon" />
-          <button type="button" className="nx-vsp-miniBtn" onClick={() => onAdd('mosh')}>
-            Mosh
-          </button>
-          <button type="button" className="nx-vsp-miniBtn" onClick={() => onAdd('grain')}>
-            Grain
-          </button>
-          <button type="button" className="nx-vsp-miniBtn" onClick={() => onAdd('doodle')}>
-            Doodle
-          </button>
+          {menuOpen ? (
+            <div className="nx-vsp-menu">
+              {(
+                [
+                  ['blur', 'Blur'],
+                  ['motionBlur', 'Motion blur'],
+                  ['bloom', 'Bloom'],
+                  ['glitch', 'Glitch'],
+                  ['mosh', 'Mosh'],
+                  ['grain', 'Grain'],
+                  ['doodle', 'Doodle'],
+                ] as const
+              ).map(([k, label]) => (
+                <button
+                  key={k}
+                  type="button"
+                  className="nx-vsp-menuItem"
+                  onClick={() => {
+                    onAdd(k as any);
+                    setMenuOpen(false);
+                  }}
+                >
+                  <span className="nx-vsp-layerType">{label}</span>
+                </button>
+              ))}
+            </div>
+          ) : null}
         </div>
       </div>
 
-      {ds.map((d, idx) => (
-        <div key={d.id} className="nx-vsp-group">
-          <div className="nx-vsp-row">
-            <div className="nx-vsp-icon">{d.kind}</div>
-            <button type="button" className="nx-vsp-miniBtn" onClick={() => toggleEnabled(d.id)} title={d.enabled ? 'Disable' : 'Enable'}>
-              {d.enabled ? <Eye size={14} /> : <EyeOff size={14} />}
-            </button>
-            <div className="nx-vsp-hint flex-1">{d.kind}</div>
-            <button type="button" className="nx-vsp-miniBtn" onClick={() => move(idx, -1)} title="Move up" disabled={idx === 0}>
-              <ArrowUp size={14} />
-            </button>
-            <button type="button" className="nx-vsp-miniBtn" onClick={() => move(idx, 1)} title="Move down" disabled={idx === ds.length - 1}>
-              <ArrowDown size={14} />
-            </button>
-            <button type="button" className="nx-vsp-miniBtn" onClick={() => remove(d.id)} title="Delete">
-              <Trash2 size={14} />
-            </button>
-          </div>
-          {renderControls(d)}
+      <div className="nx-vsp-group">
+        <div className="nx-vsp-layerList">
+          {ds.map((d, idx) => {
+            const enabled = d.enabled !== false;
+            const isSel = sel ? sel.id === d.id : false;
+            return (
+              <div
+                key={d.id}
+                className={isSel ? 'nx-vsp-layerItem is-selected' : 'nx-vsp-layerItem'}
+                onClick={() => setSelectedId(d.id)}
+                onDragOver={(ev) => {
+                  ev.preventDefault();
+                  const from = draggingRef.current;
+                  if (from === null) return;
+                  const to = idx;
+                  if (from === to) return;
+                  move(from, to);
+                  draggingRef.current = to;
+                }}
+                onDrop={() => {}}
+              >
+                <span
+                  className="nx-vsp-dragHandle"
+                  draggable
+                  onDragStart={(ev) => {
+                    draggingRef.current = idx;
+                    try {
+                      ev.dataTransfer.effectAllowed = 'move';
+                      ev.dataTransfer.setData('text/plain', String(idx));
+                    } catch {
+                      // ignore
+                    }
+                  }}
+                  onDragEnd={() => {
+                    draggingRef.current = null;
+                  }}
+                  title="Drag to reorder"
+                >
+                  <GripVertical size={16} />
+                </span>
+                <span className="nx-vsp-layerType">{String(d.kind || '')}</span>
+                <span className="nx-vsp-layerSpacer" />
+                <button
+                  type="button"
+                  className="nx-vsp-iconBtn"
+                  onClick={(ev) => {
+                    ev.stopPropagation();
+                    toggleEnabled(d.id);
+                  }}
+                  title={enabled ? 'Hide' : 'Show'}
+                >
+                  {enabled ? <Eye size={14} /> : <EyeOff size={14} />}
+                </button>
+                <button
+                  type="button"
+                  className="nx-vsp-iconBtn"
+                  onClick={(ev) => {
+                    ev.stopPropagation();
+                    remove(d.id);
+                  }}
+                  title="Delete"
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            );
+          })}
         </div>
-      ))}
+      </div>
+
+      {sel ? renderControls(sel) : null}
     </div>
   );
 }

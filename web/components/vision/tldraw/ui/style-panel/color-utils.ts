@@ -12,7 +12,25 @@ export function toHexOrEmpty(v: string) {
   const s = String(v || '').trim();
   if (!s) return '';
   if (/^#[0-9a-fA-F]{6}$/.test(s)) return s.toLowerCase();
+  if (/^#[0-9a-fA-F]{8}$/.test(s)) return s.toLowerCase();
   return '';
+}
+
+export function toHex8OrEmpty(v: string) {
+  const s = toHexOrEmpty(v);
+  if (!s) return '';
+  if (s.length === 7) return `${s}ff`;
+  return s;
+}
+
+export function hex8ToRgbaCss(v: string) {
+  const s = toHex8OrEmpty(v);
+  if (!s) return String(v || '');
+  const r = parseInt(s.slice(1, 3), 16);
+  const g = parseInt(s.slice(3, 5), 16);
+  const b = parseInt(s.slice(5, 7), 16);
+  const a = parseInt(s.slice(7, 9), 16) / 255;
+  return `rgba(${r}, ${g}, ${b}, ${Number(a.toFixed(4))})`;
 }
 
 export function cssVarToHex(varName: string): string | null {
@@ -42,9 +60,10 @@ export function getTldrawTokenHex(token: string): string | null {
 export function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
   const s = toHexOrEmpty(hex);
   if (!s) return null;
-  const r = parseInt(s.slice(1, 3), 16);
-  const g = parseInt(s.slice(3, 5), 16);
-  const b = parseInt(s.slice(5, 7), 16);
+  const rgb = s.length === 9 ? s.slice(0, 7) : s;
+  const r = parseInt(rgb.slice(1, 3), 16);
+  const g = parseInt(rgb.slice(3, 5), 16);
+  const b = parseInt(rgb.slice(5, 7), 16);
   return { r, g, b };
 }
 

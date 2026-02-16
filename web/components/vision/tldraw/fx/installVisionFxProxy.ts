@@ -38,8 +38,9 @@ function setEditMode(editor: Editor, sourceId: TLShapeId, enabled: boolean): voi
   const s: any = editor.getShape(sourceId as any);
   if (!s) return;
   const meta = { ...(s.meta || {}) };
-  if (enabled) meta.nxFxEditMode = true;
-  else delete meta.nxFxEditMode;
+  // IMPORTANT: tldraw merges meta patches; omitting/deleting keys does not reliably clear them.
+  // Use explicit boolean so toggling edit mode is always reversible.
+  meta.nxFxEditMode = enabled ? true : false;
   editor.updateShapes([{ id: sourceId as any, type: s.type, meta } as any]);
 }
 

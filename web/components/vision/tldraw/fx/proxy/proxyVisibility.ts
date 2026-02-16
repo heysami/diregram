@@ -37,8 +37,8 @@ export function setProxyReadyFlag(editor: Editor, source: any, ready: boolean): 
     const prev = Boolean(meta.nxFxProxyReady);
     const next = Boolean(ready);
     if (prev === next) return;
-    if (next) meta.nxFxProxyReady = true;
-    else delete meta.nxFxProxyReady;
+    // IMPORTANT: tldraw merges meta patches; omitting/deleting keys does not reliably clear them.
+    meta.nxFxProxyReady = next ? true : false;
     editor.updateShapes([{ id: source.id, type: source.type, meta } as any]);
   } catch {
     // ignore

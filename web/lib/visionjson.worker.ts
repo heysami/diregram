@@ -1,7 +1,7 @@
-import { defaultVisionDoc, parseVisionJsonPayload } from './visionjson';
+import { defaultVisionDoc, parseVisionJsonPayload, type VisionDoc } from './visionjson';
 
 type InMsg = { seq: number; payload: string | null };
-type OutMsg = { seq: number; doc: ReturnType<typeof defaultVisionDoc>; ok: boolean };
+type OutMsg = { seq: number; doc: VisionDoc; ok: boolean };
 
 // Web Worker entry. Parses/validates visionjson off the main thread.
 self.onmessage = (ev: MessageEvent<InMsg>) => {

@@ -15,18 +15,22 @@ export type TldrawTileEditorValue = {
 export function TldrawTileEditor({
   initialSnapshot,
   sessionStorageKey,
+  thumbOutPx,
   onChange,
   onMountEditor,
 }: {
   initialSnapshot: Partial<TLEditorSnapshot> | null;
   /** Where we keep per-user session state (camera/selection). */
   sessionStorageKey: string;
+  /** Output size for thumbnail PNG (square). */
+  thumbOutPx?: number;
   onChange: (next: TldrawTileEditorValue) => void;
   onMountEditor?: (editor: Editor) => void;
 }) {
   const { store, shapeUtils, uiOverrides, components, getShapeVisibility, onMount } = useTldrawTileController({
     initialSnapshot,
     sessionStorageKey,
+    thumbOutPx,
     onChange,
     onMountEditor,
   });
@@ -40,6 +44,7 @@ export function TldrawTileEditor({
         overrides={uiOverrides}
         components={components}
         getShapeVisibility={getShapeVisibility as any}
+        options={{ maxPages: 1 } as any}
       />
     </div>
   );

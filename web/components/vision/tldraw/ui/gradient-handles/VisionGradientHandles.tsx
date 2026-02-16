@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import { useEditor, useValue } from 'tldraw';
 import { clamp01 } from '@/components/vision/tldraw/ui/gradient-handles/math';
 import { useVisionGradientUiState } from '@/components/vision/tldraw/ui/gradient-handles/visionGradientUiStore';
+import { parseFillLayers, parseStrokeLayers, serializeFillLayers, serializeStrokeLayers } from '@/components/vision/tldraw/paint/nxPaintLayers';
 
 function isVisionGradientShape(shape: any) {
   if (!shape) return false;
@@ -34,7 +35,14 @@ export function VisionGradientHandles() {
       if (String(shape.id) !== String(gradientUi.shapeId)) return null;
 
       const paint = gradientUi.paint;
-      const mode = String(paint === 'fill' ? shape.props?.fillMode : shape.props?.strokeMode) || 'solid';
+      const layerId = String((gradientUi as any).layerId || '');
+      const legacyMode = String(paint === 'fill' ? shape.props?.fillMode : shape.props?.strokeMode) || 'solid';
+      const layers =
+        paint === 'fill'
+          ? parseFillLayers(shape.props?.fills) || null
+          : (parseStrokeLayers(shape.props?.strokes) as any) || null;
+      const activeLayer = layerId && layers ? (layers as any[]).find((l) => String(l?.id || '') === layerId) : null;
+      const mode = String(activeLayer?.mode || legacyMode) || 'solid';
       if (mode !== 'linear') return null;
 
       // Important: tldraw "screen" coordinates are relative to the editor container.
@@ -49,10 +57,14 @@ export function VisionGradientHandles() {
 
       const prefix = paint === 'fill' ? 'fillG' : 'strokeG';
       const legacy = { gx0: shape.props?.gx0, gy0: shape.props?.gy0, gx1: shape.props?.gx1, gy1: shape.props?.gy1 };
-      const gx0 = clamp01(Number(shape.props?.[`${prefix}x0`] ?? legacy.gx0 ?? 0));
-      const gy0 = clamp01(Number(shape.props?.[`${prefix}y0`] ?? legacy.gy0 ?? 0));
-      const gx1 = clamp01(Number(shape.props?.[`${prefix}x1`] ?? legacy.gx1 ?? 1));
-      const gy1 = clamp01(Number(shape.props?.[`${prefix}y1`] ?? legacy.gy1 ?? 0));
+      const legacyGx0 = clamp01(Number(shape.props?.[`${prefix}x0`] ?? legacy.gx0 ?? 0));
+      const legacyGy0 = clamp01(Number(shape.props?.[`${prefix}y0`] ?? legacy.gy0 ?? 0));
+      const legacyGx1 = clamp01(Number(shape.props?.[`${prefix}x1`] ?? legacy.gx1 ?? 1));
+      const legacyGy1 = clamp01(Number(shape.props?.[`${prefix}y1`] ?? legacy.gy1 ?? 0));
+      const gx0 = clamp01(Number(activeLayer?.gx0 ?? legacyGx0));
+      const gy0 = clamp01(Number(activeLayer?.gy0 ?? legacyGy0));
+      const gx1 = clamp01(Number(activeLayer?.gx1 ?? legacyGx1));
+      const gy1 = clamp01(Number(activeLayer?.gy1 ?? legacyGy1));
 
       const t = editor.getShapePageTransform(shape.id);
       const s0 = editor.pageToScreen(t.applyToPoint({ x: gx0 * w, y: gy0 * h }));
@@ -60,9 +72,9 @@ export function VisionGradientHandles() {
       // Convert to window coordinates for a fixed overlay.
       const p0 = { x: rect.left + Number(s0.x || 0), y: rect.top + Number(s0.y || 0) };
       const p1 = { x: rect.left + Number(s1.x || 0), y: rect.top + Number(s1.y || 0) };
-      return { shape, w, h, p0, p1, rect: { left: rect.left, top: rect.top }, paint };
+      return { shape, w, h, p0, p1, rect: { left: rect.left, top: rect.top }, paint, layerId: layerId || null };
     },
-    [editor, gradientUi?.shapeId, gradientUi?.paint],
+    [editor, gradientUi?.shapeId, gradientUi?.paint, (gradientUi as any)?.layerId],
   );
 
   const begin = useCallback(
@@ -90,6 +102,7 @@ export function VisionGradientHandles() {
       if (!shape) return;
       const paint = (active as any)?.paint as 'fill' | 'stroke' | undefined;
       if (!paint) return;
+      const layerId = String((active as any)?.layerId || '');
       const w = Math.max(1, Number(shape.props?.w || 1));
       const h = Math.max(1, Number(shape.props?.h || 1));
 
@@ -102,11 +115,32 @@ export function VisionGradientHandles() {
       const gx = clamp01(Number(local.x || 0) / w);
       const gy = clamp01(Number(local.y || 0) / h);
 
-      const keyX = (paint === 'fill' ? 'fillG' : 'strokeG') + (which === 'g0' ? 'x0' : 'x1');
-      const keyY = (paint === 'fill' ? 'fillG' : 'strokeG') + (which === 'g0' ? 'y0' : 'y1');
-      const patch = { [keyX]: gx, [keyY]: gy } as any;
+      let patch: any = null;
+      if (layerId) {
+        if (paint === 'fill') {
+          const layers = parseFillLayers(shape.props?.fills) || [];
+          const idx = layers.findIndex((l) => String((l as any)?.id || '') === layerId);
+          if (idx >= 0) {
+            const prev = layers[idx] as any;
+            layers[idx] = { ...prev, ...(which === 'g0' ? { gx0: gx, gy0: gy } : { gx1: gx, gy1: gy }) };
+            patch = { fills: serializeFillLayers(layers) };
+          }
+        } else {
+          const layers = parseStrokeLayers(shape.props?.strokes) || [];
+          const idx = layers.findIndex((l) => String((l as any)?.id || '') === layerId);
+          if (idx >= 0) {
+            const prev = layers[idx] as any;
+            layers[idx] = { ...prev, ...(which === 'g0' ? { gx0: gx, gy0: gy } : { gx1: gx, gy1: gy }) };
+            patch = { strokes: serializeStrokeLayers(layers as any) };
+          }
+        }
+      } else {
+        const keyX = (paint === 'fill' ? 'fillG' : 'strokeG') + (which === 'g0' ? 'x0' : 'x1');
+        const keyY = (paint === 'fill' ? 'fillG' : 'strokeG') + (which === 'g0' ? 'y0' : 'y1');
+        patch = { [keyX]: gx, [keyY]: gy } as any;
+      }
       try {
-        editor.updateShapes([{ id: shape.id, type: shape.type, props: patch } as any]);
+        if (patch) editor.updateShapes([{ id: shape.id, type: shape.type, props: patch } as any]);
       } catch {
         // ignore
       }

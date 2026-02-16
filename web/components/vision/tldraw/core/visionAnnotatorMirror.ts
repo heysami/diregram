@@ -23,6 +23,10 @@ function stripCoreMeta(meta: any): any {
   } catch {
     // ignore
   }
+  // IMPORTANT: strip runtime-only FX flags so mirrored clones don't get "stuck" suppressed
+  // or show proxy placeholders. tldraw merges meta patches, so write explicit booleans.
+  (m as any).nxFxProxyReady = false;
+  (m as any).nxFxEditMode = false;
   return m;
 }
 
@@ -103,7 +107,7 @@ export function syncAnnotatorMirror(editor: Editor, ids: { assetId: string; anno
         x: 0,
         y: 0,
         isLocked: true,
-        meta: { [NX_MIRROR_ROOT_META_KEY]: true },
+        meta: { [NX_MIRROR_ROOT_META_KEY]: true, nxName: 'Mirrored Asset' },
       } as any);
     } catch {
       // ignore
@@ -114,11 +118,27 @@ export function syncAnnotatorMirror(editor: Editor, ids: { assetId: string; anno
   const mirrorRootId = coerceId(mirrorRoot?.id);
   if (!mirrorRootId) return;
 
+  // Backfill name for older docs.
+  try {
+    const s: any = getShape(editor, mirrorRootId);
+    const m: any = s?.meta && typeof s.meta === 'object' ? { ...(s.meta as any) } : {};
+    if (!(typeof m.nxName === 'string' && m.nxName.trim())) {
+      m.nxName = 'Mirrored Asset';
+      safeUpdateShapes(editor, [{ id: s.id, type: s.type, meta: m } as any]);
+    }
+  } catch {
+    // ignore
+  }
+
   const shouldMirror = (src: any): boolean => {
     if (!src) return false;
     if (coerceId(src.id) === assetId) return false; // don't clone root frame
     if (src?.meta?.[NX_MIRROR_SOURCE_META_KEY]) return false;
     if (src?.meta?.[NX_CORE_SECTION_META_KEY]) return false;
+    // Never mirror internal FX proxy shapes; they depend on in-memory raster caches and will
+    // otherwise show "Rendering effects…" placeholders in the mirror.
+    if (coerceId(src.type) === 'nxfx') return false;
+    if (src?.meta?.nxFxProxy?.sourceId) return false;
     return true;
   };
 

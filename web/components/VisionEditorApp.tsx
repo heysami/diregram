@@ -40,7 +40,7 @@ export function VisionEditorApp() {
   // Use a stable per-file placeholder room until we know the real room name.
   const activeRoomName = activeFile?.roomName || (fileIdFromUrl ? `file-${fileIdFromUrl}` : 'vision-demo');
 
-  const { doc: yDoc, provider, status, undo, redo, canUndo, canRedo, connectedRoomName, synced } = useYjs(activeRoomName);
+  const { doc: yDoc, provider, status, connectedRoomName, synced } = useYjs(activeRoomName);
 
   const { visionDoc, setVisionDoc, rawMarkdownPreview, rawMarkdownChars } = useVisionDocStateFromYjs(yDoc);
   const { scheduleWriteVisionDoc } = useVisionDocWriterToYjs(yDoc);
@@ -203,10 +203,6 @@ export function VisionEditorApp() {
       doc={visionDoc}
       onChange={handleVisionChange}
       onBack={() => router.push('/workspace')}
-      onUndo={undo}
-      onRedo={redo}
-      canUndo={canUndo}
-      canRedo={canRedo}
       rawMarkdownPreview={rawMarkdownPreview}
       rawMarkdownChars={rawMarkdownChars}
       supabaseMode={supabaseMode}

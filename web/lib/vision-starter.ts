@@ -4,10 +4,10 @@ import { defaultVisionDoc, saveVisionDoc } from '@/lib/visionjson';
 /**
  * Minimal starter content for a Vision document.
  *
- * v1: a nexus-doc header + a single visionjson block (sparse 24×24 grid).
+ * v2: a nexus-doc header + a single visionjson block (tldraw canvas snapshot).
  */
 export function makeStarterVisionMarkdown(): string {
-  const withHeader = upsertHeader('', { kind: 'vision', version: 1 });
+  const withHeader = upsertHeader('', { kind: 'vision', version: 2 });
   return saveVisionDoc(withHeader, defaultVisionDoc());
 }
 

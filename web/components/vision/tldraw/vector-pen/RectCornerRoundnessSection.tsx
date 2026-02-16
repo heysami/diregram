@@ -9,12 +9,15 @@ export function RectCornerRoundnessSection({
   editable,
   selectedNodeId,
   vectorPenActive,
+  embedded,
 }: {
   editor: Editor;
   shape: any;
   editable: NxEditablePathData | null;
   selectedNodeId: string | null;
   vectorPenActive: boolean;
+  /** Render without outer section wrapper/title (for grouping under another header). */
+  embedded?: boolean;
 }) {
   if (!editable || editable.kind !== 'rect') return null;
   if (!selectedNodeId) return null;
@@ -55,36 +58,33 @@ export function RectCornerRoundnessSection({
     }
   };
 
+  const body = (
+    <div className="nx-vsp-group">
+      <div className="nx-vsp-stack">
+        <div className="nx-vsp-row">
+          <div className="nx-vsp-icon">R</div>
+          <div className="text-xs opacity-70 w-[92px]">Roundness ({label})</div>
+          <input className="flex-1" type="range" min={0} max={maxR} step={1} value={val} onChange={(e) => apply(Number((e.target as any).value || 0) || 0)} />
+          <input
+            className="nx-vsp-number w-[76px]"
+            type="number"
+            min={0}
+            max={maxR}
+            value={val}
+            onChange={(e) => apply(Number((e.target as any).value || 0) || 0)}
+            title="Corner radius"
+          />
+        </div>
+        <div className="text-[11px] opacity-70">Click a corner node to edit that corner’s roundness. Use Vector Pen to add nodes.</div>
+      </div>
+    </div>
+  );
+
+  if (embedded) return body;
   return (
     <div className="nx-vsp-section">
       <div className="nx-vsp-title">Vector</div>
-      <div className="nx-vsp-group">
-        <div className="nx-vsp-stack">
-          <div className="nx-vsp-row">
-            <div className="nx-vsp-icon">R</div>
-            <div className="text-xs opacity-70 w-[92px]">Roundness ({label})</div>
-            <input
-              className="flex-1"
-              type="range"
-              min={0}
-              max={maxR}
-              step={1}
-              value={val}
-              onChange={(e) => apply(Number((e.target as any).value || 0) || 0)}
-            />
-            <input
-              className="nx-vsp-number w-[76px]"
-              type="number"
-              min={0}
-              max={maxR}
-              value={val}
-              onChange={(e) => apply(Number((e.target as any).value || 0) || 0)}
-              title="Corner radius"
-            />
-          </div>
-          <div className="text-[11px] opacity-70">Click a corner node to edit that corner’s roundness. Use Vector Pen to add nodes.</div>
-        </div>
-      </div>
+      {body}
     </div>
   );
 }

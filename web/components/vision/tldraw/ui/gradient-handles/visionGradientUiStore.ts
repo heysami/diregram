@@ -9,9 +9,11 @@ export type VisionGradientUiState = {
   shapeId: string | null;
   /** Which paint is being edited (fill vs outline). */
   paint: VisionGradientPaintTarget | null;
+  /** Optional: active layer id within the stack. When null, falls back to legacy per-shape props. */
+  layerId?: string | null;
 };
 
-let state: VisionGradientUiState = { shapeId: null, paint: null };
+let state: VisionGradientUiState = { shapeId: null, paint: null, layerId: null };
 const listeners = new Set<() => void>();
 
 function emit() {
@@ -25,12 +27,12 @@ function emit() {
 }
 
 export function setVisionGradientUiState(next: VisionGradientUiState) {
-  state = { shapeId: next.shapeId || null, paint: next.paint || null };
+  state = { shapeId: next.shapeId || null, paint: next.paint || null, layerId: next.layerId || null };
   emit();
 }
 
 export function clearVisionGradientUiState() {
-  state = { shapeId: null, paint: null };
+  state = { shapeId: null, paint: null, layerId: null };
   emit();
 }
 

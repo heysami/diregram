@@ -40,7 +40,8 @@ export function ensureCoreFrames(editor: Editor): { assetId: string; thumbId: st
         x,
         y,
         props: { w, h, name },
-        meta: { [NX_CORE_SECTION_META_KEY]: section },
+        // NOTE: our Layers panel shows `meta.nxName`, not frame `props.name`.
+        meta: { [NX_CORE_SECTION_META_KEY]: section, nxName: name },
       } as any);
     } catch {
       // ignore
@@ -52,6 +53,29 @@ export function ensureCoreFrames(editor: Editor): { assetId: string; thumbId: st
   const thumbId = existing.thumbId || (created.thumbId = make('thumb', -80, -80, 880, 880, 'Thumbnail'));
   const assetId = existing.assetId || (created.assetId = make('asset', 0, 0, 720, 720, 'Asset'));
   const annotatorId = existing.annotatorId || (created.annotatorId = make('annotator', 920, 0, 720, 720, 'Annotator'));
+
+  // Backfill names for older docs (they used frame props.name only).
+  try {
+    const want: Array<{ id: string | null; name: string }> = [
+      { id: thumbId, name: 'Thumbnail' },
+      { id: assetId, name: 'Asset' },
+      { id: annotatorId, name: 'Annotator' },
+    ];
+    const updates: any[] = [];
+    for (const w of want) {
+      const id = coerceId(w.id);
+      if (!id) continue;
+      const s: any = getShape(editor, id);
+      if (!s) continue;
+      const m: any = { ...(s.meta || {}) };
+      if (typeof m.nxName === 'string' && m.nxName.trim()) continue;
+      m.nxName = w.name;
+      updates.push({ id: s.id, type: s.type, meta: m });
+    }
+    if (updates.length) (editor as any).updateShapes?.(updates as any);
+  } catch {
+    // ignore
+  }
 
   // If we just created the asset, best-effort nest it into the thumb frame so users can
   // visually "include the asset inside the thumbnail" by default.

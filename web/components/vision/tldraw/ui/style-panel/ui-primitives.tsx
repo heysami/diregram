@@ -1,8 +1,20 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { toHexOrEmpty } from '@/components/vision/tldraw/ui/style-panel/color-utils';
+import { toHex8OrEmpty } from '@/components/vision/tldraw/ui/style-panel/color-utils';
 import { clamp01, normalizeStops, type GradientStop } from '@/components/vision/tldraw/lib/gradient-stops';
+
+function alphaHexFrom01(a01: number) {
+  const a = Math.max(0, Math.min(255, Math.round((Number(a01) || 0) * 255)));
+  return a.toString(16).padStart(2, '0');
+}
+
+function splitHex8(v: string) {
+  const hex8 = toHex8OrEmpty(v) || '#000000ff';
+  const rgb = hex8.slice(0, 7);
+  const a = parseInt(hex8.slice(7, 9), 16) / 255;
+  return { hex8, rgb, a };
+}
 
 export function Swatch({
   color,
@@ -46,15 +58,20 @@ export function StopSwatch({
   onPick: (hex: string) => void;
 }) {
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const { rgb } = splitHex8(color);
   return (
     <>
       <Swatch color={color} title={title} onClick={() => inputRef.current?.click()} />
       <input
         ref={inputRef}
         type="color"
-        value={color}
+        value={rgb}
         className="sr-only"
-        onChange={(e) => onPick(String(e.target.value || color))}
+        onChange={(e) => {
+          const nextRgb = String(e.target.value || rgb);
+          const { a } = splitHex8(color);
+          onPick(`${nextRgb}${alphaHexFrom01(a)}`);
+        }}
       />
     </>
   );
@@ -76,9 +93,9 @@ export function ColorHexField({
       className="nx-vsp-field tabular-nums disabled:opacity-60"
       value={value}
       disabled={disabled}
-      placeholder={placeholder || '#rrggbb'}
+      placeholder={placeholder || '#rrggbbaa'}
       onChange={(e) => {
-        const hex = toHexOrEmpty(e.target.value);
+        const hex = toHex8OrEmpty(e.target.value);
         if (!hex) return;
         onCommitHex(hex);
       }}
@@ -104,24 +121,42 @@ export function ColorPickerRow({
   disabled?: boolean;
 }) {
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const { hex8, rgb, a } = splitHex8(mixed ? '#000000ff' : color);
+  const alphaPct = Math.round(a * 100);
   return (
     <div className="nx-vsp-row">
       <div className="nx-vsp-icon">{icon}</div>
       <Swatch
-        color={color}
+        color={mixed ? '#00000000' : hex8}
         mixed={mixed}
         onClick={() => (disabled ? null : inputRef.current?.click())}
-        title={mixed ? 'Mixed' : color}
+        title={mixed ? 'Mixed' : hex8}
       />
       <input
         ref={inputRef}
         type="color"
-        value={mixed ? '#000000' : color}
-        onChange={(e) => onPick(String(e.target.value || '#000000'))}
+        value={rgb}
+        onChange={(e) => {
+          const nextRgb = String(e.target.value || rgb);
+          onPick(`${nextRgb}${alphaHexFrom01(a)}`);
+        }}
         className="sr-only"
         disabled={disabled}
       />
-      <ColorHexField value={mixed ? '' : color} placeholder={placeholder} onCommitHex={onCommitHex} disabled={disabled} />
+      <ColorHexField value={mixed ? '' : hex8} placeholder={placeholder} onCommitHex={onCommitHex} disabled={disabled} />
+      <input
+        className="nx-vsp-alpha"
+        type="range"
+        min={0}
+        max={100}
+        value={alphaPct}
+        onChange={(e) => {
+          const nextA = Math.max(0, Math.min(100, Number(e.target.value || 100))) / 100;
+          onPick(`${rgb}${alphaHexFrom01(nextA)}`);
+        }}
+        disabled={disabled || mixed}
+        title="Alpha"
+      />
     </div>
   );
 }
@@ -158,7 +193,7 @@ export function GradientStopsEditor({
   };
 
   const setColorAt = (idx: number, color: string) => {
-    const hex = toHexOrEmpty(color) || normStops[idx]?.color || '#000000';
+    const hex = toHex8OrEmpty(color) || normStops[idx]?.color || '#000000ff';
     const next = normStops.map((s, i) => (i === idx ? { ...s, color: hex } : s));
     commit(next);
   };
@@ -229,7 +264,9 @@ export function GradientStopsEditor({
   }, [dragging, disabled, barRef.current]);
 
   const sel = normStops[selected] || normStops[0];
-  const selHex = sel?.color || '#000000';
+  const selHex = sel?.color || '#000000ff';
+  const { rgb: selRgb, a: selA } = splitHex8(selHex);
+  const selAlphaPct = Math.round(selA * 100);
 
   return (
     <div className="nx-vsp-row">
@@ -259,10 +296,26 @@ export function GradientStopsEditor({
           <input
             type="color"
             className="nx-vsp-gradColor"
-            value={selHex}
-            onChange={(e) => setColorAt(selected, String(e.target.value || selHex))}
+            value={selRgb}
+            onChange={(e) => {
+              const nextRgb = String(e.target.value || selRgb);
+              setColorAt(selected, `${nextRgb}${alphaHexFrom01(selA)}`);
+            }}
             disabled={disabled}
             title="Stop color"
+          />
+          <input
+            className="nx-vsp-alpha"
+            type="range"
+            min={0}
+            max={100}
+            value={selAlphaPct}
+            onChange={(e) => {
+              const nextA = Math.max(0, Math.min(100, Number(e.target.value || 100))) / 100;
+              setColorAt(selected, `${selRgb}${alphaHexFrom01(nextA)}`);
+            }}
+            disabled={disabled}
+            title="Stop alpha"
           />
           <input
             className="nx-vsp-number w-[92px]"
@@ -278,7 +331,7 @@ export function GradientStopsEditor({
             className="nx-vsp-field w-[120px] tabular-nums"
             value={selHex}
             onChange={(e) => {
-              const hex = toHexOrEmpty(e.target.value);
+              const hex = toHex8OrEmpty(e.target.value);
               if (!hex) return;
               setColorAt(selected, hex);
             }}

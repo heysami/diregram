@@ -48,6 +48,7 @@ export function NxRectCornersSection({
   rbl,
   onSetUniformRadius,
   onSetCorners,
+  embedded,
 }: {
   radiusUniform: boolean;
   radius: number;
@@ -57,13 +58,14 @@ export function NxRectCornersSection({
   rbl: number;
   onSetUniformRadius: (r: number) => void;
   onSetCorners: (next: { rtl: number; rtr: number; rbr: number; rbl: number; uniform: boolean }) => void;
+  /** Render without outer section wrapper/title (for grouping under another header). */
+  embedded?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const corners = useMemo(() => ({ rtl, rtr, rbr, rbl }), [rtl, rtr, rbr, rbl]);
 
-  return (
-    <div className="nx-vsp-section">
-      <div className="nx-vsp-title">Roundness</div>
+  const body = (
+    <>
       <div className="nx-vsp-group">
         <div className="nx-vsp-stack">
           <div className="nx-vsp-row">
@@ -88,10 +90,7 @@ export function NxRectCornersSection({
       </div>
 
       {open ? (
-        <Overlay
-          title="Corner radii"
-          onClose={() => setOpen(false)}
-        >
+        <Overlay title="Corner radii" onClose={() => setOpen(false)}>
           <div className="nx-vsp-stack">
             <label className="nx-vsp-overlayLabel">
               <input
@@ -137,6 +136,14 @@ export function NxRectCornersSection({
           </div>
         </Overlay>
       ) : null}
+    </>
+  );
+
+  if (embedded) return body;
+  return (
+    <div className="nx-vsp-section">
+      <div className="nx-vsp-title">Roundness</div>
+      {body}
     </div>
   );
 }

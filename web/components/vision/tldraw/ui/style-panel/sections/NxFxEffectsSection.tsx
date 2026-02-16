@@ -1,6 +1,7 @@
 'use client';
 
-import { Plus, Trash2, ArrowUp, ArrowDown, Eye, EyeOff } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Eye, EyeOff, GripVertical, Plus, Trash2 } from 'lucide-react';
 import type { NxFxDropShadow, NxFxEffect, NxFxInnerShadow, NxFxStack } from '@/components/vision/tldraw/fx/nxfxTypes';
 
 function clamp01(n: number) {
@@ -42,14 +43,35 @@ export function NxFxEffectsSection({
   onAddInnerShadow: () => void;
 }) {
   const effects = fx.effects || [];
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const sel = effects.find((e) => e.id === selectedId) || effects[0] || null;
+  const draggingRef = useRef<number | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
 
-  const move = (idx: number, dir: -1 | 1) => {
-    const j = idx + dir;
-    if (j < 0 || j >= effects.length) return;
-    const next = [...effects];
-    const tmp = next[idx];
-    next[idx] = next[j];
-    next[j] = tmp;
+  useEffect(() => {
+    if (selectedId && effects.some((e) => e.id === selectedId)) return;
+    setSelectedId(effects[0]?.id || null);
+  }, [effects, selectedId]);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      const el = menuRef.current;
+      if (!el) return;
+      if (el.contains(e.target as any)) return;
+      setMenuOpen(false);
+    };
+    window.addEventListener('mousedown', onDown, { passive: true });
+    return () => window.removeEventListener('mousedown', onDown);
+  }, [menuOpen]);
+
+  const move = (from: number, to: number) => {
+    if (from === to) return;
+    if (from < 0 || to < 0 || from >= effects.length || to >= effects.length) return;
+    const next = effects.slice();
+    const [it] = next.splice(from, 1);
+    next.splice(to, 0, it);
     onChangeFx({ ...fx, effects: next });
   };
 
@@ -136,48 +158,111 @@ export function NxFxEffectsSection({
 
   return (
     <div className="nx-vsp-section">
-      <div className="nx-vsp-title">Effects</div>
-      <div className="nx-vsp-group">
-        <div className="nx-vsp-row">
-          <div className="nx-vsp-icon">
+      <div className="nx-vsp-sectionHeader">
+        <div className="nx-vsp-title">Effects</div>
+        <div className="nx-vsp-addWrap" ref={menuRef}>
+          <button type="button" className="nx-vsp-iconBtn" onClick={() => setMenuOpen((v) => !v)} title="Add effect">
             <Plus size={14} />
-          </div>
-          <button type="button" className="nx-vsp-miniBtn flex-1" onClick={onAddDropShadow}>
-            Add drop shadow
           </button>
-          <button type="button" className="nx-vsp-miniBtn flex-1" onClick={onAddInnerShadow}>
-            Add inner shadow
-          </button>
+          {menuOpen ? (
+            <div className="nx-vsp-menu">
+              <button
+                type="button"
+                className="nx-vsp-menuItem"
+                onClick={() => {
+                  onAddDropShadow();
+                  setMenuOpen(false);
+                }}
+              >
+                <span className="nx-vsp-layerType">Drop shadow</span>
+              </button>
+              <button
+                type="button"
+                className="nx-vsp-menuItem"
+                onClick={() => {
+                  onAddInnerShadow();
+                  setMenuOpen(false);
+                }}
+              >
+                <span className="nx-vsp-layerType">Inner shadow</span>
+              </button>
+            </div>
+          ) : null}
         </div>
       </div>
 
-      {effects.map((e, idx) => (
-        <div key={e.id} className="nx-vsp-group">
-          <div className="nx-vsp-row">
-            <div className="nx-vsp-icon">{e.kind === 'dropShadow' ? 'DS' : 'IS'}</div>
-            <button type="button" className="nx-vsp-miniBtn" onClick={() => toggleEnabled(e.id)} title={e.enabled ? 'Disable' : 'Enable'}>
-              {e.enabled ? <Eye size={14} /> : <EyeOff size={14} />}
-            </button>
-            <div className="nx-vsp-hint flex-1">{e.kind === 'dropShadow' ? 'Drop shadow' : 'Inner shadow'}</div>
-            <button type="button" className="nx-vsp-miniBtn" onClick={() => move(idx, -1)} title="Move up" disabled={idx === 0}>
-              <ArrowUp size={14} />
-            </button>
-            <button
-              type="button"
-              className="nx-vsp-miniBtn"
-              onClick={() => move(idx, 1)}
-              title="Move down"
-              disabled={idx === effects.length - 1}
-            >
-              <ArrowDown size={14} />
-            </button>
-            <button type="button" className="nx-vsp-miniBtn" onClick={() => remove(e.id)} title="Delete">
-              <Trash2 size={14} />
-            </button>
-          </div>
-          {renderEffectControls(e)}
+      <div className="nx-vsp-group">
+        <div className="nx-vsp-layerList">
+          {effects.map((e, idx) => {
+            const enabled = e.enabled !== false;
+            const isSel = sel ? sel.id === e.id : false;
+            const label = e.kind === 'dropShadow' ? 'Drop shadow' : 'Inner shadow';
+            return (
+              <div
+                key={e.id}
+                className={isSel ? 'nx-vsp-layerItem is-selected' : 'nx-vsp-layerItem'}
+                onClick={() => setSelectedId(e.id)}
+                onDragOver={(ev) => {
+                  ev.preventDefault();
+                  const from = draggingRef.current;
+                  if (from === null) return;
+                  const to = idx;
+                  if (from === to) return;
+                  move(from, to);
+                  draggingRef.current = to;
+                }}
+                onDrop={() => {}}
+              >
+                <span
+                  className="nx-vsp-dragHandle"
+                  draggable
+                  onDragStart={(ev) => {
+                    draggingRef.current = idx;
+                    try {
+                      ev.dataTransfer.effectAllowed = 'move';
+                      ev.dataTransfer.setData('text/plain', String(idx));
+                    } catch {
+                      // ignore
+                    }
+                  }}
+                  onDragEnd={() => {
+                    draggingRef.current = null;
+                  }}
+                  title="Drag to reorder"
+                >
+                  <GripVertical size={16} />
+                </span>
+                <span className="nx-vsp-layerType">{label}</span>
+                <span className="nx-vsp-layerSpacer" />
+                <button
+                  type="button"
+                  className="nx-vsp-iconBtn"
+                  onClick={(ev) => {
+                    ev.stopPropagation();
+                    toggleEnabled(e.id);
+                  }}
+                  title={enabled ? 'Hide' : 'Show'}
+                >
+                  {enabled ? <Eye size={14} /> : <EyeOff size={14} />}
+                </button>
+                <button
+                  type="button"
+                  className="nx-vsp-iconBtn"
+                  onClick={(ev) => {
+                    ev.stopPropagation();
+                    remove(e.id);
+                  }}
+                  title="Delete"
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            );
+          })}
         </div>
-      ))}
+      </div>
+
+      {sel ? renderEffectControls(sel) : null}
     </div>
   );
 }

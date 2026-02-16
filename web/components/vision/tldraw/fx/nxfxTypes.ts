@@ -306,7 +306,9 @@ export function readNxFxFromMeta(meta: any): NxFxStack | null {
 export function writeNxFxToMeta(meta: any, fx: NxFxStack | null): any {
   const nextMeta: any = { ...(meta || {}) };
   if (!fx || isNxFxEmpty(fx)) {
-    delete nextMeta[NX_FX_META_KEY];
+    // IMPORTANT: tldraw merges meta patches; omitting/deleting keys does not reliably clear them.
+    // Use an explicit JSON value so we can "unset" existing fx on a shape.
+    nextMeta[NX_FX_META_KEY] = null;
     return nextMeta;
   }
   // IMPORTANT: tldraw requires meta to be strictly JSON-serializable (no `undefined`, no non-finite numbers).

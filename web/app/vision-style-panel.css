@@ -26,6 +26,128 @@
   opacity: 0.8;
 }
 
+.nx-vsp-sectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.nx-vsp-addWrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.nx-vsp-iconBtn {
+  height: 28px;
+  width: 28px;
+  border-radius: 9px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  background: rgba(255,255,255,0.9);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.nx-vsp-menu {
+  position: absolute;
+  top: 32px;
+  right: 0;
+  z-index: 50;
+  min-width: 180px;
+  border-radius: 12px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  background: var(--tl-color-panel, rgba(255,255,255,0.98));
+  box-shadow: var(--tl-shadow-3, 0 18px 50px rgba(0,0,0,0.18));
+  overflow: hidden;
+}
+
+.nx-vsp-menuItem {
+  width: 100%;
+  height: 34px;
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  text-align: left;
+  background: transparent;
+}
+
+.nx-vsp-menuItem:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.nx-vsp-layerList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.nx-vsp-layerItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 8px;
+  border-radius: 10px;
+  border: 1px solid rgba(0, 0, 0, 0.10);
+  background: rgba(255,255,255,0.75);
+  user-select: none;
+}
+
+.nx-vsp-layerItem.is-selected {
+  outline: 2px solid var(--color-selected, rgba(0, 112, 243, 0.35));
+  outline-offset: 1px;
+}
+
+.nx-vsp-dragHandle {
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.65;
+  cursor: grab;
+}
+
+.nx-vsp-layerType {
+  font-size: 12px;
+  font-weight: 600;
+  opacity: 0.85;
+}
+
+.nx-vsp-layerSpacer {
+  flex: 1 1 auto;
+}
+
+.nx-vsp-btnGroup {
+  display: inline-flex;
+  border-radius: 10px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  overflow: hidden;
+  background: rgba(255,255,255,0.9);
+}
+
+.nx-vsp-btnGroupBtn {
+  width: 34px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+}
+
+.nx-vsp-btnGroupBtn.is-active {
+  background: rgba(0, 0, 0, 0.08);
+}
+
+.nx-vsp-btnGroupBtn + .nx-vsp-btnGroupBtn {
+  border-left: 1px solid rgba(0,0,0,0.10);
+}
+
 .nx-vsp-stack {
   display: flex;
   flex-direction: column;
@@ -93,6 +215,15 @@
   width: 100%;
   min-width: 0;
   display: block;
+}
+
+.nx-vsp-alpha {
+  accent-color: var(--color-selected, #1a73e8);
+  height: 18px;
+  width: 88px;
+  min-width: 64px;
+  flex: 0 0 auto;
+  opacity: 0.9;
 }
 
 .nx-vsp-swatch {

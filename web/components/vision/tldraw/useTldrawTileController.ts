@@ -20,7 +20,6 @@ import { NxFxShapeUtil } from '@/components/vision/tldraw/fx/NxFxShapeUtil';
 import { installVisionFxProxy } from '@/components/vision/tldraw/fx/installVisionFxProxy';
 import { installBooleanEditOnSelect } from '@/components/vision/tldraw/boolean/installBooleanEditOnSelect';
 import { installAutoConvertVisionShapes } from '@/components/vision/tldraw/installAutoConvertVisionShapes';
-import { addVectorPenTool, installVectorPenInteractions, vectorPenTranslations } from '@/components/vision/tldraw/vector-pen';
 import { VisionStylePanel } from '@/components/vision/tldraw/ui/VisionStylePanel';
 import { VisionHandles } from '@/components/vision/tldraw/ui/VisionHandles';
 import { VisionGradientHandles } from '@/components/vision/tldraw/ui/VisionGradientHandles';
@@ -40,7 +39,7 @@ function safeJsonParse<T = unknown>(s: string): T | null {
   }
 }
 
-async function exportThumb(editor: Editor): Promise<string | null> {
+async function exportThumb(editor: Editor, outPx: number): Promise<string | null> {
   try {
     const pageIds = editor.getCurrentPageShapeIds();
     const ids = Array.from(pageIds || []);
@@ -71,8 +70,8 @@ async function exportThumb(editor: Editor): Promise<string | null> {
       fr.readAsDataURL(blob);
     });
 
-    // Downscale to 24×24 for the Vision grid.
-    const out = await cropAndScaleDataUrl({ dataUrl, crop: { x: 0, y: 0, w: 1, h: 1 }, outPx: 24, fit: 'cover' });
+    const px = Number.isFinite(outPx) ? Math.max(16, Math.min(1024, Math.floor(outPx))) : 256;
+    const out = await cropAndScaleDataUrl({ dataUrl, crop: { x: 0, y: 0, w: 1, h: 1 }, outPx: px, fit: 'cover' });
     return out || null;
   } catch {
     return null;
@@ -82,6 +81,8 @@ async function exportThumb(editor: Editor): Promise<string | null> {
 export type UseTldrawTileControllerOpts = {
   initialSnapshot: Partial<TLEditorSnapshot> | null;
   sessionStorageKey: string;
+  /** Output size for thumbnail PNG (square). */
+  thumbOutPx?: number;
   onChange: (next: { snapshot: Partial<TLEditorSnapshot>; thumbPngDataUrl: string | null }) => void;
   onMountEditor?: (editor: Editor) => void;
 };
@@ -94,7 +95,7 @@ export function useTldrawTileController(opts: UseTldrawTileControllerOpts): {
   getShapeVisibility: (shape: any) => any;
   onMount: (editor: Editor) => void;
 } {
-  const { initialSnapshot, sessionStorageKey, onChange, onMountEditor } = opts;
+  const { initialSnapshot, sessionStorageKey, thumbOutPx = 256, onChange, onMountEditor } = opts;
 
   // IMPORTANT: keep these stable; unstable props can cause editor re-inits and hangs.
   const shapeUtils = useMemo(() => [...defaultShapeUtils, NXPathShapeUtil, NxRectShapeUtil, NxTextShapeUtil, NxFxShapeUtil], []);
@@ -145,15 +146,20 @@ export function useTldrawTileController(opts: UseTldrawTileControllerOpts): {
     () => ({
       tools: (_editor, tools) => {
         const filtered = filterVisionTools(tools as any) as any;
-        return addVectorPenTool(_editor, filtered);
+        return filtered;
       },
-      translations: vectorPenTranslations as any,
     }),
     [],
   );
 
   const components = useMemo<TLComponents>(
     () => ({
+      // Hide page UI + quick actions. The nested editor should feel like a single-canvas editor.
+      MenuPanel: null as any,
+      PageMenu: null as any,
+      QuickActions: null as any,
+      ActionsMenu: null as any,
+      NavigationPanel: null as any,
       StylePanel: VisionStylePanel as any,
       Handles: VisionHandles as any,
       InFrontOfTheCanvas: VisionGradientHandles as any,
@@ -261,7 +267,7 @@ export function useTldrawTileController(opts: UseTldrawTileControllerOpts): {
 
             const now = Date.now();
             const shouldThumb = now - (lastThumbAtRef.current || 0) > 6000;
-            const thumb = editor && shouldThumb ? await exportThumb(editor) : null;
+            const thumb = editor && shouldThumb ? await exportThumb(editor, thumbOutPx) : null;
             if (thumb) lastThumbAtRef.current = now;
             onChange({ snapshot: docOnly, thumbPngDataUrl: thumb });
           } catch {
@@ -371,11 +377,6 @@ export function useTldrawTileController(opts: UseTldrawTileControllerOpts): {
       try {
         // Always-on recompute for non-destructive booleans (must not depend on any panel being mounted).
         cleanups.push(installAutoRecomputeBooleans(editor));
-      } catch {
-        // ignore
-      }
-      try {
-        cleanups.push(installVectorPenInteractions(editor));
       } catch {
         // ignore
       }

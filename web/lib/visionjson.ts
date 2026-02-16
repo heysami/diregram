@@ -1,5 +1,10 @@
 type JsonObject = Record<string, unknown>;
 
+// ---------------------------------------------------------------------------
+// Legacy exports (v1 grid). Kept to avoid churn across the codebase while
+// Vision moves to v2 (canvas). Not used by the v2 parser/coercer.
+// ---------------------------------------------------------------------------
+
 export type VisionCellKind = 'vector' | 'ui' | 'image';
 
 export type VisionCropRectV1 = {
@@ -26,15 +31,7 @@ export type VisionExtraV1 = {
 };
 
 export type VisionImageInfoV1 = {
-  /**
-   * Supabase Storage object path (preferred in Supabase mode).
-   * Example: "vision/<userId>/<fileId>/<cellKey>/<uuid>.png"
-   */
   objectPath?: string | null;
-  /**
-   * Local-mode fallback: inline data URL.
-   * WARNING: can bloat `files.content` — keep images small.
-   */
   dataUrl?: string | null;
   width?: number;
   height?: number;
@@ -43,32 +40,37 @@ export type VisionImageInfoV1 = {
 export type VisionCellV1 = {
   kind: VisionCellKind;
   updatedAt: string;
-  /** Fabric canvas JSON (from `canvas.toJSON(...)`). */
   fabric?: unknown;
-  /** tldraw snapshot (document portion or full snapshot). */
   tldraw?: unknown;
-  /** Image info for image cells (and optionally for others). */
   image?: VisionImageInfoV1;
-  /** Small PNG data URL used for the 24×24 grid thumbnail. */
   thumb?: string;
-  /** Normalized crop defining what becomes `thumb`. */
   thumbCrop?: VisionCropRectV1;
-  /** Optional annotator overlay data. */
   annotator?: VisionAnnotatorV1;
-  /** Optional extra sections (brainstorm/reference only). */
   extras?: VisionExtraV1[];
-  /** Google font families used in this cell (best-effort). */
   fonts?: string[];
 };
 
 export type VisionDocV1 = {
   version: 1;
   gridSize: 24;
-  /** Sparse storage: only non-empty cells are present. */
   cells: Record<string, VisionCellV1>;
 };
 
-export type VisionDoc = VisionDocV1;
+/**
+ * Vision document schema.
+ *
+ * v2: a single tldraw canvas snapshot embedded in markdown under ```visionjson.
+ * Cards (and their nested vector editor state) live inside the tldraw document.
+ */
+export type VisionDocV2 = {
+  version: 2;
+  /** tldraw snapshot (typically document-only). */
+  tldraw?: unknown;
+  /** Best-effort updated timestamp (not required for correctness). */
+  updatedAt?: string;
+};
+
+export type VisionDoc = VisionDocV2 | VisionDocV1;
 
 export type LoadVisionDocResult =
   | { doc: VisionDoc; source: 'visionjson' }
@@ -86,128 +88,21 @@ function safeJsonParse(text: string): unknown {
   }
 }
 
-function isCellKind(x: unknown): x is VisionCellKind {
-  return x === 'vector' || x === 'ui' || x === 'image';
-}
-
-function asStringArray(x: unknown): string[] {
-  if (!Array.isArray(x)) return [];
-  return x.filter((v) => typeof v === 'string').map((s) => s.trim()).filter(Boolean);
-}
-
-function coerceCropRect(x: unknown): VisionCropRectV1 | undefined {
-  if (!x || typeof x !== 'object') return undefined;
-  const r = x as JsonObject;
-  const xx = Number(r.x);
-  const yy = Number(r.y);
-  const ww = Number(r.w);
-  const hh = Number(r.h);
-  if (![xx, yy, ww, hh].every((n) => Number.isFinite(n))) return undefined;
-  // Keep a small minimum size to avoid zero-area thumbs.
-  const min = 0.02;
-  const cx = Math.max(0, Math.min(1, xx));
-  const cy = Math.max(0, Math.min(1, yy));
-  const cw = Math.max(min, Math.min(1, ww));
-  const ch = Math.max(min, Math.min(1, hh));
-  // Clamp to bounds.
-  const w2 = Math.min(cw, 1 - cx);
-  const h2 = Math.min(ch, 1 - cy);
-  return { x: cx, y: cy, w: w2, h: h2 };
-}
-
-function coerceAnnotator(x: unknown): VisionAnnotatorV1 | undefined {
-  if (!x || typeof x !== 'object') return undefined;
-  const r = x as JsonObject;
-  const overlayFabric = r.overlayFabric;
-  const out: VisionAnnotatorV1 = {};
-  if (overlayFabric !== undefined) out.overlayFabric = overlayFabric;
-  return Object.keys(out).length ? out : undefined;
-}
-
-function isExtraKind(x: unknown): x is VisionExtraV1['kind'] {
-  return x === 'note' || x === 'link' || x === 'image';
-}
-
-function coerceExtras(x: unknown): VisionExtraV1[] | undefined {
-  if (!Array.isArray(x)) return undefined;
-  const out: VisionExtraV1[] = [];
-  for (const it of x) {
-    if (!it || typeof it !== 'object') continue;
-    const r = it as JsonObject;
-    const id = typeof r.id === 'string' ? r.id.trim() : '';
-    const kind = r.kind;
-    const content = typeof r.content === 'string' ? r.content : '';
-    const title = typeof r.title === 'string' ? r.title : undefined;
-    if (!id || !isExtraKind(kind)) continue;
-    out.push({ id, kind, ...(title && title.trim() ? { title: title.trim() } : null), content });
-  }
-  return out.length ? out : undefined;
-}
-
-function coerceImageInfo(x: unknown): VisionImageInfoV1 | undefined {
-  if (!x || typeof x !== 'object') return undefined;
-  const r = x as JsonObject;
-  const objectPath = typeof r.objectPath === 'string' ? r.objectPath : r.objectPath === null ? null : undefined;
-  const dataUrl = typeof r.dataUrl === 'string' ? r.dataUrl : r.dataUrl === null ? null : undefined;
-  const width = typeof r.width === 'number' ? r.width : undefined;
-  const height = typeof r.height === 'number' ? r.height : undefined;
-  const out: VisionImageInfoV1 = {};
-  if (objectPath !== undefined) out.objectPath = objectPath;
-  if (dataUrl !== undefined) out.dataUrl = dataUrl;
-  if (width !== undefined) out.width = width;
-  if (height !== undefined) out.height = height;
-  return Object.keys(out).length ? out : undefined;
-}
-
-function coerceCell(x: unknown): VisionCellV1 | null {
-  if (!x || typeof x !== 'object') return null;
-  const r = x as JsonObject;
-  const kind = r.kind;
-  if (!isCellKind(kind)) return null;
-  const updatedAt = typeof r.updatedAt === 'string' && r.updatedAt.trim() ? r.updatedAt : new Date(0).toISOString();
-  const thumb = typeof r.thumb === 'string' ? r.thumb : undefined;
-  const thumbCrop = coerceCropRect(r.thumbCrop);
-  const fonts = asStringArray(r.fonts);
-  const image = coerceImageInfo(r.image);
-  const annotator = coerceAnnotator(r.annotator);
-  const extras = coerceExtras(r.extras);
-  const fabric = r.fabric;
-  const tldraw = r.tldraw;
-  return {
-    kind,
-    updatedAt,
-    ...(fabric !== undefined ? { fabric } : null),
-    ...(tldraw !== undefined ? { tldraw } : null),
-    ...(image ? { image } : null),
-    ...(thumb ? { thumb } : null),
-    ...(thumbCrop ? { thumbCrop } : null),
-    ...(annotator ? { annotator } : null),
-    ...(extras ? { extras } : null),
-    ...(fonts.length ? { fonts } : null),
-  } as VisionCellV1;
-}
-
 function coerceDoc(x: unknown): VisionDoc | null {
   if (!x || typeof x !== 'object') return null;
   const r = x as JsonObject;
-  if (r.version !== 1) return null;
-  if (r.gridSize !== 24) return null;
-  const cellsRaw = r.cells;
-  const cells: Record<string, VisionCellV1> = {};
-  if (cellsRaw && typeof cellsRaw === 'object') {
-    Object.entries(cellsRaw as Record<string, unknown>).forEach(([k, v]) => {
-      const key = String(k || '').trim();
-      if (!key) return;
-      const cell = coerceCell(v);
-      if (!cell) return;
-      cells[key] = cell;
-    });
-  }
-  return { version: 1, gridSize: 24, cells };
+  if (r.version !== 2) return null;
+  const tldraw = (r as any).tldraw;
+  const updatedAt = typeof (r as any).updatedAt === 'string' ? String((r as any).updatedAt) : undefined;
+  return {
+    version: 2,
+    ...(tldraw !== undefined ? { tldraw } : null),
+    ...(updatedAt ? { updatedAt } : null),
+  };
 }
 
 export function defaultVisionDoc(): VisionDoc {
-  return { version: 1, gridSize: 24, cells: {} };
+  return { version: 2 };
 }
 
 function getVisionJsonFullBlockRegex(): RegExp {
