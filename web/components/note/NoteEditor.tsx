@@ -13,10 +13,15 @@ import { useNoteDragHandle } from '@/components/note/drag/useNoteDragHandle';
 import { SlashMenu } from '@/components/note/slash/SlashMenu';
 import { useNoteSlashMenu } from '@/components/note/slash/useNoteSlashMenu';
 import { runNoteSlashCommand } from '@/components/note/slash/runNoteSlashCommand';
-import { EditorMenubar } from '@/components/EditorMenubar';
+import { EditorMenubar, type MenubarItem } from '@/components/EditorMenubar';
 import { buildNoteEmbedCommentTargetKey, buildNoteHeadingCommentTargetKey } from '@/lib/note-comments';
 import { listenNoteOpenCommentTarget } from '@/components/note/comments/noteCommentEvents';
 import { useYDocThreads } from '@/components/note/comments/useYDocThreads';
+import { upsertTemplateHeader, type NexusTemplateHeader } from '@/lib/nexus-template';
+import { InsertFromTemplateModal, type WorkspaceFileLite as TemplateWorkspaceFileLite } from '@/components/templates/InsertFromTemplateModal';
+import { SaveTemplateModal } from '@/components/templates/SaveTemplateModal';
+import { useWorkspaceFiles } from '@/components/note/embed-config/useWorkspaceFiles';
+import { NoteLinkModal } from '@/components/note/embed-config/NoteLinkModal';
 
 type HeadingEntry = { level: number; text: string; pos: number; targetKey: string; slug: string; occurrence: number };
 
@@ -50,19 +55,55 @@ export function NoteEditor({
   title,
   statusLabel,
   onBack,
+  onOpenNoteLink,
   commentPanel,
   onCommentPanelChange,
+  fileMenuItems,
+  templateScope,
+  onTemplateScopeChange,
+  templateFiles,
+  loadTemplateMarkdown,
+  onSaveTemplateFile,
+  templateSourceLabel,
+  globalTemplatesEnabled,
 }: {
   yDoc: Y.Doc;
   provider: HocuspocusProvider | null;
   title: string;
   statusLabel: string;
   onBack: () => void;
+  onOpenNoteLink?: (res: { fileId: string; blockId?: string | null }) => void;
   commentPanel: { targetKey: string | null; targetLabel?: string; scrollToThreadId?: string };
   onCommentPanelChange: (next: { targetKey: string | null; targetLabel?: string; scrollToThreadId?: string }) => void;
+  fileMenuItems?: MenubarItem[];
+  templateScope?: 'project' | 'account' | 'global';
+  onTemplateScopeChange?: (next: 'project' | 'account' | 'global') => void;
+  templateFiles?: TemplateWorkspaceFileLite[];
+  loadTemplateMarkdown?: (fileId: string) => Promise<string>;
+  onSaveTemplateFile?: (res: { name: string; content: string; scope?: 'project' | 'account' }) => Promise<void> | void;
+  templateSourceLabel?: string;
+  globalTemplatesEnabled?: boolean;
 }) {
   const [activeTool, setActiveTool] = useState<'select' | 'comment'>('select');
   const allThreads = useYDocThreads(yDoc);
+  const [insertFromTemplateOpen, setInsertFromTemplateOpen] = useState(false);
+  const [saveTemplateOpen, setSaveTemplateOpen] = useState(false);
+  const [noteLinkOpen, setNoteLinkOpen] = useState(false);
+  const noteLinkInsertPosRef = useRef<number | null>(null);
+  const [pendingTemplatePayload, setPendingTemplatePayload] = useState<string | null>(null);
+  const [pendingTemplateHeaderBase, setPendingTemplateHeaderBase] = useState<Omit<NexusTemplateHeader, 'name'> | null>(null);
+  const [pendingTemplateDefaultName, setPendingTemplateDefaultName] = useState<string>('Template');
+  const [templateToast, setTemplateToast] = useState<string | null>(null);
+  const templateToastTimerRef = useRef<number | null>(null);
+
+  const showTemplateToast = useCallback((msg: string) => {
+    setTemplateToast(msg);
+    if (templateToastTimerRef.current) window.clearTimeout(templateToastTimerRef.current);
+    templateToastTimerRef.current = window.setTimeout(() => {
+      templateToastTimerRef.current = null;
+      setTemplateToast(null);
+    }, 1600);
+  }, []);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const didHydrateRef = useRef(false);
@@ -75,6 +116,15 @@ export function NoteEditor({
     provider,
     user: { id: 'local', name: 'You' },
   });
+
+  const { files: workspaceFiles, loading: loadingWorkspaceFiles } = useWorkspaceFiles({ kinds: ['note'] });
+
+  useEffect(() => {
+    return () => {
+      if (templateToastTimerRef.current) window.clearTimeout(templateToastTimerRef.current);
+      templateToastTimerRef.current = null;
+    };
+  }, []);
 
   // When switching files, `yDoc` changes but this component instance can be reused.
   // Reset hydration/export guards so the new doc doesn't get stuck blank.
@@ -125,6 +175,7 @@ export function NoteEditor({
 
   const slashItems = useMemo(
     () => [
+      { id: 'template', label: 'Insert template…' },
       { id: 'h1', label: 'Heading 1' },
       { id: 'h2', label: 'Heading 2' },
       { id: 'h3', label: 'Heading 3' },
@@ -137,7 +188,9 @@ export function NoteEditor({
       { id: 'toggle', label: 'Toggle (collapsible)' },
       { id: 'box', label: 'Box (container)' },
       { id: 'tabs', label: 'Tabs' },
+      { id: 'noteLink', label: 'Note link…' },
       { id: 'embed', label: 'Embed (diagram/flow/systemflow)' },
+      { id: 'visionCard', label: 'Embed vision card (thumbnail)…' },
       { id: 'table', label: 'Embed table (grid)' },
       { id: 'test', label: 'Embed test' },
     ],
@@ -149,6 +202,18 @@ export function NoteEditor({
     items: slashItems,
     onRunCommand: (cmd, ctx) => {
       if (!editor) return;
+      if (cmd === 'template') {
+        runNoteSlashCommand({
+          editor,
+          cmd,
+          slashPos: ctx.slashPos,
+          setDebugText: ctx.setDebugText,
+          setErrorText: ctx.setErrorText,
+          onCloseMenu: ctx.close,
+          onOpenTemplatePicker: () => setInsertFromTemplateOpen(true),
+        });
+        return;
+      }
       runNoteSlashCommand({
         editor,
         cmd,
@@ -156,6 +221,14 @@ export function NoteEditor({
         setDebugText: ctx.setDebugText,
         setErrorText: ctx.setErrorText,
         onCloseMenu: ctx.close,
+        onOpenNoteLinkPicker: () => {
+          try {
+            noteLinkInsertPosRef.current = editor.state.selection.from;
+          } catch {
+            noteLinkInsertPosRef.current = null;
+          }
+          setNoteLinkOpen(true);
+        },
       });
     },
   });
@@ -169,6 +242,19 @@ export function NoteEditor({
       setDebugText: slash.setDebugText,
       setErrorText: slash.setErrorText,
       onCloseMenu: slash.close,
+      ...(id === 'template' ? { onOpenTemplatePicker: () => setInsertFromTemplateOpen(true) } : null),
+      ...(id === 'noteLink'
+        ? {
+            onOpenNoteLinkPicker: () => {
+              try {
+                noteLinkInsertPosRef.current = editor.state.selection.from;
+              } catch {
+                noteLinkInsertPosRef.current = null;
+              }
+              setNoteLinkOpen(true);
+            },
+          }
+        : null),
     });
   };
 
@@ -177,6 +263,15 @@ export function NoteEditor({
     if (!editor) return;
     if (didHydrateRef.current) return;
     const yText = yDoc.getText('nexus');
+    let cancelled = false;
+
+    const schedule = (fn: () => void) => {
+      try {
+        queueMicrotask(fn);
+      } catch {
+        Promise.resolve().then(fn);
+      }
+    };
 
     const editorHasContent = () => {
       try {
@@ -208,17 +303,36 @@ export function NoteEditor({
       // If we have markdown but the editor is empty, hydrate from markdown now.
       if (!hasMd) return false;
 
-      // If the user already started typing before the seed arrived, do NOT overwrite.
-      const json = parseMarkdownToTiptap(md);
-      // Set content once; collab extension will write into the fragment.
-      editor.commands.setContent(json);
-      markHydrated();
+      // React 19 warning avoidance:
+      // TipTap may call `flushSync` internally during `setContent`. If this runs while React is
+      // still flushing effects (common when Yjs seeds synchronously), React logs a warning.
+      // Schedule hydration to the next microtask so React is fully idle.
+      const mdSnapshot = md;
+      didHydrateRef.current = true; // prevent duplicate schedules from sync observers
+      schedule(() => {
+        if (cancelled) return;
+        // If the user typed between scheduling and execution, do NOT overwrite.
+        if (editorHasContent()) {
+          setHydrated(true);
+          return;
+        }
+        try {
+          const json = parseMarkdownToTiptap(mdSnapshot);
+          editor.commands.setContent(json);
+        } finally {
+          setHydrated(true);
+        }
+      });
       return true;
     };
 
     // If markdown isn't ready yet (common when switching files), wait for the seed
     // rather than hydrating an empty doc and exporting that emptiness back.
-    if (tryHydrateFromMarkdown()) return;
+    if (tryHydrateFromMarkdown()) {
+      return () => {
+        cancelled = true;
+      };
+    }
 
     let observing = true;
     const onText = () => {
@@ -242,6 +356,7 @@ export function NoteEditor({
     }, 900);
 
     return () => {
+      cancelled = true;
       if (observing) yText.unobserve(onText);
       try {
         window.clearTimeout(t);
@@ -367,6 +482,49 @@ export function NoteEditor({
     [onCommentPanelChange],
   );
 
+  const parseNoteHref = useCallback((hrefRaw: string): { fileId: string; blockId: string | null } | null => {
+    const href = String(hrefRaw || '').trim();
+    if (!href) return null;
+
+    // Supported forms:
+    // - note:<fileId>#<blockId>
+    // - /editor?file=<fileId>#<blockId>
+    // - <fileId>#<blockId>
+    if (href.startsWith('note:')) {
+      const rest = href.slice('note:'.length);
+      const [fileId, blockId] = rest.split('#');
+      const fid = String(fileId || '').trim();
+      if (!fid) return null;
+      return { fileId: fid, blockId: blockId ? String(blockId).trim() : null };
+    }
+
+    try {
+      const base = typeof window !== 'undefined' ? window.location.origin : 'http://localhost';
+      const u = href.startsWith('http://') || href.startsWith('https://') ? new URL(href) : new URL(href, base);
+      const pathname = u.pathname || '';
+      if (pathname === '/editor' && u.searchParams.has('file')) {
+        const fid = String(u.searchParams.get('file') || '').trim();
+        const bid = String(u.hash || '').replace(/^#/, '').trim();
+        if (!fid) return null;
+        return { fileId: fid, blockId: bid || null };
+      }
+    } catch {
+      // ignore
+    }
+
+    // Bare "fileId#blockId"
+    if (href.includes('#') && !href.includes('://')) {
+      const [fileId, blockId] = href.split('#');
+      const fid = String(fileId || '').trim();
+      const bid = String(blockId || '').trim();
+      if (!fid || !bid) return null;
+      if (/\s/.test(fid) || /\s/.test(bid)) return null;
+      return { fileId: fid, blockId: bid || null };
+    }
+
+    return null;
+  }, []);
+
   const addRangeComment = () => {
     if (!editor) return;
     const { from, to } = editor.state.selection;
@@ -458,6 +616,40 @@ export function NoteEditor({
     return () => dom.removeEventListener('mousedown', onMouseDown);
   }, [editor, activeTool, openTargetKey, editorViewReadyTick]);
 
+  // Note→Note deep links: intercept internal hrefs and open via router callback.
+  useEffect(() => {
+    if (!editor) return;
+    if (editorViewReadyTick <= 0) return;
+    if (!onOpenNoteLink) return;
+
+    let dom: HTMLElement | null = null;
+    try {
+      dom = (editor as any).view?.dom as HTMLElement | null;
+    } catch {
+      dom = null;
+    }
+    if (!dom) return;
+
+    const onClick = (e: MouseEvent) => {
+      try {
+        const t = e.target as HTMLElement | null;
+        const a = (t?.closest?.('a') as HTMLAnchorElement | null) || null;
+        const href = String(a?.getAttribute?.('href') || '').trim();
+        if (!href) return;
+        const parsed = parseNoteHref(href);
+        if (!parsed) return;
+        e.preventDefault();
+        e.stopPropagation();
+        onOpenNoteLink({ fileId: parsed.fileId, blockId: parsed.blockId });
+      } catch {
+        // ignore
+      }
+    };
+
+    dom.addEventListener('click', onClick);
+    return () => dom.removeEventListener('click', onClick);
+  }, [editor, editorViewReadyTick, onOpenNoteLink, parseNoteHref]);
+
   // Allow embed headers (node views) to request opening a comment target.
   useEffect(() => {
     return listenNoteOpenCommentTarget((detail) => {
@@ -505,14 +697,105 @@ export function NoteEditor({
     }
   }, [commentPanel.targetKey, editor, editorViewReadyTick, headings]);
 
+  // Deep-link scroll/highlight: /editor?file=<id>#<blockId> where blockId matches data-note-embed-id.
+  const lastHashRef = useRef<string>('');
+  useEffect(() => {
+    if (!editor) return;
+    if (editorViewReadyTick <= 0) return;
+    const hash = typeof window !== 'undefined' ? String(window.location.hash || '') : '';
+    let blockId = hash.replace(/^#/, '').trim();
+    try {
+      blockId = decodeURIComponent(blockId);
+    } catch {
+      // ignore
+    }
+    if (!blockId) return;
+    if (blockId === lastHashRef.current) return;
+    lastHashRef.current = blockId;
+
+    try {
+      const root = editor.view.dom as HTMLElement;
+      const el = root.querySelector(`[data-note-embed-id="${safeCssEscape(blockId)}"]`) as HTMLElement | null;
+      if (!el) return;
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+      const prevOutline = el.style.outline;
+      const prevOutlineOffset = el.style.outlineOffset;
+      const prevBg = el.style.backgroundColor;
+      el.style.outline = '3px solid rgba(250, 204, 21, 0.95)';
+      el.style.outlineOffset = '2px';
+      el.style.backgroundColor = 'rgba(254, 249, 195, 0.8)';
+      const t = window.setTimeout(() => {
+        el.style.outline = prevOutline;
+        el.style.outlineOffset = prevOutlineOffset;
+        el.style.backgroundColor = prevBg;
+      }, 1600);
+      return () => window.clearTimeout(t);
+    } catch {
+      // ignore
+    }
+  }, [editor, editorViewReadyTick]);
+
   return (
     <main className="mac-desktop flex h-screen flex-col">
       <EditorMenubar
         status={statusLabel}
         activeFileName={title}
         onWorkspace={onBack}
+        fileMenuItems={fileMenuItems || []}
         rightContent={
           <>
+            <button
+              type="button"
+              className="mac-btn"
+              disabled={!editor || !onSaveTemplateFile}
+              title={!onSaveTemplateFile ? 'Template actions are not available.' : 'Save the selected content as a template.'}
+              onClick={async () => {
+                if (!editor) return;
+                if (!onSaveTemplateFile) return;
+                const sel = editor.state.selection;
+                if (sel.empty || sel.from === sel.to) {
+                  showTemplateToast('Select some content first');
+                  return;
+                }
+                const slice = editor.state.doc.slice(sel.from, sel.to);
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const contentJson: any = (slice as any).content?.toJSON?.() ?? [];
+                const docJson = {
+                  type: 'doc',
+                  content: Array.isArray(contentJson) ? contentJson : [contentJson],
+                };
+                const rawMd = serializeTiptapToMarkdown(docJson as any);
+                const md = String(rawMd || '').trimEnd();
+                if (!md.trim()) {
+                  showTemplateToast('Selection is empty');
+                  return;
+                }
+                const headerBase: Omit<NexusTemplateHeader, 'name'> = {
+                  version: 1,
+                  ...(templateSourceLabel ? { description: `Saved from ${templateSourceLabel}` } : {}),
+                  targetKind: 'note',
+                  mode: 'appendFragment',
+                  fragmentKind: 'noteBlock',
+                  tags: ['note'],
+                };
+                setPendingTemplatePayload((md.endsWith('\n') ? md : md + '\n'));
+                setPendingTemplateHeaderBase(headerBase);
+                setPendingTemplateDefaultName('Note block');
+                setSaveTemplateOpen(true);
+              }}
+            >
+              Save template
+            </button>
+            <button
+              type="button"
+              className="mac-btn"
+              disabled={!editor || !templateFiles || !loadTemplateMarkdown || (templateFiles || []).length === 0}
+              title={(templateFiles || []).length === 0 ? 'No templates yet.' : 'Insert a template at the cursor.'}
+              onClick={() => setInsertFromTemplateOpen(true)}
+            >
+              Insert template…
+            </button>
             <button
               type="button"
               className={`mac-btn ${activeTool === 'comment' ? 'mac-btn--primary' : ''}`}
@@ -531,6 +814,87 @@ export function NoteEditor({
             ) : null}
           </>
         }
+      />
+
+      {templateToast ? (
+        <div className="fixed top-14 left-1/2 -translate-x-1/2 z-[2000] mac-window mac-shadow-hard text-xs px-3 py-2">
+          {templateToast}
+        </div>
+      ) : null}
+
+      <InsertFromTemplateModal
+        open={insertFromTemplateOpen}
+        title="Insert note template"
+        files={templateFiles || []}
+        loadMarkdown={loadTemplateMarkdown || (async () => '')}
+        accept={{ targetKind: 'note', mode: 'appendFragment', fragmentKind: 'noteBlock' }}
+        scope={
+          templateScope && onTemplateScopeChange
+            ? {
+                value: templateScope,
+                options: [
+                  { id: 'project', label: 'This project' },
+                  { id: 'account', label: 'Account' },
+                  ...(globalTemplatesEnabled ? [{ id: 'global', label: 'Global' }] : []),
+                ],
+                onChange: (next) => onTemplateScopeChange(next as any),
+              }
+            : undefined
+        }
+        onClose={() => setInsertFromTemplateOpen(false)}
+        onInsert={async ({ content }) => {
+          if (!editor) throw new Error('Editor not ready.');
+          const json = parseMarkdownToTiptap(content);
+          const arr = (json as any)?.content;
+          if (!Array.isArray(arr) || arr.length === 0) return;
+          editor.commands.insertContent(arr);
+          showTemplateToast('Inserted');
+        }}
+      />
+
+      <SaveTemplateModal
+        open={saveTemplateOpen}
+        title="Save template"
+        defaultName={pendingTemplateDefaultName}
+        defaultScope="project"
+        onClose={() => setSaveTemplateOpen(false)}
+        onSave={async ({ name, scope }) => {
+          if (!onSaveTemplateFile) throw new Error('Template saving unavailable.');
+          if (!pendingTemplatePayload || !pendingTemplateHeaderBase) throw new Error('No template content to save.');
+          const header: NexusTemplateHeader = { ...pendingTemplateHeaderBase, name };
+          const content = upsertTemplateHeader(pendingTemplatePayload, header);
+          await onSaveTemplateFile({ name, content, scope });
+          setPendingTemplatePayload(null);
+          setPendingTemplateHeaderBase(null);
+          showTemplateToast('Template saved');
+        }}
+      />
+
+      <NoteLinkModal
+        open={noteLinkOpen}
+        files={workspaceFiles}
+        loadingFiles={loadingWorkspaceFiles}
+        initialFileId={null}
+        initialBlockId={null}
+        onClose={() => setNoteLinkOpen(false)}
+        onApply={({ fileId, blockId }) => {
+          if (!editor) return;
+          try {
+            const pos = noteLinkInsertPosRef.current;
+            if (typeof pos === 'number') editor.commands.setTextSelection(pos);
+          } catch {
+            // ignore
+          }
+          const label = (workspaceFiles.find((f) => f.id === fileId)?.name || 'Note').trim() || 'Note';
+          const href = `note:${fileId}${blockId ? `#${String(blockId).trim()}` : ''}`;
+          editor
+            .chain()
+            .focus()
+            .insertContent({ type: 'text', text: label, marks: [{ type: 'link', attrs: { href } }] })
+            .insertContent(' ')
+            .run();
+          setNoteLinkOpen(false);
+        }}
       />
 
       <div className="flex-1 overflow-hidden flex">

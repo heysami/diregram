@@ -6,9 +6,11 @@ import { saveVisionDoc, type VisionDoc } from '@/lib/visionjson';
 
 export function useVisionDocWriterToYjs(yDoc: Y.Doc | null): {
   scheduleWriteVisionDoc: (doc: VisionDoc) => void;
+  flushWriteVisionDoc: () => void;
 } {
   const writeTimerRef = useRef<number | null>(null);
   const writeIdleRef = useRef<number | null>(null);
+  const lastDocRef = useRef<VisionDoc | null>(null);
 
   const writeVisionToDoc = useCallback(
     (nextDoc: VisionDoc) => {
@@ -27,6 +29,7 @@ export function useVisionDocWriterToYjs(yDoc: Y.Doc | null): {
 
   const scheduleWriteVisionDoc = useCallback(
     (next: VisionDoc) => {
+      lastDocRef.current = next;
       if (writeTimerRef.current) window.clearTimeout(writeTimerRef.current);
       try {
         if (writeIdleRef.current && typeof (window as any).cancelIdleCallback === 'function') (window as any).cancelIdleCallback(writeIdleRef.current);
@@ -51,8 +54,24 @@ export function useVisionDocWriterToYjs(yDoc: Y.Doc | null): {
     [writeVisionToDoc],
   );
 
+  const flushWriteVisionDoc = useCallback(() => {
+    const d = lastDocRef.current;
+    if (!d) return;
+    try {
+      writeVisionToDoc(d);
+    } catch {
+      // ignore
+    }
+  }, [writeVisionToDoc]);
+
   useEffect(() => {
     return () => {
+      try {
+        const d = lastDocRef.current;
+        if (d) writeVisionToDoc(d);
+      } catch {
+        // ignore
+      }
       if (writeTimerRef.current) window.clearTimeout(writeTimerRef.current);
       writeTimerRef.current = null;
       try {
@@ -62,8 +81,8 @@ export function useVisionDocWriterToYjs(yDoc: Y.Doc | null): {
       }
       writeIdleRef.current = null;
     };
-  }, []);
+  }, [writeVisionToDoc]);
 
-  return { scheduleWriteVisionDoc };
+  return { scheduleWriteVisionDoc, flushWriteVisionDoc };
 }
 

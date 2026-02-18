@@ -3,7 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/hooks/use-auth';
 import { AuthStatus } from '@/components/AuthStatus';
-import { FileText, Network, Table, Sparkles } from 'lucide-react';
+import { FileText, Network, Table, Sparkles, LayoutTemplate } from 'lucide-react';
 import { DiregramMark } from '@/components/DiregramMark';
 
 export default function Home() {
@@ -26,6 +26,10 @@ export default function Home() {
           <div className="text-[12px] opacity-70 hidden sm:block">Maps · Flows · Data</div>
         </div>
         <div className="flex items-center gap-3">
+          <button type="button" className="mac-btn h-8 flex items-center gap-1.5" onClick={() => router.push('/templates/global')}>
+            <LayoutTemplate size={14} />
+            Global templates
+          </button>
           <AuthStatus />
         </div>
       </header>
@@ -56,9 +60,14 @@ export default function Home() {
                     Sign in to start
                   </button>
                 ) : (
-                  <button type="button" className="mac-btn mac-btn--primary" onClick={() => router.push('/workspace')}>
-                    Open workspace
-                  </button>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <button type="button" className="mac-btn mac-btn--primary" onClick={() => router.push('/workspace')}>
+                      Open workspace
+                    </button>
+                    <button type="button" className="mac-btn" onClick={() => router.push('/templates/global')}>
+                      Browse global templates
+                    </button>
+                  </div>
                 )}
               </div>
             </div>

@@ -2,6 +2,7 @@
 
 import type { Editor } from '@tiptap/react';
 import { TextSelection } from '@tiptap/pm/state';
+import { withVisionCardPendingConfig } from '@/lib/vision-card-embed-config';
 
 export function runNoteSlashCommand(opts: {
   editor: Editor;
@@ -10,8 +11,10 @@ export function runNoteSlashCommand(opts: {
   setDebugText?: (s: string | null) => void;
   setErrorText?: (s: string | null) => void;
   onCloseMenu?: () => void;
+  onOpenTemplatePicker?: () => void;
+  onOpenNoteLinkPicker?: () => void;
 }): boolean {
-  const { editor, cmd, slashPos, setDebugText, setErrorText, onCloseMenu } = opts;
+  const { editor, cmd, slashPos, setDebugText, setErrorText, onCloseMenu, onOpenTemplatePicker, onOpenNoteLinkPicker } = opts;
   let didSetError = false;
   const setErr = (s: string | null) => {
     if (s) didSetError = true;
@@ -125,6 +128,14 @@ export function runNoteSlashCommand(opts: {
 
   // Apply transform/insert. Prefer deterministic “set” commands over toggles.
   let ok = true;
+  if (cmd === 'template') {
+    try {
+      onOpenTemplatePicker?.();
+      ok = true;
+    } catch {
+      ok = false;
+    }
+  }
   if (cmd === 'h1') ok = editor.chain().focus().setNode('heading', { level: 1 }).run();
   else if (cmd === 'h2') ok = editor.chain().focus().setNode('heading', { level: 2 }).run();
   else if (cmd === 'h3') ok = editor.chain().focus().setNode('heading', { level: 3 }).run();
@@ -164,6 +175,20 @@ export function runNoteSlashCommand(opts: {
   } else if (cmd === 'test') {
     const raw = JSON.stringify({ id: `test-${crypto.randomUUID()}`, testId: '' }, null, 2);
     ok = insertOrReplaceBlock({ type: 'nexusTest', attrs: { raw } });
+  } else if (cmd === 'noteLink') {
+    try {
+      onOpenNoteLinkPicker?.();
+      ok = true;
+    } catch {
+      ok = false;
+    }
+  } else if (cmd === 'visionCard') {
+    const raw = JSON.stringify(
+      withVisionCardPendingConfig({ id: `embed-${crypto.randomUUID()}`, kind: 'visionCard', fileId: '', cardId: '' }),
+      null,
+      2,
+    );
+    ok = insertOrReplaceBlock({ type: 'nexusEmbed', attrs: { raw } });
   }
 
   if (ok) onCloseMenu?.();

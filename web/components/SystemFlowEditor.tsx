@@ -19,6 +19,9 @@ import {
   type SystemFlowState,
   type SystemFlowZonePersisted,
 } from '@/lib/system-flow-storage';
+import { upsertTemplateHeader, type NexusTemplateHeader } from '@/lib/nexus-template';
+import { InsertFromTemplateModal, type WorkspaceFileLite as TemplateWorkspaceFileLite } from '@/components/templates/InsertFromTemplateModal';
+import { SaveTemplateModal } from '@/components/templates/SaveTemplateModal';
 
 type Mode = 'select' | 'link';
 type LinkDashStyle = 'solid' | 'dashed';
@@ -36,6 +39,13 @@ export function SystemFlowEditor({
   showAnnotations,
   onOpenComments,
   presence,
+  templateScope,
+  onTemplateScopeChange,
+  templateFiles,
+  loadTemplateMarkdown,
+  onSaveTemplateFile,
+  templateSourceLabel,
+  globalTemplatesEnabled,
 }: {
   doc: Y.Doc;
   sfid: string;
@@ -44,6 +54,13 @@ export function SystemFlowEditor({
   showAnnotations: boolean;
   onOpenComments?: (info: { targetKey: string; targetLabel?: string; scrollToThreadId?: string }) => void;
   presence?: PresenceController | null;
+  templateScope?: 'project' | 'account' | 'global';
+  onTemplateScopeChange?: (next: 'project' | 'account' | 'global') => void;
+  templateFiles?: TemplateWorkspaceFileLite[];
+  loadTemplateMarkdown?: (fileId: string) => Promise<string>;
+  onSaveTemplateFile?: (res: { name: string; content: string; scope?: 'project' | 'account' }) => Promise<void> | void;
+  templateSourceLabel?: string;
+  globalTemplatesEnabled?: boolean;
 }) {
   const [state, setState] = useState<SystemFlowState>(() => loadSystemFlowStateFromDoc(doc, sfid));
   const [mode, setMode] = useState<Mode>('select');
@@ -60,6 +77,51 @@ export function SystemFlowEditor({
   const [annotationEditForKey, setAnnotationEditForKey] = useState<string | null>(null);
   const [annotationDraft, setAnnotationDraft] = useState<string>('');
   const [annotationPopoverPos, setAnnotationPopoverPos] = useState<{ x: number; y: number } | null>(null);
+  const [insertFromTemplateOpen, setInsertFromTemplateOpen] = useState(false);
+  const [saveTemplateOpen, setSaveTemplateOpen] = useState(false);
+  const [pendingTemplatePayload, setPendingTemplatePayload] = useState<string | null>(null);
+  const [pendingTemplateHeaderBase, setPendingTemplateHeaderBase] = useState<Omit<NexusTemplateHeader, 'name'> | null>(null);
+  const [pendingTemplateDefaultName, setPendingTemplateDefaultName] = useState<string>('Template');
+
+  type SystemFlowBoxTemplateV1 = {
+    version: 1;
+    name: string;
+    icon?: string;
+    color?: string;
+    annotation?: string;
+    dataObjectId?: string;
+    dataObjectAttributeIds?: string[];
+    gridWidth: number;
+    gridHeight: number;
+  };
+
+  const parseSystemFlowBoxTemplate = (rendered: string): SystemFlowBoxTemplateV1 => {
+    const src = String(rendered || '').replace(/\r\n?/g, '\n').trim();
+    const m = src.match(/```nexus-systemflow-box[ \t]*\n([\s\S]*?)\n```/);
+    const body = (m ? m[1] : src).trim();
+    const parsed = JSON.parse(body) as unknown;
+    if (!parsed || typeof parsed !== 'object') throw new Error('Invalid system flow template payload.');
+    const r = parsed as Record<string, unknown>;
+    if (r.version !== 1) throw new Error('Unsupported system flow box template version.');
+    const name = typeof r.name === 'string' ? r.name : 'Box';
+    const gridWidth = Number(r.gridWidth);
+    const gridHeight = Number(r.gridHeight);
+    if (!Number.isFinite(gridWidth) || !Number.isFinite(gridHeight)) throw new Error('Invalid box size.');
+    const attrs = Array.isArray(r.dataObjectAttributeIds)
+      ? (r.dataObjectAttributeIds as unknown[]).map((x) => (typeof x === 'string' ? x.trim() : '')).filter(Boolean)
+      : undefined;
+    return {
+      version: 1,
+      name,
+      icon: typeof r.icon === 'string' ? r.icon : undefined,
+      color: typeof r.color === 'string' ? r.color : undefined,
+      annotation: typeof r.annotation === 'string' ? r.annotation : undefined,
+      dataObjectId: typeof r.dataObjectId === 'string' ? r.dataObjectId : undefined,
+      dataObjectAttributeIds: attrs,
+      gridWidth: Math.max(1, Math.min(12, Math.round(gridWidth))),
+      gridHeight: Math.max(1, Math.min(12, Math.round(gridHeight))),
+    };
+  };
 
   // Drag state
   const [draggingKey, setDraggingKey] = useState<string | null>(null);
@@ -205,6 +267,32 @@ export function SystemFlowEditor({
     setSelectedBoxKeys([key]);
     setSelectedLinkId(null);
   }, [findFirstEmptyCell, nextBoxKey, persist, state]);
+
+  const insertBoxFromTemplate = useCallback(
+    (tpl: SystemFlowBoxTemplateV1) => {
+      const empty = findFirstEmptyCell();
+      if (!empty) throw new Error('No empty space available.');
+      const key = nextBoxKey();
+      const next: SystemFlowBoxPersisted = {
+        key,
+        name: String(tpl.name || 'Box'),
+        ...(tpl.icon ? { icon: tpl.icon } : null),
+        ...(tpl.color ? { color: tpl.color } : null),
+        ...(tpl.annotation ? { annotation: tpl.annotation } : null),
+        ...(tpl.dataObjectId ? { dataObjectId: tpl.dataObjectId } : null),
+        ...(tpl.dataObjectAttributeIds && tpl.dataObjectAttributeIds.length ? { dataObjectAttributeIds: tpl.dataObjectAttributeIds } : null),
+        gridX: empty.x,
+        gridY: empty.y,
+        gridWidth: tpl.gridWidth,
+        gridHeight: tpl.gridHeight,
+      };
+      persist({ ...state, boxes: [...state.boxes, next] });
+      setSelectedBoxKeys([key]);
+      setSelectedLinkId(null);
+      setSelectedZoneId(null);
+    },
+    [findFirstEmptyCell, nextBoxKey, persist, state],
+  );
 
   const deleteSelection = useCallback(() => {
     if (selectedLinkId) {
@@ -1272,6 +1360,56 @@ export function SystemFlowEditor({
                       />
                     ) : null}
                   </div>
+
+                  <div className="pt-2 border-t border-slate-200">
+                    <div className="text-[11px] font-semibold text-slate-700 mb-1">Templates</div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        className="mac-btn"
+                        disabled={!onSaveTemplateFile}
+                        title={!onSaveTemplateFile ? 'Template actions are not available.' : 'Save this box as a reusable template.'}
+                        onClick={async () => {
+                          if (!onSaveTemplateFile) return;
+                          const frag: SystemFlowBoxTemplateV1 = {
+                            version: 1,
+                            name: selectedBox.name || 'Box',
+                            icon: selectedBox.icon,
+                            color: selectedBox.color,
+                            annotation: selectedBox.annotation,
+                            dataObjectId: selectedBox.dataObjectId,
+                            dataObjectAttributeIds: selectedBox.dataObjectAttributeIds,
+                            gridWidth: selectedBox.gridWidth,
+                            gridHeight: selectedBox.gridHeight,
+                          };
+                          const payload = ['```nexus-systemflow-box', JSON.stringify(frag, null, 2), '```', ''].join('\n');
+                          const headerBase: Omit<NexusTemplateHeader, 'name'> = {
+                            version: 1,
+                            ...(templateSourceLabel ? { description: `Saved from ${templateSourceLabel}` } : {}),
+                            targetKind: 'diagram',
+                            mode: 'appendFragment',
+                            fragmentKind: 'systemFlowBox',
+                            tags: ['systemFlow'],
+                          };
+                          setPendingTemplatePayload(payload);
+                          setPendingTemplateHeaderBase(headerBase);
+                          setPendingTemplateDefaultName(frag.name);
+                          setSaveTemplateOpen(true);
+                        }}
+                      >
+                        Save
+                      </button>
+                      <button
+                        type="button"
+                        className="mac-btn"
+                        disabled={!templateFiles || !loadTemplateMarkdown || (templateFiles || []).length === 0}
+                        title={(templateFiles || []).length === 0 ? 'No templates yet.' : 'Insert a box template.'}
+                        onClick={() => setInsertFromTemplateOpen(true)}
+                      >
+                        Insert…
+                      </button>
+                    </div>
+                  </div>
                 </div>
               ) : selectedLink ? (
                 <div className="space-y-3">
@@ -1478,6 +1616,49 @@ export function SystemFlowEditor({
             </div>
           </div>
         </div>
+
+        <InsertFromTemplateModal
+          open={insertFromTemplateOpen}
+          title="Insert system flow box"
+          files={templateFiles || []}
+          loadMarkdown={loadTemplateMarkdown || (async () => '')}
+          accept={{ targetKind: 'diagram', mode: 'appendFragment', fragmentKind: 'systemFlowBox' }}
+          scope={
+            templateScope && onTemplateScopeChange
+              ? {
+                  value: templateScope,
+                  options: [
+                    { id: 'project', label: 'This project' },
+                    { id: 'account', label: 'Account' },
+                    ...(globalTemplatesEnabled ? [{ id: 'global', label: 'Global' }] : []),
+                  ],
+                  onChange: (next) => onTemplateScopeChange(next as any),
+                }
+              : undefined
+          }
+          onClose={() => setInsertFromTemplateOpen(false)}
+          onInsert={async ({ content }) => {
+            const tpl = parseSystemFlowBoxTemplate(content);
+            insertBoxFromTemplate(tpl);
+          }}
+        />
+
+        <SaveTemplateModal
+          open={saveTemplateOpen}
+          title="Save template"
+          defaultName={pendingTemplateDefaultName}
+          defaultScope="project"
+          onClose={() => setSaveTemplateOpen(false)}
+          onSave={async ({ name, scope }) => {
+            if (!onSaveTemplateFile) throw new Error('Template saving unavailable.');
+            if (!pendingTemplatePayload || !pendingTemplateHeaderBase) throw new Error('No template content to save.');
+            const header: NexusTemplateHeader = { ...pendingTemplateHeaderBase, name };
+            const content = upsertTemplateHeader(pendingTemplatePayload, header);
+            await onSaveTemplateFile({ name, content, scope });
+            setPendingTemplatePayload(null);
+            setPendingTemplateHeaderBase(null);
+          }}
+        />
       </div>
     </div>
   );

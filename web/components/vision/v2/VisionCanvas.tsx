@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Tldraw, TldrawUiButton, useValue, type Editor, type TLEditorSnapshot } from 'tldraw';
 import type * as Y from 'yjs';
 import { useTldrawVisionCanvasController } from '@/components/vision/v2/tldraw/useTldrawVisionCanvasController';
@@ -66,6 +66,9 @@ export function VisionCanvas({
   activeTool,
   activeCommentTargetKey,
   onOpenComments,
+  onSaveTemplateFile,
+  templateSourceLabel,
+  globalTemplatesEnabled,
 }: {
   fileId: string;
   initialSnapshot: Partial<TLEditorSnapshot> | null;
@@ -76,10 +79,37 @@ export function VisionCanvas({
   activeTool: 'select' | 'comment';
   activeCommentTargetKey: string | null;
   onOpenComments?: (info: { targetKey: string; targetLabel?: string; scrollToThreadId?: string }) => void;
+  onSaveTemplateFile?: (res: { name: string; content: string; scope?: 'project' | 'account' }) => Promise<void> | void;
+  templateSourceLabel?: string;
+  globalTemplatesEnabled?: boolean;
 }) {
   const [editor, setEditor] = useState<Editor | null>(null);
   const [openCardId, setOpenCardId] = useState<string | null>(null);
   const [commentsTick, setCommentsTick] = useState(0);
+
+  // Deep-link focus: /editor?file=<visionFileId>#<cardId>
+  const lastHashRef = useRef<string>('');
+  useEffect(() => {
+    if (!editor) return;
+    const rawHash = typeof window !== 'undefined' ? String(window.location.hash || '') : '';
+    let cardId = rawHash.replace(/^#/, '').trim();
+    try {
+      cardId = decodeURIComponent(cardId);
+    } catch {
+      // ignore
+    }
+    if (!cardId) return;
+    if (cardId === lastHashRef.current) return;
+    lastHashRef.current = cardId;
+    try {
+      const shape: any = (editor as any).getShape?.(cardId as any) || null;
+      if (!shape || String(shape.type || '') !== 'nxcard') return;
+      (editor as any).setSelectedShapes?.([cardId as any]);
+      (editor as any).zoomToSelection?.();
+    } catch {
+      // ignore
+    }
+  }, [editor, fileId]);
 
   const { store, shapeUtils, uiOverrides, components, onMount } = useTldrawVisionCanvasController({
     initialSnapshot,
@@ -247,11 +277,19 @@ export function VisionCanvas({
             })
           : null}
         {openCardId && editor ? (
-          <VisionCardEditorModal fileId={fileId} cardId={openCardId} editor={editor} onClose={() => setOpenCardId(null)} />
+          <VisionCardEditorModal
+            fileId={fileId}
+            cardId={openCardId}
+            editor={editor}
+            onClose={() => setOpenCardId(null)}
+            onSaveTemplateFile={onSaveTemplateFile}
+            templateSourceLabel={templateSourceLabel}
+            globalTemplatesEnabled={globalTemplatesEnabled}
+          />
         ) : null}
       </>
     );
-  }, [openCardId, editor, fileId, commentPins, yDoc, onOpenComments]);
+  }, [openCardId, editor, fileId, commentPins, yDoc, onOpenComments, onSaveTemplateFile, templateSourceLabel, globalTemplatesEnabled]);
 
   return (
     <div className="w-full h-full relative">

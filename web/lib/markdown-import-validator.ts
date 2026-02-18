@@ -1286,22 +1286,15 @@ export function validateNexusMarkdownImport(markdown: string): ImportValidationR
     }
   }
 
-  // Testing store references (node-id based)
+  // Legacy testing-store block (deprecated)
   const testingStore = getSingleJsonBlock('testing-store');
   if (testingStore) {
-    const tests = Array.isArray(testingStore.json?.tests) ? testingStore.json.tests : [];
-    const knownNodeIds = new Set<string>();
-    traverseAllParsedNodes(roots, (n) => knownNodeIds.add(n.id));
-    tests.forEach((t: any) => {
-      const flowRootId = typeof t?.flowRootId === 'string' ? t.flowRootId : '';
-      const flowNodeId = typeof t?.flowNodeId === 'string' ? t.flowNodeId : '';
-      if (flowRootId && !knownNodeIds.has(flowRootId)) {
-        add(warnings, 'warning', 'TESTING_MISSING_FLOW_ROOT', `A testing-store test references flowRootId "${flowRootId}" which does not exist.`);
-      }
-      if (flowNodeId && !knownNodeIds.has(flowNodeId)) {
-        add(warnings, 'warning', 'TESTING_MISSING_FLOW_NODE', `A testing-store test references flowNodeId "${flowNodeId}" which does not exist.`);
-      }
-    });
+    add(
+      warnings,
+      'warning',
+      'DEPRECATED_TESTING_STORE',
+      'Found a `testing-store` fenced block. Legacy diagram-embedded tests are deprecated; use test files instead.',
+    );
   }
 
   // Final report

@@ -774,20 +774,6 @@ Schema:
   "node-13": { "kind": "inner", "rootProcessNodeId": "node-3", "targetNodeId": "node-9", "expandedRunningNumber": 1, "gridNodeKey": "flowref-1-node-13" }
 }
 
-8.15 testing-store
-Type: \`\`\`testing-store\`\`\`
-Purpose:
-- Stores testing scenarios for the Testing tab.
-Used by:
-- Testing UI (scenario list / runner).
-Links to:
-- flowRootId: Flow tab root node id at creation time (node-<lineIndex>)
-- flowNodeId: Flow tab node id used as source; must exist in flowtab-process-references map.
-Fragility:
-- Depends on node ids; will break after structural edits.
-Schema:
-{ "nextId": 2, "tests": [{ "id": "test-1", "name": "Happy path", "flowRootId": "node-1", "flowNodeId": "node-12", "createdAt": 123 }] }
-
 ===============================================================================
 OUTPUT REQUIREMENTS (repeat)
 ===============================================================================

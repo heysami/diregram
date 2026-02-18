@@ -48,6 +48,10 @@ import { StickyBars } from '@/components/grid/spreadsheet/components/StickyBars'
 import { useTableDragDeleteKeys } from '@/components/grid/spreadsheet/hooks/useTableDragDeleteKeys';
 import { buildGridCardCommentTargetKey, buildGridCellCommentTargetKey, parseGridCommentTargetKey } from '@/lib/grid-comments';
 import { useDragRectSelection, type CellPos as DragCellPos } from '@/components/grid/spreadsheet/hooks/useDragRectSelection';
+import { upsertTemplateHeader, type NexusTemplateHeader } from '@/lib/nexus-template';
+import { InsertFromTemplateModal, type WorkspaceFileLite as TemplateWorkspaceFileLite } from '@/components/templates/InsertFromTemplateModal';
+import { SaveTemplateModal } from '@/components/templates/SaveTemplateModal';
+import { parseGridTableTemplatePayload, type GridTableTemplateV1 } from '@/lib/template-grid';
 
 type CellPos = { r: number; c: number };
 
@@ -118,6 +122,14 @@ export function SpreadsheetView({
   linkedDataObjectStore,
   canEditLinkedDiagramFile,
   upsertLinkedDataObject,
+  templateScope,
+  onTemplateScopeChange,
+  templateFiles,
+  loadTemplateMarkdown,
+  onSaveTemplateFile,
+  templateSourceLabel,
+  globalTemplatesEnabled,
+  showStickyBars = true,
 }: {
   doc: GridDoc;
   sheet: GridSheetV1;
@@ -134,6 +146,14 @@ export function SpreadsheetView({
   linkedDataObjectStore: NexusDataObjectStore | null;
   canEditLinkedDiagramFile: boolean;
   upsertLinkedDataObject?: (obj: NexusDataObject) => void;
+  templateScope?: 'project' | 'account' | 'global';
+  onTemplateScopeChange?: (next: 'project' | 'account' | 'global') => void;
+  templateFiles?: TemplateWorkspaceFileLite[];
+  loadTemplateMarkdown?: (fileId: string) => Promise<string>;
+  onSaveTemplateFile?: (res: { name: string; content: string; scope?: 'project' | 'account' }) => Promise<void> | void;
+  templateSourceLabel?: string;
+  globalTemplatesEnabled?: boolean;
+  showStickyBars?: boolean;
 }) {
   const cols = sheet.grid.columns || [];
   const rows = sheet.grid.rows || [];
@@ -141,6 +161,13 @@ export function SpreadsheetView({
   const regions = sheet.grid.regions || [];
   const tables = sheet.grid.tables || [];
   const cards = sheet.cards || [];
+
+  const [insertFromTemplateOpen, setInsertFromTemplateOpen] = useState(false);
+  const [saveTemplateOpen, setSaveTemplateOpen] = useState(false);
+  const [pendingTemplatePayload, setPendingTemplatePayload] = useState<string | null>(null);
+  const [pendingTemplateHeaderBase, setPendingTemplateHeaderBase] = useState<Omit<NexusTemplateHeader, 'name'> | null>(null);
+  const [pendingTemplateDefaultName, setPendingTemplateDefaultName] = useState<string>('Template');
+  const pendingScrollToTableIdRef = useRef<string | null>(null);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const sheetRef = useRef<GridSheetV1>(sheet);
@@ -447,6 +474,148 @@ export function SpreadsheetView({
     if (!activeTableId) return null;
     return tables.find((x) => x.id === activeTableId) || null;
   }, [tables, activeTableId]);
+
+  const saveCurrentTableSelectionAsTemplate = async () => {
+    if (!onSaveTemplateFile) return;
+
+    const rowIds: string[] = [];
+    const colIds: string[] = [];
+    let headerRows = 1;
+    let headerCols = 0;
+    let footerRows = 0;
+    let label = 'selection';
+
+    if (activeTable) {
+      rowIds.push(...(activeTable.rowIds || []));
+      colIds.push(...(activeTable.colIds || []));
+      headerRows = Math.max(0, Math.min(rowIds.length, Math.floor(activeTable.headerRows || 0)));
+      headerCols = Math.max(0, Math.min(colIds.length, Math.floor(activeTable.headerCols || 0)));
+      footerRows = Math.max(0, Math.min(rowIds.length, Math.floor(activeTable.footerRows || 0)));
+      label = activeTable.id;
+    } else if (selectionRect) {
+      const rs = rows.slice(selectionRect.r0, selectionRect.r1 + 1);
+      const cs = cols.slice(selectionRect.c0, selectionRect.c1 + 1);
+      rowIds.push(...rs.map((r) => r.id));
+      colIds.push(...cs.map((c) => c.id));
+      headerRows = Math.min(1, rowIds.length);
+      headerCols = 0;
+      footerRows = 0;
+      label = `${rowIds.length}x${colIds.length}`;
+    }
+
+    if (!rowIds.length || !colIds.length) return;
+
+    const cellOut: Record<string, string> = {};
+    for (let r = 0; r < rowIds.length; r++) {
+      for (let c = 0; c < colIds.length; c++) {
+        const key = `${rowIds[r]}:${colIds[c]}`;
+        const v = cells[key]?.value;
+        if (typeof v === 'string' && v.length) {
+          cellOut[`${r}:${c}`] = v;
+        }
+      }
+    }
+
+    const frag: GridTableTemplateV1 = {
+      version: 1,
+      rows: rowIds.length,
+      cols: colIds.length,
+      headerRows,
+      headerCols,
+      footerRows,
+      cells: cellOut,
+    };
+
+    const payload = ['```nexus-grid-table', JSON.stringify(frag, null, 2), '```', ''].join('\n');
+    const headerBase: Omit<NexusTemplateHeader, 'name'> = {
+      version: 1,
+      ...(templateSourceLabel ? { description: `Saved from ${templateSourceLabel}` } : {}),
+      targetKind: 'grid',
+      mode: 'appendFragment',
+      fragmentKind: 'gridTable',
+      tags: ['grid'],
+    };
+    setPendingTemplatePayload(payload);
+    setPendingTemplateHeaderBase(headerBase);
+    setPendingTemplateDefaultName(`Grid table (${frag.rows}×${frag.cols})`);
+    setSaveTemplateOpen(true);
+  };
+
+  const insertTableTemplate = async (rendered: string) => {
+    const frag = parseGridTableTemplatePayload(rendered);
+    let createdId = '';
+
+    // Choose an insertion anchor near the user's current focus.
+    const selectedPos = { r: selected.r, c: selected.c };
+    const withinActiveTable =
+      !!activeTableInfo && activeTableInfo.r0 <= selected.r && selected.r <= activeTableInfo.r1 && activeTableInfo.c0 <= selected.c && selected.c <= activeTableInfo.c1;
+    const anchor = withinActiveTable && activeTableInfo
+      ? { r0: Math.min(rows.length, activeTableInfo.r1 + 2), c0: Math.max(0, activeTableInfo.c0) }
+      : { r0: Math.max(0, selected.r), c0: Math.max(0, selected.c) };
+
+    mutateSheet((s) => {
+      let next = s;
+      // Ensure the sheet has enough rows/cols to host the fragment at the chosen anchor.
+      const needRows = Math.max(0, anchor.r0 + frag.rows - (next.grid.rows || []).length);
+      const needCols = Math.max(0, anchor.c0 + frag.cols - (next.grid.columns || []).length);
+      for (let i = 0; i < needRows; i++) next = addGridRow(next);
+      for (let i = 0; i < needCols; i++) next = addGridColumn(next);
+
+      const rect = { r0: anchor.r0, r1: anchor.r0 + frag.rows - 1, c0: anchor.c0, c1: anchor.c0 + frag.cols - 1 };
+      const res = createTableFromSelectionModel(next, rect);
+      createdId = res.tableId;
+      next = res.sheet;
+      next = setTableHeaderRowsModel(next, createdId, frag.headerRows);
+      next = setTableHeaderColsModel(next, createdId, frag.headerCols);
+      next = setTableFooterRowsModel(next, createdId, frag.footerRows);
+
+      const newRows = (next.grid.rows || []).slice(anchor.r0, anchor.r0 + frag.rows);
+      const newCols = (next.grid.columns || []).slice(anchor.c0, anchor.c0 + frag.cols);
+      Object.entries(frag.cells || {}).forEach(([k, v]) => {
+        const m = k.match(/^(\d+):(\d+)$/);
+        if (!m) return;
+        const r = Number(m[1]);
+        const c = Number(m[2]);
+        const rowId = newRows[r]?.id;
+        const colId = newCols[c]?.id;
+        if (!rowId || !colId) return;
+        next = setCellValueModel(next, rowId, colId, v);
+      });
+      return next;
+    });
+    if (createdId) {
+      pendingScrollToTableIdRef.current = createdId;
+      setActiveTableId(createdId);
+    }
+  };
+
+  // If a new table becomes active (e.g., inserted from template) it may be offscreen (bottom-right).
+  useEffect(() => {
+    if (!activeTableId) return;
+    const t = (sheet.grid.tables || []).find((x) => x.id === activeTableId) || null;
+    const tl = t ? { rowId: t.rowIds[0] || null, colId: t.colIds[0] || null } : { rowId: null, colId: null };
+    const shouldScroll = pendingScrollToTableIdRef.current === activeTableId;
+
+    if (!shouldScroll) return;
+    if (!t) return;
+    const r0 = tl.rowId ? rowIndexById.get(tl.rowId) : undefined;
+    const c0 = tl.colId ? colIndexById.get(tl.colId) : undefined;
+    if (r0 === undefined || c0 === undefined) return;
+    const host = containerRef.current;
+    if (!host) return;
+
+    // Compute scroll target (same as comment jump).
+    const left = 44 + cols.slice(0, c0).reduce((sum, cc) => sum + (cc.width ?? 88), 0);
+    const top = 22 + rows.slice(0, r0).reduce((sum, rr) => sum + Math.max(36, rr.height ?? 22), 0);
+    host.scrollTo({ left: Math.max(0, left - 120), top: Math.max(0, top - 90), behavior: 'smooth' });
+    host.focus({ preventScroll: true });
+    setSelected({ r: r0, c: c0 });
+    setSelectionStart({ r: r0, c: c0 });
+    setCellSelection(new Set([`${tl.rowId}:${tl.colId}`]));
+    setSelectedCardId(null);
+    setEditingCardId(null);
+    pendingScrollToTableIdRef.current = null;
+  }, [activeTableId, sheet.grid.tables, colIndexById, cols, rowIndexById, rows]);
 
   const activeTableInfo = useMemo(() => {
     if (!activeTable) return null;
@@ -1794,44 +1963,106 @@ export function SpreadsheetView({
 
   return (
     <div className="absolute inset-0 overflow-hidden bg-white flex flex-col">
-      <StickyBars
-        activeTable={activeTable}
-        cellSelectionCount={cellSelection.size}
-        activeRegionId={activeRegionId}
-        onSetHeaderRows={setActiveTableHeaderRows}
-        onSetHeaderCols={setActiveTableHeaderCols}
-        onSetFooterRows={setActiveTableFooterRows}
-        pillsExpandAll={Boolean(activeTable?.pills?.expandAll)}
-        onSetPillsExpandAll={setActiveTablePillsExpandAll}
-        onAddRow={addRow}
-        onAddColumn={addColumn}
-        onAddCard={addCard}
-        onMerge={mergePickedCells}
-        canMerge={cellSelection.size >= 2}
-        onCreateTable={createTableFromSelection}
-        canCreateTable={Boolean(selectionRect)}
-        onUnmergeRegion={unmergeActiveRegion}
-        onOpenMarkdownHelp={() => setShowMarkdownHelp(true)}
-        onOpenTableVisibility={(anchorEl) => {
-          if (!activeTable) return;
-          const rect = anchorEl.getBoundingClientRect();
-          const defDiagramFileId =
-            activeTable.dataObjectLink?.diagramFileId || linkedDiagramFileId || diagramFiles[0]?.id || '';
-          setLinkDraft({
-            tableId: activeTable.id,
-            diagramFileId: defDiagramFileId,
-            dataObjectId: activeTable.dataObjectLink?.dataObjectId || '',
-          });
-          if (defDiagramFileId && onLinkedDiagramFileIdChange) onLinkedDiagramFileIdChange(defDiagramFileId);
-          openTableVisibilityPopover({
-            tableId: activeTable.id,
-            anchor: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
-          });
-        }}
-      />
+      {showStickyBars ? (
+        <StickyBars
+          activeTable={activeTable}
+          cellSelectionCount={cellSelection.size}
+          activeRegionId={activeRegionId}
+          onSetHeaderRows={setActiveTableHeaderRows}
+          onSetHeaderCols={setActiveTableHeaderCols}
+          onSetFooterRows={setActiveTableFooterRows}
+          pillsExpandAll={Boolean(activeTable?.pills?.expandAll)}
+          onSetPillsExpandAll={setActiveTablePillsExpandAll}
+          onAddRow={addRow}
+          onAddColumn={addColumn}
+          onAddCard={addCard}
+          onMerge={mergePickedCells}
+          canMerge={cellSelection.size >= 2}
+          onCreateTable={createTableFromSelection}
+          canCreateTable={Boolean(selectionRect)}
+          onUnmergeRegion={unmergeActiveRegion}
+          onOpenMarkdownHelp={() => setShowMarkdownHelp(true)}
+          onSaveActiveTableAsTemplate={
+            onSaveTemplateFile && (activeTable || selectionRect)
+              ? () => {
+                  void saveCurrentTableSelectionAsTemplate().catch(() => {});
+                }
+              : undefined
+          }
+          onInsertTableFromTemplate={
+            templateFiles && loadTemplateMarkdown
+              ? () => {
+                  setInsertFromTemplateOpen(true);
+                }
+              : undefined
+          }
+          onOpenTableVisibility={(anchorEl) => {
+            if (!activeTable) return;
+            const rect = anchorEl.getBoundingClientRect();
+            const defDiagramFileId =
+              activeTable.dataObjectLink?.diagramFileId || linkedDiagramFileId || diagramFiles[0]?.id || '';
+            setLinkDraft({
+              tableId: activeTable.id,
+              diagramFileId: defDiagramFileId,
+              dataObjectId: activeTable.dataObjectLink?.dataObjectId || '',
+            });
+            if (defDiagramFileId && onLinkedDiagramFileIdChange) onLinkedDiagramFileIdChange(defDiagramFileId);
+            openTableVisibilityPopover({
+              tableId: activeTable.id,
+              anchor: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+            });
+          }}
+        />
+      ) : null}
 
-      <MarkdownHelpModal isOpen={showMarkdownHelp} onClose={() => setShowMarkdownHelp(false)} />
-      {tableVisibilityPopover ? (
+      {showStickyBars ? (
+        <InsertFromTemplateModal
+          open={insertFromTemplateOpen}
+          title="Insert table template"
+          files={templateFiles || []}
+          loadMarkdown={loadTemplateMarkdown || (async () => '')}
+          accept={{ targetKind: 'grid', mode: 'appendFragment', fragmentKind: 'gridTable' }}
+          scope={
+            templateScope && onTemplateScopeChange
+              ? {
+                  value: templateScope,
+                  options: [
+                    { id: 'project', label: 'This project' },
+                    { id: 'account', label: 'Account' },
+                    ...(globalTemplatesEnabled ? [{ id: 'global', label: 'Global' }] : []),
+                  ],
+                  onChange: (next) => onTemplateScopeChange(next as any),
+                }
+              : undefined
+          }
+          onClose={() => setInsertFromTemplateOpen(false)}
+          onInsert={async ({ content }) => {
+            await insertTableTemplate(content);
+          }}
+        />
+      ) : null}
+
+      {showStickyBars ? (
+        <SaveTemplateModal
+          open={saveTemplateOpen}
+          title="Save template"
+          defaultName={pendingTemplateDefaultName}
+          defaultScope="project"
+          onClose={() => setSaveTemplateOpen(false)}
+          onSave={async ({ name, scope }) => {
+            if (!onSaveTemplateFile) throw new Error('Template saving unavailable.');
+            if (!pendingTemplatePayload || !pendingTemplateHeaderBase) throw new Error('No template content to save.');
+            const header: NexusTemplateHeader = { ...pendingTemplateHeaderBase, name };
+            const content = upsertTemplateHeader(pendingTemplatePayload, header);
+            await onSaveTemplateFile({ name, content, scope });
+            setPendingTemplatePayload(null);
+            setPendingTemplateHeaderBase(null);
+          }}
+        />
+      ) : null}
+
+      {showStickyBars ? <MarkdownHelpModal isOpen={showMarkdownHelp} onClose={() => setShowMarkdownHelp(false)} /> : null}
+      {showStickyBars && tableVisibilityPopover ? (
         <div
           data-table-visibility-popover="1"
           className="fixed z-[1000] mac-double-outline bg-white p-1 shadow-xl"

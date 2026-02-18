@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, Copy, FileText, Folder, FolderPlus, Mail, Pencil, Plus, Trash2, Network, Eye, Table } from 'lucide-react';
+import { ArrowLeft, Copy, Download, FileText, Folder, FolderPlus, Mail, Pencil, Plus, Trash2, Network, Eye, Table, LayoutTemplate, FlaskConical, Package, Share2 } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 import { AccessPeopleEditor } from '@/components/AccessPeopleEditor';
 import type { AccessPerson } from '@/lib/local-file-store';
@@ -11,7 +11,16 @@ import { fetchProfileDefaultLayoutDirection } from '@/lib/layout-direction-supab
 import { makeStarterGridMarkdown } from '@/lib/grid-starter';
 import { makeStarterNoteMarkdown } from '@/lib/note-starter';
 import { makeStarterVisionMarkdown } from '@/lib/vision-starter';
+import { makeStarterTestMarkdown } from '@/lib/test-starter';
 import type { DocKind } from '@/lib/doc-kinds';
+import { NewFromTemplateModal } from '@/components/templates/NewFromTemplateModal';
+import { listGlobalTemplates, loadGlobalTemplateContent } from '@/lib/global-templates';
+import { installGlobalTemplateToLibrary } from '@/lib/install-global-template';
+import { TemplateMoveControls } from '@/components/templates/TemplateMoveControls';
+import { ensureTemplateLibraryFolderId, moveTemplateFileToFolder, type TemplateLibraryScope } from '@/lib/template-library';
+import { downloadProjectBundleZip, exportProjectBundleZip } from '@/lib/export-bundle';
+import { downloadKgVectors, exportKgAndVectorsForProject } from '@/lib/kg-vector-export';
+import { ProjectActionMenus } from '@/components/workspace/ProjectActionMenus';
 
 type DbFolder = {
   id: string;
@@ -35,7 +44,7 @@ type DbFile = {
 };
 
 function normalizeKind(raw: unknown): DocKind {
-  return raw === 'note' || raw === 'grid' || raw === 'vision' || raw === 'diagram' ? raw : 'diagram';
+  return raw === 'note' || raw === 'grid' || raw === 'vision' || raw === 'diagram' || raw === 'template' || raw === 'test' ? raw : 'diagram';
 }
 
 function KindIcon({ kind, size }: { kind: unknown; size: number }) {
@@ -43,6 +52,8 @@ function KindIcon({ kind, size }: { kind: unknown; size: number }) {
   if (k === 'grid') return <Table size={size} />;
   if (k === 'note') return <FileText size={size} />;
   if (k === 'vision') return <Eye size={size} />;
+  if (k === 'template') return <LayoutTemplate size={size} />;
+  if (k === 'test') return <FlaskConical size={size} />;
   return <Network size={size} />;
 }
 
@@ -112,6 +123,12 @@ export function WorkspaceBrowserSupabase() {
 
   const [toast, setToast] = useState<string | null>(null);
   const toastTimerRef = useRef<number | null>(null);
+  const [newFromTemplateOpen, setNewFromTemplateOpen] = useState(false);
+  const [projectTab, setProjectTab] = useState<'files' | 'templates'>('files');
+  const [templateScope, setTemplateScope] = useState<'project' | 'account' | 'global'>('project');
+  const [templatesFolderId, setTemplatesFolderId] = useState<string | null>(null);
+  const [templateFiles, setTemplateFiles] = useState<DbFile[]>([]);
+  const [globalTemplateFiles, setGlobalTemplateFiles] = useState<Array<{ id: string; name: string; kind: 'template' }>>([]);
 
   const showToast = (msg: string) => {
     setToast(msg);
@@ -128,6 +145,8 @@ export function WorkspaceBrowserSupabase() {
       toastTimerRef.current = null;
     };
   }, []);
+
+  // Project header dropdowns are encapsulated in `ProjectActionMenus`.
 
   const reload = async () => {
     if (!configured || !supabase || !userId) return;
@@ -175,6 +194,15 @@ export function WorkspaceBrowserSupabase() {
   const folderById = useMemo(() => new Map(folders.map((f) => [f.id, f])), [folders]);
 
   const activeFolder = useMemo(() => (activeFolderId ? folderById.get(activeFolderId) || null : null), [activeFolderId, folderById]);
+  const isAccountTemplatesProject = activeFolder?.name === 'Account Templates';
+
+  // If user opens the special "Account Templates" folder, force it into template-library mode
+  // so account templates don't show up under the normal Files tab.
+  useEffect(() => {
+    if (!isAccountTemplatesProject) return;
+    setProjectTab('templates');
+    setTemplateScope('account');
+  }, [isAccountTemplatesProject]);
 
   const filesByFolder = useMemo(() => {
     const map = new Map<string, DbFile[]>();
@@ -194,6 +222,53 @@ export function WorkspaceBrowserSupabase() {
     return map;
   }, [files]);
 
+  useEffect(() => {
+    let cancelled = false;
+    const run = async () => {
+      setTemplatesFolderId(null);
+      setTemplateFiles([]);
+      setGlobalTemplateFiles([]);
+      if (!supabase) return;
+      if (!userId) return;
+      if (projectTab !== 'templates' && !newFromTemplateOpen) return;
+      if (templateScope === 'project' && !activeFolder) return;
+
+      if (templateScope === 'global') {
+        try {
+          const rows = await listGlobalTemplates(supabase);
+          if (cancelled) return;
+          setGlobalTemplateFiles(rows.map((r) => ({ id: r.id, name: r.name, kind: 'template' as const })));
+        } catch {
+          if (!cancelled) setGlobalTemplateFiles([]);
+        }
+        return;
+      }
+
+      const inheritedAccess = templateScope === 'project' ? ((activeFolder as any)?.access ?? null) : null;
+      const folderId = await ensureTemplateLibraryFolderId(supabase, {
+        userId,
+        scope: templateScope as TemplateLibraryScope,
+        projectFolderId: templateScope === 'project' ? activeFolder!.id : null,
+        inheritedAccess,
+      });
+
+      if (cancelled) return;
+      setTemplatesFolderId(folderId);
+
+      const { data: rows, error } = await supabase
+        .from('files')
+        .select('id,name,owner_id,folder_id,room_name,last_opened_at,updated_at,access,kind')
+        .eq('folder_id', folderId);
+      if (cancelled) return;
+      if (error) throw error;
+      setTemplateFiles((rows || []) as DbFile[]);
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeFolder, newFromTemplateOpen, projectTab, supabase, templateScope, userId]);
+
   const openFile = async (file: DbFile) => {
     if (!supabase) return;
     try {
@@ -202,6 +277,66 @@ export function WorkspaceBrowserSupabase() {
       // ignore
     }
     router.push(`/editor?file=${encodeURIComponent(file.id)}`);
+  };
+
+  const editFileRow = useMemo(() => {
+    if (!editFile) return null;
+    return files.find((f) => f.id === editFile.id) || null;
+  }, [editFile, files]);
+
+  const editFileRowFromTemplates = useMemo(() => {
+    if (!editFile) return null;
+    return templateFiles.find((f) => f.id === editFile.id) || null;
+  }, [editFile, templateFiles]);
+
+  const editDbFile = useMemo(() => editFileRowFromTemplates || editFileRow || null, [editFileRowFromTemplates, editFileRow]);
+  const editingIsTemplate = editDbFile?.kind === 'template';
+
+  const ensureTemplatesFolderIdFor = async (scope: TemplateLibraryScope): Promise<string> => {
+    if (!supabase || !userId) throw new Error('Not ready.');
+    const inheritedAccess = scope === 'project' ? ((activeFolder as any)?.access ?? null) : null;
+    return await ensureTemplateLibraryFolderId(supabase, {
+      userId,
+      scope,
+      projectFolderId: activeFolder?.id ?? null,
+      inheritedAccess,
+    });
+  };
+
+  const [templateMoveScope, setTemplateMoveScope] = useState<TemplateLibraryScope>('project');
+
+  const loadFileMarkdown = async (fileId: string): Promise<string> => {
+    if (!supabase) return '';
+    if (templateScope === 'global') {
+      return await loadGlobalTemplateContent(supabase, fileId);
+    }
+    const { data, error } = await supabase.from('files').select('content').eq('id', fileId).single();
+    if (error) throw error;
+    return (data?.content as string) || '';
+  };
+
+  const createFromTemplate = async (folderId: string, res: { name: string; kind: DocKind; content: string }) => {
+    if (!supabase || !userId) return;
+    const defaultLayout: LayoutDirection = await fetchProfileDefaultLayoutDirection(supabase, userId);
+    const roomName = `file-${crypto.randomUUID()}`;
+    const { data, error: err } = await supabase
+      .from('files')
+      .insert({
+        name: res.name,
+        owner_id: userId,
+        folder_id: folderId,
+        room_name: roomName,
+        last_opened_at: nowIso(),
+        layout_direction: defaultLayout,
+        kind: res.kind,
+        content: res.content,
+      })
+      .select('id,name,owner_id,folder_id,room_name,last_opened_at,updated_at,access,layout_direction,kind')
+      .single();
+    if (err) throw err;
+    const file = data as unknown as DbFile;
+    setFiles((prev) => [file, ...prev]);
+    await openFile(file);
   };
 
   const createProject = async () => {
@@ -327,6 +462,31 @@ export function WorkspaceBrowserSupabase() {
     openFile(file);
   };
 
+  const createTestFile = async (folderId: string) => {
+    if (!supabase || !userId) return;
+    const defaultLayout: LayoutDirection = await fetchProfileDefaultLayoutDirection(supabase, userId);
+    const roomName = `file-${crypto.randomUUID()}`;
+    const initialContent = makeStarterTestMarkdown();
+    const { data, error: err } = await supabase
+      .from('files')
+      .insert({
+        name: 'New Test',
+        owner_id: userId,
+        folder_id: folderId,
+        room_name: roomName,
+        last_opened_at: nowIso(),
+        layout_direction: defaultLayout,
+        kind: 'test',
+        content: initialContent,
+      })
+      .select('id,name,owner_id,folder_id,room_name,last_opened_at,updated_at,access,layout_direction,kind')
+      .single();
+    if (err) return showToast(err.message);
+    const file = data as unknown as DbFile;
+    setFiles((prev) => [file, ...prev]);
+    openFile(file);
+  };
+
   const saveProject = async () => {
     if (!editProject || !supabase) return;
     setEditError(null);
@@ -345,8 +505,10 @@ export function WorkspaceBrowserSupabase() {
     setEditError(null);
     const name = editFile.name.trim();
     if (!name) return setEditError('File name is required.');
-    const access = editFile.people.length ? { people: editFile.people } : null;
-    const { error: err } = await supabase.from('files').update({ name, access }).eq('id', editFile.id);
+    // Templates inherit access from their containing folder (project or account library).
+    // Do not allow per-template access overrides here.
+    const patch: any = editingIsTemplate ? { name } : { name, access: editFile.people.length ? { people: editFile.people } : null };
+    const { error: err } = await supabase.from('files').update(patch).eq('id', editFile.id);
     if (err) return setEditError(err.message);
     setEditFile(null);
     await reload();
@@ -410,7 +572,9 @@ export function WorkspaceBrowserSupabase() {
                   className="mac-window mac-double-outline p-5 group relative cursor-pointer"
                   role="button"
                   tabIndex={0}
-                  onClick={() => setActiveFolderId(folder.id)}
+                  onClick={() => {
+                    setActiveFolderId(folder.id);
+                  }}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') setActiveFolderId(folder.id);
                   }}
@@ -444,11 +608,12 @@ export function WorkspaceBrowserSupabase() {
                         type="button"
                         className="h-7 w-7 border flex items-center justify-center bg-white"
                         title={empty ? 'Delete' : 'Delete (project not empty)'}
-                        disabled={!empty || !canEdit}
+                        disabled={folder.name === 'Account Templates' || !empty || !canEdit}
                         onClick={(e) => {
                           e.preventDefault();
                           e.stopPropagation();
                           if (!canEdit) return;
+                          if (folder.name === 'Account Templates') return;
                           deleteProject(folder.id);
                         }}
                       >
@@ -545,63 +710,197 @@ export function WorkspaceBrowserSupabase() {
             </div>
 
             <div className="flex items-center gap-2">
-              <button
-                type="button"
-                className="mac-btn flex items-center gap-1.5"
-                disabled={!effectiveCanEditFolder(activeFolder, userId, userEmail)}
-                onClick={() => createFile(activeFolder.id)}
-                title={!effectiveCanEditFolder(activeFolder, userId, userEmail) ? 'No edit access' : 'New map'}
-              >
-                <Plus size={14} />
-                New map
-              </button>
-              <button
-                type="button"
-                className="mac-btn flex items-center gap-1.5"
-                disabled={!effectiveCanEditFolder(activeFolder, userId, userEmail)}
-                onClick={() => createGridFile(activeFolder.id)}
-                title={!effectiveCanEditFolder(activeFolder, userId, userEmail) ? 'No edit access' : 'New grid'}
-              >
-                <Plus size={14} />
-                New grid
-              </button>
-              <button
-                type="button"
-                className="mac-btn flex items-center gap-1.5"
-                disabled={!effectiveCanEditFolder(activeFolder, userId, userEmail)}
-                onClick={() => createNoteFile(activeFolder.id)}
-                title={!effectiveCanEditFolder(activeFolder, userId, userEmail) ? 'No edit access' : 'New note'}
-              >
-                <Plus size={14} />
-                New note
-              </button>
-              <button
-                type="button"
-                className="mac-btn flex items-center gap-1.5"
-                disabled={!effectiveCanEditFolder(activeFolder, userId, userEmail)}
-                onClick={() => createVisionFile(activeFolder.id)}
-                title={!effectiveCanEditFolder(activeFolder, userId, userEmail) ? 'No edit access' : 'New vision'}
-              >
-                <Plus size={14} />
-                New vision
-              </button>
-              <button
-                type="button"
-                className="mac-btn flex items-center gap-1.5"
-                disabled={!effectiveCanEditFolder(activeFolder, userId, userEmail)}
-                title={!effectiveCanEditFolder(activeFolder, userId, userEmail) ? 'No edit access' : 'Edit project'}
-                onClick={() => setEditProject({ id: activeFolder.id, name: activeFolder.name, people: activeFolder.access?.people || [] })}
-              >
-                <Pencil size={14} />
-                Edit
-              </button>
+            {isAccountTemplatesProject ? (
+              <div className="flex items-center gap-1 rounded border bg-white p-0.5">
+                <button type="button" className="mac-btn h-8 mac-btn--primary" disabled title="Account templates library">
+                  Templates
+                </button>
+              </div>
+            ) : (
+              <>
+                <div className="flex items-center gap-1 rounded border bg-white p-0.5">
+                  <button
+                    type="button"
+                    className={`mac-btn h-8 ${projectTab === 'files' ? 'mac-btn--primary' : ''}`}
+                    onClick={() => setProjectTab('files')}
+                    title="Project files"
+                  >
+                    Files
+                  </button>
+                  <button
+                    type="button"
+                    className={`mac-btn h-8 ${projectTab === 'templates' ? 'mac-btn--primary' : ''}`}
+                    onClick={() => setProjectTab('templates')}
+                    title="Project templates"
+                  >
+                    Templates
+                  </button>
+                </div>
+                {projectTab === 'templates' ? (
+                  <select
+                    className="mac-field h-8"
+                    value={templateScope}
+                    onChange={(e) => setTemplateScope(e.target.value as any)}
+                    title="Template library"
+                  >
+                    <option value="project">This project</option>
+                    <option value="account">Account</option>
+                    <option value="global">Global</option>
+                  </select>
+                ) : null}
+              </>
+            )}
+
+              <ProjectActionMenus
+                projectTab={projectTab}
+                canEdit={effectiveCanEditFolder(activeFolder, userId, userEmail)}
+                onNewMap={() => createFile(activeFolder.id)}
+                onNewFromTemplate={() => setNewFromTemplateOpen(true)}
+                onNewGrid={() => createGridFile(activeFolder.id)}
+                onNewNote={() => createNoteFile(activeFolder.id)}
+                onNewVision={() => createVisionFile(activeFolder.id)}
+                onNewTest={() => createTestFile(activeFolder.id)}
+                onExportBundle={async () => {
+                  if (!supabase) return;
+                  const includeKgVectors = confirm('Include KG + embeddings outputs in the bundle?');
+                  const out = await exportProjectBundleZip({
+                    supabaseMode: true,
+                    supabase,
+                    projectFolderId: activeFolder.id,
+                    includeKgVectors,
+                  });
+                  downloadProjectBundleZip(out);
+                  showToast('Exported');
+                }}
+                onExportKg={async () => {
+                  if (!supabase) return;
+                  const res = await exportKgAndVectorsForProject({
+                    supabaseMode: true,
+                    supabase,
+                    projectFolderId: activeFolder.id,
+                  });
+                  downloadKgVectors({
+                    graphJsonl: res.graphJsonl,
+                    embeddingsJsonl: res.embeddingsJsonl,
+                    basename: `nexusmap-${activeFolder.id}`,
+                  });
+                  showToast('Exported');
+                }}
+                onEditProject={() => setEditProject({ id: activeFolder.id, name: activeFolder.name, people: activeFolder.access?.people || [] })}
+              />
             </div>
           </div>
 
+          <NewFromTemplateModal
+            open={newFromTemplateOpen}
+            title="New from template"
+            files={(templateScope === 'global'
+              ? globalTemplateFiles
+              : templateFiles.filter((f) => effectiveCanView(f, activeFolder, userId, userEmail))
+            ).map((f: any) => ({ id: String(f.id), name: String(f.name || 'Untitled'), kind: normalizeKind((f as any).kind) }))}
+            loadMarkdown={loadFileMarkdown}
+            scope={{
+              value: templateScope,
+              options: [
+                { id: 'project', label: 'This project' },
+                { id: 'account', label: 'Account' },
+                { id: 'global', label: 'Global' },
+              ],
+              onChange: (next) => setTemplateScope(next as any),
+            }}
+            onClose={() => setNewFromTemplateOpen(false)}
+            onCreate={async ({ name, kind, content }) => {
+              const k = normalizeKind(kind);
+              await createFromTemplate(activeFolder.id, { name, kind: k, content });
+            }}
+          />
+
           <div className="grid gap-2">
-            {(filesByFolder.get(activeFolder.id) || [])
-              .filter((f) => effectiveCanView(f, activeFolder, userId, userEmail))
-              .map((f) => (
+            {(() => {
+              if (projectTab === 'templates' && templateScope === 'global') {
+                const visible = globalTemplateFiles;
+                if (visible.length === 0) {
+                  return <div className="mac-double-outline p-4 text-xs opacity-80">No global templates yet.</div>;
+                }
+                return visible.map((f) => (
+                  <div key={f.id} className="mac-double-outline p-3 text-left flex items-center justify-between gap-3">
+                    <button
+                      type="button"
+                      className="flex items-center gap-2 min-w-0 flex-1 opacity-80 cursor-default"
+                      onClick={() => router.push(`/templates/global/${encodeURIComponent(f.id)}`)}
+                      title="Open preview"
+                    >
+                      <KindIcon kind={f.kind} size={14} />
+                      <div className="text-xs font-semibold truncate">{f.name}</div>
+                    </button>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        type="button"
+                        className="mac-btn h-8 flex items-center gap-1.5"
+                        title="Install into Account Templates"
+                        onClick={async () => {
+                          if (!supabase || !userId) return;
+                          try {
+                            const content = await loadGlobalTemplateContent(supabase, f.id);
+                            const installed = await installGlobalTemplateToLibrary(supabase, {
+                              userId,
+                              content,
+                              fallbackName: f.name,
+                              scope: 'account',
+                            });
+                            showToast('Installed to Account Templates');
+                            router.push(`/editor?file=${encodeURIComponent(installed.fileId)}`);
+                          } catch (e) {
+                            const msg = (e as any)?.message ? String((e as any).message) : 'Install failed.';
+                            showToast(msg);
+                          }
+                        }}
+                      >
+                        <Download size={14} />
+                        Install
+                      </button>
+                      <button
+                        type="button"
+                        className="mac-btn h-8"
+                        title="Install into this project’s Templates folder"
+                        disabled={!effectiveCanEditFolder(activeFolder, userId, userEmail)}
+                        onClick={async () => {
+                          if (!supabase || !userId) return;
+                          if (!effectiveCanEditFolder(activeFolder, userId, userEmail)) return;
+                          try {
+                            const content = await loadGlobalTemplateContent(supabase, f.id);
+                            const installed = await installGlobalTemplateToLibrary(supabase, {
+                              userId,
+                              content,
+                              fallbackName: f.name,
+                              scope: 'project',
+                              projectFolderId: activeFolder.id,
+                            });
+                            showToast('Installed to project Templates');
+                            router.push(`/editor?file=${encodeURIComponent(installed.fileId)}`);
+                          } catch (e) {
+                            const msg = (e as any)?.message ? String((e as any).message) : 'Install failed.';
+                            showToast(msg);
+                          }
+                        }}
+                      >
+                        To project
+                      </button>
+                    </div>
+                  </div>
+                ));
+              }
+
+              const shown = isAccountTemplatesProject ? templateFiles : projectTab === 'templates' ? templateFiles : (filesByFolder.get(activeFolder.id) || []);
+              const visible = shown.filter((f) => effectiveCanView(f, activeFolder, userId, userEmail));
+              if (visible.length === 0) {
+                return (
+                  <div className="mac-double-outline p-4 text-xs opacity-80">
+                    {projectTab === 'templates' ? 'No templates yet.' : 'No maps yet.'}
+                  </div>
+                );
+              }
+              return visible.map((f) => (
                 <div key={f.id} className="mac-double-outline p-3 text-left hover:bg-gray-50 flex items-center justify-between gap-3 group">
                   <button type="button" className="flex items-center gap-2 min-w-0 flex-1" onClick={() => openFile(f)} title="Open">
                     <KindIcon kind={f.kind} size={14} />
@@ -654,7 +953,8 @@ export function WorkspaceBrowserSupabase() {
                     </div>
                   </div>
                 </div>
-              ))}
+              ));
+            })()}
           </div>
         </div>
       )}
@@ -722,7 +1022,7 @@ export function WorkspaceBrowserSupabase() {
           <button type="button" className="absolute inset-0 bg-white/60" aria-label="Close" onClick={() => setEditFile(null)} />
           <div className="relative mac-window mac-double-outline w-[560px] max-w-[96vw] overflow-hidden">
             <div className="mac-titlebar">
-              <div className="mac-title">Edit map</div>
+              <div className="mac-title">{editingIsTemplate ? 'Edit template' : 'Edit map'}</div>
             </div>
             <div className="p-4 space-y-4">
               <div className="space-y-2">
@@ -730,7 +1030,35 @@ export function WorkspaceBrowserSupabase() {
                 <input className="mac-field w-full" value={editFile.name} onChange={(e) => setEditFile((p) => (p ? { ...p, name: e.target.value } : p))} />
               </div>
 
-              <AccessPeopleEditor label="Access" value={editFile.people} onChange={(next) => setEditFile((p) => (p ? { ...p, people: next } : p))} error={editError} onError={setEditError} />
+              {editingIsTemplate ? (
+                <TemplateMoveControls
+                  value={templateMoveScope}
+                  onChange={setTemplateMoveScope}
+                  disabled={!supabase || !userId || (templateMoveScope === 'project' && !activeFolder)}
+                  onMove={async () => {
+                    if (!supabase || !userId) return;
+                    if (!editFile) return;
+                    if (templateMoveScope === 'project' && !activeFolder) return;
+                    try {
+                      const targetFolderId = await ensureTemplatesFolderIdFor(templateMoveScope);
+                      await moveTemplateFileToFolder(supabase, { fileId: editFile.id, targetFolderId });
+                      showToast('Moved');
+                      setEditFile(null);
+                      await reload();
+                    } catch (e) {
+                      showToast(e instanceof Error ? e.message : 'Move failed');
+                    }
+                  }}
+                />
+              ) : (
+                <AccessPeopleEditor
+                  label="Access"
+                  value={editFile.people}
+                  onChange={(next) => setEditFile((p) => (p ? { ...p, people: next } : p))}
+                  error={editError}
+                  onError={setEditError}
+                />
+              )}
 
               {editError ? <div className="text-xs">{editError}</div> : null}
 

@@ -56,8 +56,26 @@ export function SheetListPanel({ doc, onChange }: { doc: GridDoc; onChange: (nex
         {sheets.length === 0 ? <div className="text-xs opacity-70 p-2">No sheets.</div> : null}
         {sheets.map((s, idx) => {
           const active = s.id === activeId;
+          const openSheet = () => onChange({ ...doc, activeSheetId: s.id });
           return (
-            <div key={s.id} className={`mac-double-outline mb-2 ${active ? 'mac-shadow-hard' : ''}`}>
+            <div
+              key={s.id}
+              className={`mac-double-outline mb-2 ${active ? 'mac-shadow-hard' : ''} cursor-pointer`}
+              role="button"
+              tabIndex={0}
+              onClick={() => {
+                if (renamingId === s.id) return;
+                openSheet();
+              }}
+              onKeyDown={(e) => {
+                if (renamingId === s.id) return;
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  openSheet();
+                }
+              }}
+              title="Open sheet"
+            >
               <div className="p-2 flex items-center gap-2">
                 {renamingId === s.id ? (
                   <input
@@ -82,7 +100,11 @@ export function SheetListPanel({ doc, onChange }: { doc: GridDoc; onChange: (nex
                   <button
                     type="button"
                     className="text-left text-xs font-semibold truncate flex-1"
-                    onClick={() => onChange({ ...doc, activeSheetId: s.id })}
+                    onClick={(e) => {
+                      // Avoid double-triggering wrapper click.
+                      e.stopPropagation();
+                      openSheet();
+                    }}
                     title="Open sheet"
                   >
                     {s.name}
@@ -92,7 +114,8 @@ export function SheetListPanel({ doc, onChange }: { doc: GridDoc; onChange: (nex
                   type="button"
                   className="h-7 w-7 border flex items-center justify-center bg-white"
                   title="Rename"
-                  onClick={() => {
+                  onClick={(e) => {
+                    e.stopPropagation();
                     setRenamingId(s.id);
                     setDraft(s.name);
                   }}
@@ -104,7 +127,8 @@ export function SheetListPanel({ doc, onChange }: { doc: GridDoc; onChange: (nex
                   className="h-7 w-7 border flex items-center justify-center bg-white"
                   title="Delete"
                   disabled={sheets.length <= 1}
-                  onClick={() => {
+                  onClick={(e) => {
+                    e.stopPropagation();
                     if (sheets.length <= 1) return;
                     const nextSheets = sheets.filter((x) => x.id !== s.id);
                     const nextActive = active ? nextSheets[Math.max(0, idx - 1)]?.id || nextSheets[0].id : activeId;
@@ -120,7 +144,8 @@ export function SheetListPanel({ doc, onChange }: { doc: GridDoc; onChange: (nex
                   className="h-7 w-7 border flex items-center justify-center bg-white"
                   title="Move up"
                   disabled={idx === 0}
-                  onClick={() => {
+                  onClick={(e) => {
+                    e.stopPropagation();
                     if (idx === 0) return;
                     const next = sheets.slice();
                     const tmp = next[idx - 1];
@@ -136,7 +161,8 @@ export function SheetListPanel({ doc, onChange }: { doc: GridDoc; onChange: (nex
                   className="h-7 w-7 border flex items-center justify-center bg-white"
                   title="Move down"
                   disabled={idx === sheets.length - 1}
-                  onClick={() => {
+                  onClick={(e) => {
+                    e.stopPropagation();
                     if (idx === sheets.length - 1) return;
                     const next = sheets.slice();
                     const tmp = next[idx + 1];

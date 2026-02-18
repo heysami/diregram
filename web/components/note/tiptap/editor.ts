@@ -10,10 +10,12 @@ import TaskItem from '@tiptap/extension-task-item';
 import Placeholder from '@tiptap/extension-placeholder';
 import Dropcursor from '@tiptap/extension-dropcursor';
 import Gapcursor from '@tiptap/extension-gapcursor';
+import Link from '@tiptap/extension-link';
 import { SlashMenuExtension } from '@/components/note/tiptap/slashMenuExtension';
 import { NexusEmbedNode } from '@/components/note/tiptap/nodes/NexusEmbedNode';
 import { NexusTableNode } from '@/components/note/tiptap/nodes/NexusTableNode';
 import { NexusTestNode } from '@/components/note/tiptap/nodes/NexusTestNode';
+import { NexusNoteLinkNode } from '@/components/note/tiptap/nodes/NexusNoteLinkNode';
 import { NexusBoxNode } from '@/components/note/tiptap/nodes/NexusBoxNode';
 import { NexusToggleNode } from '@/components/note/tiptap/nodes/NexusToggleNode';
 import { NexusColumnsNode, NexusColumnNode } from '@/components/note/tiptap/nodes/NexusColumnsNode';
@@ -30,6 +32,11 @@ export function useNoteEditor(opts: {
 
   const extensions = [
     StarterKit,
+    Link.configure({
+      openOnClick: false,
+      autolink: true,
+      linkOnPaste: true,
+    }),
     TaskList,
     TaskItem.configure({ nested: true }),
     Dropcursor,
@@ -38,6 +45,7 @@ export function useNoteEditor(opts: {
     NexusEmbedNode.configure({ yDoc }),
     NexusTableNode.configure({ yDoc }),
     NexusTestNode.configure({ yDoc }),
+    NexusNoteLinkNode.configure({ yDoc }),
     NexusBoxNode,
     NexusToggleNode,
     NexusColumnsNode,
@@ -83,6 +91,8 @@ export function useNoteEditor(opts: {
             '[&_pre]:my-3 [&_pre]:rounded [&_pre]:bg-slate-100 [&_pre]:p-2 [&_pre]:overflow-x-auto',
             '[&_code]:rounded [&_code]:bg-slate-100 [&_code]:px-1 [&_code]:py-[1px] [&_code]:font-mono [&_code]:text-[12px]',
             '[&_hr]:my-6 [&_hr]:border-slate-200',
+            // Links: make visually obvious (note-to-note hyperlinks, etc.)
+            '[&_a]:text-blue-700 [&_a]:underline [&_a]:underline-offset-2 [&_a:hover]:text-blue-800',
 
             // Task list: TipTap renders as <ul data-type="taskList"> and <li data-type="taskItem">.
             // Override generic list styles so we don't get bullets + weird stacking.

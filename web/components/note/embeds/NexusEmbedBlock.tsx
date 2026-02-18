@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import * as Y from 'yjs';
+import { useRouter } from 'next/navigation';
 import { useAuth } from '@/hooks/use-auth';
 import { useRemoteNexusDoc } from '@/hooks/use-remote-nexus-doc';
 import { SystemFlowEditor } from '@/components/SystemFlowEditor';
@@ -9,6 +10,7 @@ import { NexusCanvas } from '@/components/NexusCanvas';
 import { DataObjectsCanvas } from '@/components/DataObjectsCanvas';
 import { parseNexusMarkdown } from '@/lib/nexus-parser';
 import { buildNoteEmbedCommentTargetKey } from '@/lib/note-comments';
+import { loadVisionDoc } from '@/lib/visionjson';
 
 export type NexusEmbedSpec =
   | {
@@ -29,6 +31,12 @@ export type NexusEmbedSpec =
       id: string;
       kind: 'dataObjects';
       fileId?: string;
+    }
+  | {
+      id: string;
+      kind: 'visionCard';
+      fileId?: string;
+      cardId: string;
     };
 
 function safeJsonParse(s: string): unknown | null {
@@ -50,6 +58,7 @@ export function NexusEmbedBlock({
   commentMode?: boolean;
   onOpenComments?: (info: { targetKey: string; targetLabel?: string }) => void;
 }) {
+  const router = useRouter();
   const parsed = safeJsonParse(raw);
   const spec = parsed as NexusEmbedSpec | null;
 
@@ -172,6 +181,67 @@ export function NexusEmbedBlock({
         </div>
       </div>,
     );
+  }
+
+  if (spec.kind === 'visionCard') {
+    const cardId = String((spec as any)?.cardId || '').trim();
+    const { thumb, title } = (() => {
+      try {
+        if (!cardId) return { thumb: '', title: '' };
+        const md = targetDoc.getText('nexus').toString();
+        const loaded = loadVisionDoc(md);
+        const snap: any = (loaded.doc as any)?.tldraw || null;
+        const store = snap?.document?.store;
+        if (!store || typeof store !== 'object') return { thumb: '', title: '' };
+        const rec: any = (store as any)[cardId] || null;
+        if (!rec || rec.typeName !== 'shape' || String(rec.type || '') !== 'nxcard') return { thumb: '', title: '' };
+        const t = typeof rec?.props?.title === 'string' ? String(rec.props.title).trim() : '';
+        const th = typeof rec?.props?.thumb === 'string' ? String(rec.props.thumb).trim() : '';
+        return { thumb: th, title: t };
+      } catch {
+        return { thumb: '', title: '' };
+      }
+    })();
+
+    const fileId = typeof (spec as any)?.fileId === 'string' ? String((spec as any).fileId).trim() : '';
+    const canOpen = !!fileId && !!cardId && !commentMode;
+
+    const body = (
+      <div className="my-4 rounded-lg border border-slate-200 bg-white overflow-hidden">
+        <div className="px-3 py-2 border-b bg-slate-50 text-[11px] font-semibold text-slate-700 flex items-center justify-between gap-2">
+          <div className="min-w-0 truncate">
+            Vision card {title ? <span className="opacity-80">· {title}</span> : null}
+          </div>
+          <div className="font-mono text-[11px] opacity-70 truncate">{cardId || 'missing cardId'}</div>
+        </div>
+        <div className="p-3">
+          {thumb ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={thumb} alt={title || 'Vision card'} className="w-full max-h-[320px] object-cover rounded border" />
+          ) : (
+            <div className="h-[180px] rounded border bg-slate-50 flex items-center justify-center text-xs text-slate-600">
+              {cardId ? 'No thumbnail saved on this card yet.' : 'Set cardId to embed a vision card.'}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+
+    return wrap(canOpen ? (
+      <button
+        type="button"
+        className="w-full text-left"
+        onClick={(e) => {
+          e.stopPropagation();
+          router.push(`/editor?file=${encodeURIComponent(fileId)}#${encodeURIComponent(cardId)}`);
+        }}
+        title="Open vision file and focus this card"
+      >
+        {body}
+      </button>
+    ) : (
+      body
+    ));
   }
 
   return null;

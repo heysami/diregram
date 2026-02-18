@@ -7,12 +7,17 @@ export type FlowTabProcessReference =
       rootProcessNodeId: string;
       /** For whole, this will equal rootProcessNodeId */
       targetNodeId: string;
+      /** Stable anchor for rootProcessNodeId (preferred for resolution). */
+      rootProcessRunningNumber?: number;
     }
   | {
       kind: 'inner';
       rootProcessNodeId: string;
       /** Specific node inside the selected root */
       targetNodeId: string;
+      /** Stable anchors for resolution when node ids shift. */
+      rootProcessRunningNumber?: number;
+      targetRunningNumber?: number;
       /** Expanded running number for the target node once expanded */
       expandedRunningNumber?: number;
       /** Expanded grid node key created for this reference */

@@ -7,6 +7,7 @@ import { WorkspaceBrowser } from '@/components/WorkspaceBrowser';
 import { WorkspaceBrowserSupabase } from '@/components/WorkspaceBrowserSupabase';
 import { useAuth } from '@/hooks/use-auth';
 import { DiregramMark } from '@/components/DiregramMark';
+import { LayoutTemplate } from 'lucide-react';
 
 export default function WorkspaceClient() {
   const router = useRouter();
@@ -28,6 +29,10 @@ export default function WorkspaceClient() {
             </button>
           </div>
           <div className="flex items-center gap-3">
+            <button type="button" className="mac-btn h-8 flex items-center gap-1.5" onClick={() => router.push('/templates/global')}>
+              <LayoutTemplate size={14} />
+              Global templates
+            </button>
             <AuthStatus />
           </div>
         </header>

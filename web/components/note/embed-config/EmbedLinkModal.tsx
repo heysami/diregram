@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import type { DocKind } from '@/lib/doc-kinds';
 import type { WorkspaceFile } from '@/components/note/embed-config/useWorkspaceFiles';
 import { WorkspaceFilePicker } from '@/components/note/embed-config/WorkspaceFilePicker';
 import { useFileMarkdown } from '@/components/note/embed-config/useFileMarkdown';
@@ -214,7 +213,7 @@ export function EmbedLinkModal({
       <WorkspaceFilePicker
         open={showPicker}
         title="Select diagram file"
-        files={files.filter((f) => (f.kind === 'diagram' || f.kind === 'vision') as boolean)}
+        files={files.filter((f) => f.kind === 'diagram')}
         loading={loadingFiles}
         onPick={(f) => {
           setFileId(f.id);

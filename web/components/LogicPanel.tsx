@@ -20,6 +20,10 @@ import {
   type NexusTagGroup,
   type NexusTagStore,
 } from '@/lib/tag-store';
+import { upsertTemplateHeader, type NexusTemplateHeader } from '@/lib/nexus-template';
+import { InsertFromTemplateModal, type WorkspaceFileLite as TemplateWorkspaceFileLite } from '@/components/templates/InsertFromTemplateModal';
+import { SaveTemplateModal } from '@/components/templates/SaveTemplateModal';
+import { buildTemplateFlowMetaForSubtree } from '@/lib/template-flow-meta';
 
 // Simple toast state
 let toastMessage: string | null = null;
@@ -59,11 +63,43 @@ interface Props {
   onProcessFlowModeNodesChange?: (nodes: Set<string> | ((prev: Set<string>) => Set<string>)) => void;
   onSelectConditions?: (conditions: Record<string, string>) => void;
   getRunningNumber: (nodeId: string) => number | undefined; // Function to get running number for a node
+  getProcessRunningNumber?: (nodeId: string) => number | undefined;
+  templateScope?: 'project' | 'account' | 'global';
+  onTemplateScopeChange?: (next: 'project' | 'account' | 'global') => void;
+  templateFiles?: TemplateWorkspaceFileLite[];
+  loadTemplateMarkdown?: (fileId: string) => Promise<string>;
+  onSaveTemplateFile?: (res: { name: string; content: string; scope?: 'project' | 'account' }) => Promise<void> | void;
+  templateSourceLabel?: string;
+  globalTemplatesEnabled?: boolean;
 }
 
-export function LogicPanel({ node, doc, activeVariantId, roots, expandedNodes, onExpandedNodesChange, processFlowModeNodes, onProcessFlowModeNodesChange, onSelectConditions, getRunningNumber }: Props) {
+export function LogicPanel({
+  node,
+  doc,
+  activeVariantId,
+  roots,
+  expandedNodes,
+  onExpandedNodesChange,
+  processFlowModeNodes,
+  onProcessFlowModeNodesChange,
+  onSelectConditions,
+  getRunningNumber,
+  getProcessRunningNumber,
+  templateScope,
+  onTemplateScopeChange,
+  templateFiles,
+  loadTemplateMarkdown,
+  onSaveTemplateFile,
+  templateSourceLabel,
+  globalTemplatesEnabled,
+}: Props) {
   const structure = useNexusStructure(doc, roots);
   const toastMessage = useToast();
+  const [insertFromTemplateOpen, setInsertFromTemplateOpen] = useState(false);
+  const [saveTemplateOpen, setSaveTemplateOpen] = useState(false);
+  const [pendingTemplatePayload, setPendingTemplatePayload] = useState<string | null>(null);
+  const [pendingTemplateHeaderBase, setPendingTemplateHeaderBase] = useState<Omit<NexusTemplateHeader, 'name'> | null>(null);
+  const [pendingTemplateDefaultName, setPendingTemplateDefaultName] = useState<string>('Template');
   
   // Build node map for parent traversal
   const nodeMap = useMemo(() => {
@@ -84,6 +120,13 @@ export function LogicPanel({ node, doc, activeVariantId, roots, expandedNodes, o
     traverse(roots);
     return map;
   }, [roots]);
+
+  const buildFlowMetaForSubtree = useMemo(() => {
+    const getter = getProcessRunningNumber;
+    if (!getter) return null;
+    return (root: NexusNode | null): NexusTemplateHeader['flowMeta'] | undefined =>
+      buildTemplateFlowMetaForSubtree({ doc, root, getProcessRunningNumber: getter });
+  }, [doc, getProcessRunningNumber]);
 
   /**
    * Resolve the "hub context" for this panel.
@@ -931,6 +974,53 @@ export function LogicPanel({ node, doc, activeVariantId, roots, expandedNodes, o
       </div>
 
       <div className="mb-6">
+        <div className="rounded-md border border-gray-200 bg-white p-3">
+          <div className="text-[11px] font-semibold text-gray-700 mb-2">Templates</div>
+          <div className="flex flex-col gap-2">
+            <button
+              type="button"
+              className="mac-btn h-8 text-[11px]"
+              disabled={!onSaveTemplateFile}
+              title={!onSaveTemplateFile ? 'Template actions are not available in this context.' : 'Save this node (and its subtree) as a reusable template.'}
+              onClick={async () => {
+                if (!onSaveTemplateFile) return;
+                const rawName = String(node.content || '').trim();
+                const baseName = (rawName.match(/^([^#]+)/)?.[1] || rawName || 'Template').trim();
+                const payload = structure.extractSubtreeMarkdown(node, nodeMap, activeVariantId);
+                const headerBase: Omit<NexusTemplateHeader, 'name'> = {
+                  version: 1,
+                  ...(templateSourceLabel ? { description: `Saved from ${templateSourceLabel}` } : {}),
+                  targetKind: 'diagram',
+                  mode: 'appendFragment',
+                  fragmentKind: 'diagramSubtree',
+                  ...(node.isFlowNode ? { tags: ['flow'] } : {}),
+                  ...(buildFlowMetaForSubtree ? (buildFlowMetaForSubtree(node) ? { flowMeta: buildFlowMetaForSubtree(node) } : {}) : {}),
+                };
+                setPendingTemplatePayload(payload);
+                setPendingTemplateHeaderBase(headerBase);
+                setPendingTemplateDefaultName(baseName);
+                setSaveTemplateOpen(true);
+              }}
+            >
+              Save node subtree as template
+            </button>
+            <button
+              type="button"
+              className="mac-btn h-8 text-[11px]"
+              disabled={!templateFiles || !loadTemplateMarkdown || (templateFiles || []).length === 0}
+              title={!templateFiles || (templateFiles || []).length === 0 ? 'No templates found for this project yet.' : 'Insert a saved template as a child of this node.'}
+              onClick={() => setInsertFromTemplateOpen(true)}
+            >
+              Insert from template…
+            </button>
+          </div>
+          <div className="mt-2 text-[10px] text-gray-500">
+            Templates are created from your existing content (no manual markdown).
+          </div>
+        </div>
+      </div>
+
+      <div className="mb-6">
         <label className="block text-xs font-medium text-gray-700 mb-1">Icon (emoji / ascii)</label>
         <div className="flex items-center gap-2">
           <div className="w-10 h-10 rounded-md border border-gray-200 bg-white flex items-center justify-center shrink-0">
@@ -1700,6 +1790,51 @@ export function LogicPanel({ node, doc, activeVariantId, roots, expandedNodes, o
         onSelectScenario={(scenario) => {
           onSelectConditions?.(scenario.conditions);
           setShowMatrix(false);
+        }}
+      />
+
+      <InsertFromTemplateModal
+        open={insertFromTemplateOpen}
+        title="Insert flow template"
+        files={templateFiles || []}
+        loadMarkdown={loadTemplateMarkdown || (async () => '')}
+        accept={{ targetKind: 'diagram', mode: 'appendFragment', fragmentKind: 'diagramSubtree' }}
+        scope={
+          templateScope && onTemplateScopeChange
+            ? {
+                value: templateScope,
+                options: [
+                  { id: 'project', label: 'This project' },
+                  { id: 'account', label: 'Account' },
+                  ...(globalTemplatesEnabled ? [{ id: 'global', label: 'Global' }] : []),
+                ],
+                onChange: (next) => onTemplateScopeChange(next as any),
+              }
+            : undefined
+        }
+        onClose={() => setInsertFromTemplateOpen(false)}
+        onInsert={async ({ content }) => {
+          const res = structure.insertSubtreeMarkdownAsChild(node, nodeMap, content, activeVariantId);
+          if (!res) throw new Error('Nothing to insert.');
+          showToast('Inserted');
+        }}
+      />
+
+      <SaveTemplateModal
+        open={saveTemplateOpen}
+        title="Save template"
+        defaultName={pendingTemplateDefaultName}
+        defaultScope="project"
+        onClose={() => setSaveTemplateOpen(false)}
+        onSave={async ({ name, scope }) => {
+          if (!onSaveTemplateFile) throw new Error('Template saving unavailable.');
+          if (!pendingTemplatePayload || !pendingTemplateHeaderBase) throw new Error('No template content to save.');
+          const header: NexusTemplateHeader = { ...pendingTemplateHeaderBase, name };
+          const content = upsertTemplateHeader(pendingTemplatePayload, header);
+          await onSaveTemplateFile({ name, content, scope });
+          setPendingTemplatePayload(null);
+          setPendingTemplateHeaderBase(null);
+          showToast('Template saved');
         }}
       />
 

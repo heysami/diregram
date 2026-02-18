@@ -7,6 +7,7 @@ import {
 } from '@/lib/flowtab-process-references';
 import { runTreeTest, type TreeTestRunState } from '@/lib/tree-testing';
 import { extractExpandedIdsFromMarkdown } from '@/lib/expanded-state-storage';
+import { resolveFlowTabProcessReference } from '@/lib/flowtab-reference-resolver';
 
 export type InnerFlowStep = {
   flowNodeId: string;
@@ -41,7 +42,8 @@ export function buildTreeTestModel(opts: {
     };
   }
 
-  const core = runTreeTest({ roots: mainRoots, reference: ref });
+  const resolvedRef = resolveFlowTabProcessReference({ doc, mainRoots, reference: ref });
+  const core = runTreeTest({ roots: mainRoots, reference: resolvedRef });
   if (core.kind === 'error') return core;
 
   const markdown = doc.getText('nexus').toString();

@@ -123,6 +123,9 @@ function migrate(raw: unknown): LocalFileStore | null {
       };
     });
 
+  const folderNameById = new Map<string, string>();
+  folders.forEach((f) => folderNameById.set(f.id, f.name));
+
   const files: LocalFile[] = filesRaw
     .filter((f: unknown) => f && typeof f === 'object')
     .map((f: unknown) => {
@@ -131,12 +134,25 @@ function migrate(raw: unknown): LocalFileStore | null {
       const createdAt = typeof ff.createdAt === 'number' ? ff.createdAt : now();
       const lastOpenedAt = typeof ff.lastOpenedAt === 'number' ? ff.lastOpenedAt : createdAt;
       const layoutDirection = ff.layoutDirection === 'vertical' ? 'vertical' : 'horizontal';
+      const folderId = typeof ff.folderId === 'string' ? ff.folderId : null;
+      const folderName = folderId ? folderNameById.get(folderId) || '' : '';
+      const isTemplateFolder = folderName === 'Templates' || folderName === 'Account Templates';
+
       const kind =
-        ff.kind === 'note' || ff.kind === 'grid' || ff.kind === 'vision' || ff.kind === 'diagram' ? ff.kind : 'diagram';
+        ff.kind === 'note' ||
+        ff.kind === 'grid' ||
+        ff.kind === 'vision' ||
+        ff.kind === 'diagram' ||
+        ff.kind === 'template' ||
+        ff.kind === 'test'
+          ? ff.kind
+          : isTemplateFolder
+            ? 'template'
+            : 'diagram';
       return {
         id: typeof ff.id === 'string' ? ff.id : uuid(),
         name: typeof ff.name === 'string' ? ff.name : 'Map',
-        folderId: typeof ff.folderId === 'string' ? ff.folderId : null,
+        folderId,
         roomName: typeof ff.roomName === 'string' ? ff.roomName : `file-${uuid()}`,
         kind,
         layoutDirection,

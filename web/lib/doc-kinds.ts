@@ -1,4 +1,4 @@
-export type DocKind = 'diagram' | 'note' | 'grid' | 'vision';
+export type DocKind = 'diagram' | 'note' | 'grid' | 'vision' | 'template' | 'test';
 
 export type NexusDocHeaderV1 = {
   kind: DocKind;

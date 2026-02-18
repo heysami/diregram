@@ -15,7 +15,6 @@ import { MainNodeMultiSelectPanel } from '@/components/MainNodeMultiSelectPanel'
 import { DataObjectsCanvas } from '@/components/DataObjectsCanvas';
 import { FlowsCanvas } from '@/components/FlowsCanvas';
 import { SystemFlowsCanvas } from '@/components/SystemFlowsCanvas';
-import { TestingCanvas } from '@/components/TestingCanvas';
 import { AppHeader, type AppView } from '@/components/AppHeader';
 import { CommentsPanel } from '@/components/CommentsPanel';
 import { parseNexusMarkdown } from '@/lib/nexus-parser';
@@ -39,14 +38,23 @@ import { useExpandedMainDataObjectInheritance } from '@/hooks/use-expanded-main-
 import { useChangeViewWithSelectionReset } from '@/hooks/use-change-view-with-selection-reset';
 import type { TagViewState } from '@/types/tagging';
 import { ImportMarkdownModal } from '@/components/ImportMarkdownModal';
-import { ensureLocalFileStore, saveLocalFileStore, setLocalFileLayoutDirection, type LocalFile } from '@/lib/local-file-store';
+import {
+  createLocalFile,
+  createLocalFolder,
+  ensureLocalFileStore,
+  saveLocalFileStore,
+  setLocalFileLayoutDirection,
+  type LocalFile,
+} from '@/lib/local-file-store';
 import { loadFileSnapshot, saveFileSnapshot } from '@/lib/local-doc-snapshots';
 import { useAuth } from '@/hooks/use-auth';
 import { usePinnedTags } from '@/hooks/use-pinned-tags';
 import { useToolbarPinnedTags } from '@/hooks/use-toolbar-pinned-tags';
-import { Database, FlaskConical, LayoutDashboard, Network, Workflow } from 'lucide-react';
+import { Database, LayoutDashboard, Network, Workflow } from 'lucide-react';
 import { normalizeLayoutDirection, type LayoutDirection } from '@/lib/layout-direction';
 import { canEditFromAccess } from '@/lib/access-control';
+import { fetchProfileDefaultLayoutDirection } from '@/lib/layout-direction-supabase';
+import { listGlobalTemplates, loadGlobalTemplateContent } from '@/lib/global-templates';
 
 type ActiveFileMeta = {
   id: string;
@@ -60,12 +68,236 @@ type ActiveFileMeta = {
 export function EditorApp() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { configured, ready, user } = useAuth();
+  const { configured, ready, supabase, user } = useAuth();
   const supabaseMode = configured && !user?.isLocalAdmin;
+  const globalTemplatesEnabled = supabaseMode && ready && !!supabase && !!user?.id;
 
   const [activeFile, setActiveFile] = useState<ActiveFileMeta | null>(null);
   const activeRoomName = activeFile?.roomName || 'nexus-demo';
   const [layoutDirection, setLayoutDirection] = useState<LayoutDirection>('horizontal');
+
+  const [templateScope, setTemplateScope] = useState<'project' | 'account' | 'global'>('project');
+
+  // Templates live either in:
+  // - project scope: a hidden "Templates" folder under the active project's folder
+  // - account scope: a root-level "Account Templates" folder
+  const [templatesFolderId, setTemplatesFolderId] = useState<string | null>(null);
+  const [templateFiles, setTemplateFiles] = useState<
+    Array<{ id: string; name: string; kind: 'note' | 'diagram' | 'grid' | 'vision' | 'template' }>
+  >([]);
+
+  const ensureTemplatesFolderId = useCallback(async (scopeOverride?: 'project' | 'account'): Promise<string | null> => {
+    const scope = scopeOverride || (templateScope === 'account' ? 'account' : 'project');
+    const folderName = scope === 'account' ? 'Account Templates' : 'Templates';
+    const parentId = scope === 'account' ? null : (activeFile?.folderId ?? null);
+    if (!supabaseMode) {
+      const store = ensureLocalFileStore();
+      const existing = store.folders.find((f) => f.parentId === parentId && f.name === folderName) || null;
+      if (existing) return existing.id;
+      const next = createLocalFolder(store, folderName, parentId);
+      const created = next.folders[next.folders.length - 1] || null;
+      saveLocalFileStore(next);
+      return created?.id || null;
+    }
+
+    if (!ready) return null;
+    const userId = user?.id || null;
+    if (!userId) return null;
+    const { createClient } = await import('@/lib/supabase');
+    const supabase = createClient();
+    if (!supabase) return null;
+
+    let q = supabase.from('folders').select('id').eq('owner_id', userId).eq('name', folderName);
+    q = parentId ? q.eq('parent_id', parentId) : q.is('parent_id', null);
+    const { data: existing } = await q.maybeSingle();
+    const existingId = (existing as { id?: string } | null)?.id;
+    if (existingId) return String(existingId);
+
+    let inheritedAccess: unknown = null;
+    if (scope === 'project' && parentId) {
+      try {
+        const { data: parentRow } = await supabase.from('folders').select('access').eq('id', parentId).maybeSingle();
+        inheritedAccess = (parentRow as any)?.access ?? null;
+      } catch {
+        inheritedAccess = null;
+      }
+    }
+
+    const { data: created, error } = await supabase
+      .from('folders')
+      .insert({
+        name: folderName,
+        owner_id: userId,
+        parent_id: parentId,
+        ...(inheritedAccess ? { access: inheritedAccess as any } : {}),
+      })
+      .select('id')
+      .single();
+    if (error) throw error;
+    return String((created as { id: string }).id);
+  }, [activeFile?.folderId, ready, supabaseMode, templateScope, user?.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const run = async () => {
+      if (!activeFile) {
+        setTemplatesFolderId(null);
+        setTemplateFiles([]);
+        return;
+      }
+      if (templateScope === 'global') {
+        setTemplatesFolderId(null);
+        if (!supabaseMode) {
+          setTemplateFiles([]);
+          return;
+        }
+        if (!ready) return;
+        const userId = user?.id || null;
+        if (!userId) return;
+        try {
+          const { createClient } = await import('@/lib/supabase');
+          const supabase = createClient();
+          if (!supabase) return;
+          const rows = await listGlobalTemplates(supabase);
+          if (cancelled) return;
+          setTemplateFiles(rows.map((r) => ({ id: r.id, name: r.name, kind: 'template' as const })));
+        } catch {
+          if (!cancelled) setTemplateFiles([]);
+        }
+        return;
+      }
+      try {
+        const folderId = await ensureTemplatesFolderId();
+        if (cancelled) return;
+        setTemplatesFolderId(folderId);
+        if (!folderId) {
+          setTemplateFiles([]);
+          return;
+        }
+
+        if (!supabaseMode) {
+          const store = ensureLocalFileStore();
+          const next = (store.files || [])
+            .filter((f) => f.folderId === folderId)
+            .map((f) => ({
+              id: String(f.id),
+              name: String(f.name || 'Untitled'),
+              kind: (f.kind === 'note' || f.kind === 'grid' || f.kind === 'vision' || f.kind === 'diagram' || f.kind === 'template' ? f.kind : 'note') as
+                | 'note'
+                | 'diagram'
+                | 'grid'
+                | 'vision'
+                | 'template',
+            }))
+            .sort((a, b) => a.name.localeCompare(b.name));
+          setTemplateFiles(next);
+          return;
+        }
+
+        if (!ready) return;
+        const userId = user?.id || null;
+        if (!userId) return;
+        const { createClient } = await import('@/lib/supabase');
+        const supabase = createClient();
+        if (!supabase) return;
+        const { data, error } = await supabase.from('files').select('id,name,kind').eq('folder_id', folderId).order('name');
+        if (error) throw error;
+        const next = (data || [])
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          .map((r: any) => ({
+            id: String(r?.id || ''),
+            name: String(r?.name || 'Untitled'),
+            kind: (r?.kind === 'note' || r?.kind === 'grid' || r?.kind === 'vision' || r?.kind === 'diagram' || r?.kind === 'template' ? r.kind : 'note') as
+              | 'note'
+              | 'diagram'
+              | 'grid'
+              | 'vision'
+              | 'template',
+          }))
+          .filter((f) => !!f.id);
+        setTemplateFiles(next);
+      } catch {
+        setTemplatesFolderId(null);
+        setTemplateFiles([]);
+      }
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeFile, ensureTemplatesFolderId, ready, supabaseMode, user?.id]);
+
+  const loadTemplateMarkdown = useCallback(
+    async (fileId: string): Promise<string> => {
+      if (!supabaseMode) return loadFileSnapshot(fileId) || '';
+      if (!ready) return '';
+      const { createClient } = await import('@/lib/supabase');
+      const supabase = createClient();
+      if (!supabase) return '';
+      if (templateScope === 'global') {
+        return await loadGlobalTemplateContent(supabase, fileId);
+      }
+      const { data, error } = await supabase.from('files').select('content').eq('id', fileId).single();
+      if (error) throw error;
+      return (data?.content as string) || '';
+    },
+    [ready, supabaseMode, templateScope],
+  );
+
+  const saveTemplateFile = useCallback(
+    async (res: { name: string; content: string; scope?: 'project' | 'account' }) => {
+      const scope = res.scope === 'account' ? 'account' : 'project';
+      const folderId = await ensureTemplatesFolderId(scope);
+      if (!folderId) throw new Error('Templates folder not available.');
+
+      if (!supabaseMode) {
+        const store = ensureLocalFileStore();
+        const created = createLocalFile(store, res.name, folderId, 'template');
+        saveLocalFileStore(created.store);
+        saveFileSnapshot(created.file.id, res.content);
+        if (templateScope === scope) {
+          setTemplateFiles((prev) =>
+            [{ id: created.file.id, name: created.file.name, kind: 'template' as const }, ...prev].sort((a, b) => a.name.localeCompare(b.name)),
+          );
+        }
+        return;
+      }
+
+      if (!ready) throw new Error('Not ready.');
+      const userId = user?.id || null;
+      if (!userId) throw new Error('Not signed in.');
+      const { createClient } = await import('@/lib/supabase');
+      const supabase = createClient();
+      if (!supabase) throw new Error('No Supabase client.');
+      const defaultLayout: LayoutDirection = await fetchProfileDefaultLayoutDirection(supabase, userId);
+      const roomName = `file-${crypto.randomUUID()}`;
+      const { data, error } = await supabase
+        .from('files')
+        .insert({
+          name: res.name,
+          owner_id: userId,
+          folder_id: folderId,
+          room_name: roomName,
+          last_opened_at: new Date().toISOString(),
+          layout_direction: defaultLayout,
+          kind: 'template',
+          content: res.content,
+        })
+        .select('id,name,kind')
+        .single();
+      if (error) throw error;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const row: any = data;
+      if (templateScope === scope) {
+        setTemplateFiles((prev) =>
+          [...prev, { id: String(row?.id || ''), name: String(row?.name || res.name), kind: 'template' as const }]
+            .filter((f) => !!f.id)
+            .sort((a, b) => a.name.localeCompare(b.name)),
+        );
+      }
+    },
+    [ensureTemplatesFolderId, fetchProfileDefaultLayoutDirection, ready, supabaseMode, templateScope, user?.id],
+  );
 
   const { doc, provider, status, presence, undo, redo, canUndo, canRedo, connectedRoomName, synced } = useYjs(activeRoomName);
   const presenceRef = useRef<typeof presence>(null);
@@ -992,10 +1224,7 @@ export function EditorApp() {
     isLoadingDimensionDescriptions.current = false;
   };
 
-  const viewBarWidthClass =
-    activeView === 'testing'
-      ? 'w-[320px] max-w-[38vw] min-w-[220px]'
-      : 'w-[280px] max-w-[35vw] min-w-[200px]';
+  const viewBarWidthClass = 'w-[280px] max-w-[35vw] min-w-[200px]';
 
   return (
     <main className="mac-desktop flex h-screen flex-col">
@@ -1081,19 +1310,6 @@ export function EditorApp() {
                   Data Objects
                 </span>
               </div>
-              <div className="relative group">
-                <button
-                  type="button"
-                  className={`mac-btn h-8 w-8 flex items-center justify-center ${activeView === 'testing' ? 'mac-btn--primary' : ''}`}
-                  onClick={() => changeView('testing')}
-                  aria-label="Testing"
-                >
-                  <FlaskConical size={16} />
-                </button>
-                <span className="mac-tooltip absolute left-1/2 top-[calc(100%+6px)] -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">
-                  Testing
-                </span>
-              </div>
           </div>
         </div>
 
@@ -1125,6 +1341,13 @@ export function EditorApp() {
               mainLevel={mainLevel}
               tagView={tagView}
               pinnedTagIds={pinnedTagIds}
+              templateScope={templateScope}
+              onTemplateScopeChange={setTemplateScope}
+              templateFiles={templateFiles}
+              loadTemplateMarkdown={loadTemplateMarkdown}
+              onSaveTemplateFile={saveTemplateFile}
+              templateSourceLabel={activeFile?.name || 'current file'}
+              globalTemplatesEnabled={globalTemplatesEnabled}
               onSelectedFlowChange={onSelectedFlowChange}
               onSelectedFlowPinnedTagIdsChange={onSelectedFlowPinnedTagIdsChange}
               showComments={showComments}
@@ -1165,6 +1388,13 @@ export function EditorApp() {
               activeTool={activeTool}
               showComments={showComments}
               showAnnotations={showAnnotations}
+              templateScope={templateScope}
+              onTemplateScopeChange={setTemplateScope}
+              templateFiles={templateFiles}
+              loadTemplateMarkdown={loadTemplateMarkdown}
+              onSaveTemplateFile={saveTemplateFile}
+              templateSourceLabel={activeFile?.name || 'current file'}
+              globalTemplatesEnabled={globalTemplatesEnabled}
               onOpenComments={(info) => {
                 setActiveTool('comment');
                 setCommentPanel({
@@ -1174,8 +1404,6 @@ export function EditorApp() {
                 });
               }}
             />
-          ) : activeView === 'testing' ? (
-            <TestingCanvas doc={doc} />
           ) : (
             <NexusCanvas
               getRunningNumber={getRunningNumber}
@@ -1322,6 +1550,14 @@ export function EditorApp() {
                 processFlowModeNodes={processFlowModeNodes}
                 onProcessFlowModeNodesChange={setProcessFlowModeNodes}
                 getRunningNumber={getRunningNumber}
+                getProcessRunningNumber={getProcessRunningNumber}
+                templateScope={templateScope}
+                onTemplateScopeChange={setTemplateScope}
+                templateFiles={templateFiles}
+                loadTemplateMarkdown={loadTemplateMarkdown}
+                onSaveTemplateFile={saveTemplateFile}
+                templateSourceLabel={activeFile?.name || 'current file'}
+                globalTemplatesEnabled={globalTemplatesEnabled}
                 onSelectConditions={(conditions) => {
                   setActiveVariantState((prev) => ({
                     ...prev,
@@ -1333,72 +1569,64 @@ export function EditorApp() {
           ) : null}
         </div>
 
-        {activeView !== 'testing' ? (
-          <Toolbar
-            doc={doc}
-            activeTool={activeTool}
-            onToolChange={handleToolChange}
-            layoutDirection={layoutDirection}
-            onLayoutDirectionChange={persistLayoutDirectionForActiveFile}
-            mainLevel={mainLevel}
-            onMainLevelChange={setMainLevel}
-            tagView={tagView}
-            onTagViewChange={setTagView}
-            pinnedTagIds={toolbarPinnedTagIds}
-            onPinnedTagIdsChange={onPinnedTagIdsChange}
-            showComments={showComments}
-            onShowCommentsChange={(next) => {
-              setShowComments(next);
-              if (!next) {
-                if (activeTool === 'comment') setActiveTool('select');
-                setCommentPanel({ targetKey: null });
-              }
-            }}
-            showAnnotations={showAnnotations}
-            onShowAnnotationsChange={(next) => {
-              setShowAnnotations(next);
-              if (!next && activeTool === 'annotation') setActiveTool('select');
-            }}
-            variant={activeView === 'flows' || activeView === 'systemFlow' || activeView === 'dataObjects' ? 'notesOnly' : 'full'}
-            onCenterView={() => {
-              if (activeView === 'dataObjects') {
-                window.dispatchEvent(new CustomEvent('diregram:dataobjectsTool', { detail: { tool: 'center' } }));
-                return;
-              }
-              window.dispatchEvent(new CustomEvent('diregram:canvasTool', { detail: { tool: 'center', view: activeView } }));
-            }}
-            centerTooltip={centerTransformLabel}
-            systemFlowTools={
-              activeView === 'systemFlow'
-                ? {
-                    onAddBox: () => window.dispatchEvent(new CustomEvent('systemflow:tool', { detail: { type: 'addBox' } })),
-                    onToggleLinkMode: () =>
-                      window.dispatchEvent(new CustomEvent('systemflow:tool', { detail: { type: 'toggleLinkMode' } })),
-                    onCreateZone: () =>
-                      window.dispatchEvent(new CustomEvent('systemflow:tool', { detail: { type: 'createZone' } })),
-                    onDeleteSelection: () =>
-                      window.dispatchEvent(new CustomEvent('systemflow:tool', { detail: { type: 'deleteSelection' } })),
-                  }
-                : null
+        <Toolbar
+          doc={doc}
+          activeTool={activeTool}
+          onToolChange={handleToolChange}
+          layoutDirection={layoutDirection}
+          onLayoutDirectionChange={persistLayoutDirectionForActiveFile}
+          mainLevel={mainLevel}
+          onMainLevelChange={setMainLevel}
+          tagView={tagView}
+          onTagViewChange={setTagView}
+          pinnedTagIds={toolbarPinnedTagIds}
+          onPinnedTagIdsChange={onPinnedTagIdsChange}
+          showComments={showComments}
+          onShowCommentsChange={(next) => {
+            setShowComments(next);
+            if (!next) {
+              if (activeTool === 'comment') setActiveTool('select');
+              setCommentPanel({ targetKey: null });
             }
-            dataObjectsTools={
-              activeView === 'dataObjects'
-                ? {
-                    onOpenManage: () =>
-                      window.dispatchEvent(new CustomEvent('diregram:dataobjectsTool', { detail: { tool: 'manage' } })),
-                    onZoomIn: () =>
-                      window.dispatchEvent(new CustomEvent('diregram:dataobjectsTool', { detail: { tool: 'zoomIn' } })),
-                    onZoomOut: () =>
-                      window.dispatchEvent(new CustomEvent('diregram:dataobjectsTool', { detail: { tool: 'zoomOut' } })),
-                  }
-                : null
+          }}
+          showAnnotations={showAnnotations}
+          onShowAnnotationsChange={(next) => {
+            setShowAnnotations(next);
+            if (!next && activeTool === 'annotation') setActiveTool('select');
+          }}
+          variant={activeView === 'flows' || activeView === 'systemFlow' || activeView === 'dataObjects' ? 'notesOnly' : 'full'}
+          onCenterView={() => {
+            if (activeView === 'dataObjects') {
+              window.dispatchEvent(new CustomEvent('diregram:dataobjectsTool', { detail: { tool: 'center' } }));
+              return;
             }
-            onUndo={undo}
-            onRedo={redo}
-            canUndo={canUndo}
-            canRedo={canRedo}
-          />
-        ) : null}
+            window.dispatchEvent(new CustomEvent('diregram:canvasTool', { detail: { tool: 'center', view: activeView } }));
+          }}
+          centerTooltip={centerTransformLabel}
+          systemFlowTools={
+            activeView === 'systemFlow'
+              ? {
+                  onAddBox: () => window.dispatchEvent(new CustomEvent('systemflow:tool', { detail: { type: 'addBox' } })),
+                  onToggleLinkMode: () => window.dispatchEvent(new CustomEvent('systemflow:tool', { detail: { type: 'toggleLinkMode' } })),
+                  onCreateZone: () => window.dispatchEvent(new CustomEvent('systemflow:tool', { detail: { type: 'createZone' } })),
+                  onDeleteSelection: () => window.dispatchEvent(new CustomEvent('systemflow:tool', { detail: { type: 'deleteSelection' } })),
+                }
+              : null
+          }
+          dataObjectsTools={
+            activeView === 'dataObjects'
+              ? {
+                  onOpenManage: () => window.dispatchEvent(new CustomEvent('diregram:dataobjectsTool', { detail: { tool: 'manage' } })),
+                  onZoomIn: () => window.dispatchEvent(new CustomEvent('diregram:dataobjectsTool', { detail: { tool: 'zoomIn' } })),
+                  onZoomOut: () => window.dispatchEvent(new CustomEvent('diregram:dataobjectsTool', { detail: { tool: 'zoomOut' } })),
+                }
+              : null
+          }
+          onUndo={undo}
+          onRedo={redo}
+          canUndo={canUndo}
+          canRedo={canRedo}
+        />
       </div>
     </main>
   );

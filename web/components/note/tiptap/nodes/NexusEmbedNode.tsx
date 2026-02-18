@@ -1,16 +1,19 @@
 'use client';
 
 import type * as Y from 'yjs';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Node, mergeAttributes } from '@tiptap/core';
 import { NodeViewWrapper, ReactNodeViewRenderer } from '@tiptap/react';
 import { MessageSquare } from 'lucide-react';
 import { NexusEmbedBlock } from '@/components/note/embeds/NexusEmbedBlock';
 import { useWorkspaceFiles } from '@/components/note/embed-config/useWorkspaceFiles';
 import { EmbedLinkModal } from '@/components/note/embed-config/EmbedLinkModal';
+import { VisionCardLinkModal } from '@/components/note/embed-config/VisionCardLinkModal';
 import { buildNoteEmbedCommentTargetKey } from '@/lib/note-comments';
+import { isVisionCardEmbedKind, normalizeNexusEmbedKind } from '@/lib/nexus-embed-kind';
 import { dispatchNoteOpenCommentTarget } from '@/components/note/comments/noteCommentEvents';
 import { useHasCommentThread } from '@/components/note/comments/useHasCommentThread';
+import { consumeVisionCardPendingConfig, shouldAutoOpenVisionCardConfig } from '@/lib/vision-card-embed-config';
 
 function safeJsonParse(s: string): unknown | null {
   try {
@@ -66,20 +69,14 @@ export const NexusEmbedNode = Node.create({
 
       const { files, loading } = useWorkspaceFiles({ kinds: ['diagram', 'vision'] });
       const [showLinkModal, setShowLinkModal] = useState(false);
+      const [showVisionCardModal, setShowVisionCardModal] = useState(false);
       const [showRaw, setShowRaw] = useState(false);
       const [rawDraft, setRawDraft] = useState(raw);
-
-      const fileId = useMemo(() => {
-        const fid = spec?.fileId;
-        return typeof fid === 'string' && fid.trim().length ? fid.trim() : null;
-      }, [spec?.fileId]);
 
       const embedId = useMemo(() => {
         const id = String(spec?.id || '').trim();
         return id || 'unknown';
       }, [spec?.id]);
-      const commentTargetKey = useMemo(() => buildNoteEmbedCommentTargetKey(embedId), [embedId]);
-      const hasComment = useHasCommentThread(yDoc, commentTargetKey);
 
       const setRawAttr = (nextRaw: string) => {
         try {
@@ -95,9 +92,48 @@ export const NexusEmbedNode = Node.create({
         }
       };
 
+      const fileId = useMemo(() => {
+        const fid = spec?.fileId;
+        return typeof fid === 'string' && fid.trim().length ? fid.trim() : null;
+      }, [spec?.fileId]);
+      const cardId = useMemo(() => {
+        const cid = spec?.cardId;
+        return typeof cid === 'string' && cid.trim().length ? cid.trim() : null;
+      }, [spec?.cardId]);
+
+      const embedKind = useMemo(() => normalizeNexusEmbedKind(spec?.kind), [spec?.kind]);
+      const isVisionCard = embedKind === 'visionCard';
+
+      // If inserted via slash as a "vision card" embed, auto-open configuration once.
+      const didAutoOpenVisionCardRef = useRef(false);
+      useEffect(() => {
+        const eligibleKind = isVisionCardEmbedKind(spec?.kind);
+        if (!eligibleKind) return;
+        const shouldOpen = shouldAutoOpenVisionCardConfig({
+          spec,
+          didAutoOpen: didAutoOpenVisionCardRef.current,
+          fileId,
+          cardId,
+        });
+        if (!shouldOpen) return;
+        didAutoOpenVisionCardRef.current = true;
+        // Clear the "auto-open once" flag immediately so remounts don't re-open the modal.
+        try {
+          const next = consumeVisionCardPendingConfig(spec);
+          if (next) setRawAttr(safeJsonPretty(next));
+        } catch {
+          // ignore
+        }
+        setShowVisionCardModal(true);
+      }, [spec?.kind, spec?.pendingConfig, fileId, cardId, embedId]);
+
+      const commentTargetKey = useMemo(() => buildNoteEmbedCommentTargetKey(embedId), [embedId]);
+      const hasComment = useHasCommentThread(yDoc, commentTargetKey);
+
       const unlink = () => {
         const next = { ...(spec || {}) };
         delete next.fileId;
+        if (isVisionCard) delete next.cardId;
         // Best-effort: keep kind/ref settings, just use local doc.
         setRawAttr(safeJsonPretty(next));
       };
@@ -106,7 +142,7 @@ export const NexusEmbedNode = Node.create({
         <NodeViewWrapper as="div" contentEditable={false} className="my-2" data-note-embed-id={embedId}>
           <div className="mb-2 flex items-center justify-between gap-2">
             <div className="text-[11px] text-slate-600 truncate">
-              Embed {spec?.kind ? `· ${String(spec.kind)}` : ''}{' '}
+              Embed {embedKind ? `· ${embedKind}` : ''}{' '}
               {fileId ? (
                 <span className="font-mono opacity-70">linked:{fileId.slice(0, 8)}…</span>
               ) : (
@@ -127,7 +163,12 @@ export const NexusEmbedNode = Node.create({
                   <MessageSquare size={14} />
                 </button>
               ) : null}
-              <button type="button" className="mac-btn h-7" onClick={() => setShowLinkModal(true)} title="Link this embed…">
+              <button
+                type="button"
+                className="mac-btn h-7"
+                onClick={() => (isVisionCard ? setShowVisionCardModal(true) : setShowLinkModal(true))}
+                title="Link this embed…"
+              >
                 Link…
               </button>
               {fileId ? (
@@ -184,11 +225,7 @@ export const NexusEmbedNode = Node.create({
             files={files}
             loadingFiles={loading}
             initialFileId={fileId}
-            initialKind={(String(spec?.kind || 'canvas') === 'systemflow'
-              ? 'systemflow'
-              : String(spec?.kind || 'canvas') === 'dataObjects'
-                ? 'dataObjects'
-                : 'canvas') as any}
+            initialKind={(embedKind === 'systemflow' ? 'systemflow' : embedKind === 'dataObjects' ? 'dataObjects' : 'canvas') as any}
             initialRootFocusId={typeof spec?.rootFocusId === 'string' ? spec.rootFocusId : undefined}
             initialSystemFlowRef={typeof spec?.ref === 'string' ? spec.ref : undefined}
             onClose={() => setShowLinkModal(false)}
@@ -202,19 +239,42 @@ export const NexusEmbedNode = Node.create({
                 base.kind = 'systemflow';
                 base.ref = res.ref;
                 delete base.rootFocusId;
+                delete base.cardId;
               } else if (res.kind === 'dataObjects') {
                 base.kind = 'dataObjects';
                 delete base.ref;
                 delete base.rootFocusId;
+                delete base.cardId;
               } else {
                 // canvas or flow subtree are both rendered via NexusCanvas
                 base.kind = 'canvas';
                 delete base.ref;
+                delete base.cardId;
                 if ((res as any).rootFocusId) base.rootFocusId = (res as any).rootFocusId;
                 else delete base.rootFocusId;
               }
               setRawAttr(safeJsonPretty(base));
               setShowLinkModal(false);
+            }}
+          />
+
+          <VisionCardLinkModal
+            open={showVisionCardModal}
+            files={files}
+            loadingFiles={loading}
+            initialFileId={fileId}
+            initialCardId={cardId || undefined}
+            onClose={() => setShowVisionCardModal(false)}
+            onApply={(res) => {
+              const base = { ...(spec || {}) };
+              if (!base.id) base.id = `embed-${crypto.randomUUID()}`;
+              base.kind = 'visionCard';
+              base.fileId = res.fileId;
+              base.cardId = res.cardId;
+              delete base.ref;
+              delete base.rootFocusId;
+              setRawAttr(safeJsonPretty(base));
+              setShowVisionCardModal(false);
             }}
           />
 

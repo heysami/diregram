@@ -27,7 +27,9 @@ export function useWorkspaceFiles(opts?: { kinds?: DocKind[] }) {
             .map((f) => ({
               id: String(f.id),
               name: String(f.name || 'Untitled'),
-              kind: (f.kind === 'note' || f.kind === 'grid' || f.kind === 'vision' || f.kind === 'diagram' ? f.kind : 'diagram') as DocKind,
+              kind: (f.kind === 'note' || f.kind === 'grid' || f.kind === 'vision' || f.kind === 'diagram' || f.kind === 'template' || f.kind === 'test'
+                ? f.kind
+                : 'diagram') as DocKind,
             }))
             .filter((f) => (kinds ? kinds.includes(f.kind) : true))
             .sort((a, b) => a.name.localeCompare(b.name));
@@ -43,7 +45,9 @@ export function useWorkspaceFiles(opts?: { kinds?: DocKind[] }) {
           .map((r: any) => ({
             id: String(r?.id || ''),
             name: String(r?.name || 'Untitled'),
-            kind: (r?.kind === 'note' || r?.kind === 'grid' || r?.kind === 'vision' || r?.kind === 'diagram' ? r.kind : 'diagram') as DocKind,
+            kind: (r?.kind === 'note' || r?.kind === 'grid' || r?.kind === 'vision' || r?.kind === 'diagram' || r?.kind === 'template' || r?.kind === 'test'
+              ? r.kind
+              : 'diagram') as DocKind,
           }))
           .filter((f) => !!f.id)
           .sort((a, b) => a.name.localeCompare(b.name));

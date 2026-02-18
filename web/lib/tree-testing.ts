@@ -59,6 +59,7 @@ export function runTreeTest(opts: { roots: NexusNode[]; reference: FlowTabProces
   const nodeById = indexNodes(roots);
 
   const targetNodeId = reference.kind === 'whole' ? reference.rootProcessNodeId : reference.targetNodeId;
+
   const startNodeId = highestParent(targetNodeId, nodeById);
   if (!startNodeId) {
     return {

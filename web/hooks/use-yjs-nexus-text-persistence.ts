@@ -110,6 +110,11 @@ export function useYjsNexusTextPersistence(opts: PersistOptions) {
 
     return () => {
       try {
+        saveNow();
+      } catch {
+        // ignore
+      }
+      try {
         yText.unobserve(scheduleSave);
       } catch {
         // ignore

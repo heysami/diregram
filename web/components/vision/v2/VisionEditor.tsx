@@ -13,9 +13,13 @@ import { TldrawHeaderActions } from '@/components/vision/v2/shell/TldrawHeaderAc
 import { useCardCount } from '@/components/vision/v2/hooks/useCardCount';
 import { CommentsPanel } from '@/components/CommentsPanel';
 import { deleteAnchor, getThread, isVisionPointCommentTargetKey } from '@/lib/node-comments';
+import { upsertTemplateHeader, type NexusTemplateHeader } from '@/lib/nexus-template';
+import { InsertFromTemplateModal, type WorkspaceFileLite as TemplateWorkspaceFileLite } from '@/components/templates/InsertFromTemplateModal';
+import { createShapeId } from '@tldraw/tlschema';
 
 export function VisionEditor({
   fileId,
+  folderId,
   title,
   statusLabel,
   yDoc,
@@ -25,7 +29,15 @@ export function VisionEditor({
   rawMarkdownPreview,
   rawMarkdownChars,
   supabaseMode,
+  supabase,
   userId,
+  templateScope,
+  onTemplateScopeChange,
+  templateFiles,
+  loadTemplateMarkdown,
+  onSaveTemplateFile,
+  templateSourceLabel,
+  globalTemplatesEnabled,
 }: {
   fileId: string;
   folderId: string | null;
@@ -40,11 +52,19 @@ export function VisionEditor({
   supabaseMode: boolean;
   supabase: SupabaseClient | null;
   userId: string | null;
+  templateScope?: 'project' | 'account' | 'global';
+  onTemplateScopeChange?: (next: 'project' | 'account' | 'global') => void;
+  templateFiles?: TemplateWorkspaceFileLite[];
+  loadTemplateMarkdown?: (fileId: string) => Promise<string>;
+  onSaveTemplateFile?: (res: { name: string; content: string; scope?: 'project' | 'account' }) => Promise<void> | void;
+  templateSourceLabel?: string;
+  globalTemplatesEnabled?: boolean;
 }) {
   useHtmlThemeOverride('vision');
 
   const [canvasEditor, setCanvasEditor] = useState<Editor | null>(null);
   const [markdownOpen, setMarkdownOpen] = useState(false);
+  const [insertCardTemplateOpen, setInsertCardTemplateOpen] = useState(false);
   useCardCount(doc); // keep memoized for future use (e.g. status line); doesn't render now.
 
   const [activeTool, setActiveTool] = useState<'select' | 'comment'>('select');
@@ -53,6 +73,35 @@ export function VisionEditor({
     targetLabel?: string;
     scrollToThreadId?: string;
   }>({ targetKey: null });
+
+  type VisionCardTemplateV1 = {
+    version: 1;
+    props: { w: number; h: number; title?: string; thumb?: string; tileSnapshot?: string };
+  };
+
+  const parseVisionCardTemplate = (rendered: string): VisionCardTemplateV1 => {
+    const src = String(rendered || '').replace(/\r\n?/g, '\n').trim();
+    const m = src.match(/```nexus-vision-card[ \t]*\n([\s\S]*?)\n```/);
+    const body = (m ? m[1] : src).trim();
+    const parsed = JSON.parse(body) as unknown;
+    if (!parsed || typeof parsed !== 'object') throw new Error('Invalid vision card template payload.');
+    const r = parsed as Record<string, unknown>;
+    if (r.version !== 1) throw new Error('Unsupported vision card template version.');
+    const props = (r.props as any) || {};
+    const w = Number(props.w);
+    const h = Number(props.h);
+    if (!Number.isFinite(w) || !Number.isFinite(h)) throw new Error('Invalid card size.');
+    return {
+      version: 1,
+      props: {
+        w: Math.max(80, Math.min(1600, w)),
+        h: Math.max(80, Math.min(1200, h)),
+        title: typeof props.title === 'string' ? props.title : undefined,
+        thumb: typeof props.thumb === 'string' ? props.thumb : undefined,
+        tileSnapshot: typeof props.tileSnapshot === 'string' ? props.tileSnapshot : undefined,
+      },
+    };
+  };
 
   const cleanupDanglingVisionPoint = useCallback(
     (targetKey: string | null) => {
@@ -98,6 +147,15 @@ export function VisionEditor({
         <div className="flex items-center gap-2">
           <button
             type="button"
+            className="h-8 px-2 border bg-white text-sm"
+            disabled={!templateFiles || !loadTemplateMarkdown || (templateFiles || []).length === 0 || !canvasEditor}
+            title={!canvasEditor ? 'Canvas not ready yet' : (templateFiles || []).length === 0 ? 'No templates yet.' : 'Create a new card from a template'}
+            onClick={() => setInsertCardTemplateOpen(true)}
+          >
+            Card template…
+          </button>
+          <button
+            type="button"
             className={[
               'h-8 px-2 border text-sm',
               activeTool === 'comment' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white',
@@ -122,6 +180,50 @@ export function VisionEditor({
         </div>
       </div>
 
+      <InsertFromTemplateModal
+        open={insertCardTemplateOpen}
+        title="New card from template"
+        files={templateFiles || []}
+        loadMarkdown={loadTemplateMarkdown || (async () => '')}
+        accept={{ targetKind: 'vision', mode: 'appendFragment', fragmentKind: 'visionCard' }}
+        scope={
+          templateScope && onTemplateScopeChange
+            ? {
+                value: templateScope,
+                options: [
+                  { id: 'project', label: 'This project' },
+                  { id: 'account', label: 'Account' },
+                  ...(globalTemplatesEnabled ? [{ id: 'global', label: 'Global' }] : []),
+                ],
+                onChange: (next) => onTemplateScopeChange(next as any),
+              }
+            : undefined
+        }
+        onClose={() => setInsertCardTemplateOpen(false)}
+        onInsert={async ({ content }) => {
+          if (!canvasEditor) throw new Error('Canvas not ready.');
+          const tpl = parseVisionCardTemplate(content);
+          let x = 0;
+          let y = 0;
+          try {
+            const b = canvasEditor.getViewportPageBounds();
+            x = b.x + b.w / 2 - tpl.props.w / 2;
+            y = b.y + b.h / 2 - tpl.props.h / 2;
+          } catch {
+            // ignore
+          }
+          const id = createShapeId();
+          canvasEditor.createShape({
+            id: id as any,
+            type: 'nxcard' as any,
+            x,
+            y,
+            props: { ...tpl.props },
+          } as any);
+          canvasEditor.setSelectedShapes([id as any]);
+        }}
+      />
+
       <div className="absolute inset-0 top-12">
         <div className="h-full w-full overflow-hidden">
           <VisionCanvas
@@ -143,6 +245,9 @@ export function VisionEditor({
                 scrollToThreadId: info.scrollToThreadId,
               });
             }}
+            onSaveTemplateFile={onSaveTemplateFile}
+            templateSourceLabel={templateSourceLabel}
+            globalTemplatesEnabled={globalTemplatesEnabled}
           />
         </div>
       </div>

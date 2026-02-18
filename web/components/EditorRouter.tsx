@@ -9,9 +9,11 @@ import { EditorApp as DiagramEditorApp } from '@/components/EditorApp';
 import { GridEditorApp } from '@/components/GridEditorApp';
 import { NoteEditorApp } from '@/components/NoteEditorApp';
 import { VisionEditorApp } from '@/components/VisionEditorApp';
+import { TemplateEditorApp } from '@/components/TemplateEditorApp';
+import { TestEditorApp } from '@/components/TestEditorApp';
 
 function normalizeKind(raw: unknown): DocKind {
-  return raw === 'note' || raw === 'grid' || raw === 'vision' || raw === 'diagram' ? raw : 'diagram';
+  return raw === 'note' || raw === 'grid' || raw === 'vision' || raw === 'diagram' || raw === 'template' || raw === 'test' ? raw : 'diagram';
 }
 
 export function EditorRouter() {
@@ -75,6 +77,8 @@ export function EditorRouter() {
   if (kind === 'grid') return <GridEditorApp />;
   if (kind === 'note') return <NoteEditorApp />;
   if (kind === 'vision') return <VisionEditorApp />;
+  if (kind === 'template') return <TemplateEditorApp />;
+  if (kind === 'test') return <TestEditorApp />;
   return <DiagramEditorApp />;
 }
 

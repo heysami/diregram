@@ -8,6 +8,11 @@ import type { NexusNode } from '@/types/nexus';
 import type { PresenceController } from '@/lib/presence';
 import { SystemFlowEditor } from '@/components/SystemFlowEditor';
 import type { ToolType } from '@/components/Toolbar';
+import type { WorkspaceFileLite as TemplateWorkspaceFileLite } from '@/components/templates/InsertFromTemplateModal';
+import { upsertTemplateHeader, type NexusTemplateHeader } from '@/lib/nexus-template';
+import { InsertFromTemplateModal } from '@/components/templates/InsertFromTemplateModal';
+import { SaveTemplateModal } from '@/components/templates/SaveTemplateModal';
+import { loadSystemFlowStateFromDoc, saveSystemFlowStateToDoc, type SystemFlowState } from '@/lib/system-flow-storage';
 
 export function SystemFlowsCanvas({
   doc,
@@ -16,6 +21,13 @@ export function SystemFlowsCanvas({
   showComments,
   showAnnotations,
   onOpenComments,
+  templateScope,
+  onTemplateScopeChange,
+  templateFiles,
+  loadTemplateMarkdown,
+  onSaveTemplateFile,
+  templateSourceLabel,
+  globalTemplatesEnabled,
 }: {
   doc: Y.Doc;
   presence?: PresenceController | null;
@@ -23,12 +35,44 @@ export function SystemFlowsCanvas({
   showComments: boolean;
   showAnnotations: boolean;
   onOpenComments?: (info: { targetKey: string; targetLabel?: string; scrollToThreadId?: string }) => void;
+  templateScope?: 'project' | 'account' | 'global';
+  onTemplateScopeChange?: (next: 'project' | 'account' | 'global') => void;
+  templateFiles?: TemplateWorkspaceFileLite[];
+  loadTemplateMarkdown?: (fileId: string) => Promise<string>;
+  onSaveTemplateFile?: (res: { name: string; content: string; scope?: 'project' | 'account' }) => Promise<void> | void;
+  templateSourceLabel?: string;
+  globalTemplatesEnabled?: boolean;
 }) {
   const viewBarSpacer = <div className="h-12" aria-hidden />;
   const [systemFlowRoots, setSystemFlowRoots] = useState<NexusNode[]>([]);
   const [selectedSfid, setSelectedSfid] = useState<string | null>(null);
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameDraft, setRenameDraft] = useState('');
+  const [insertSystemFlowFromTemplateOpen, setInsertSystemFlowFromTemplateOpen] = useState(false);
+  const [saveTemplateOpen, setSaveTemplateOpen] = useState(false);
+  const [pendingTemplatePayload, setPendingTemplatePayload] = useState<string | null>(null);
+  const [pendingTemplateHeaderBase, setPendingTemplateHeaderBase] = useState<Omit<NexusTemplateHeader, 'name'> | null>(null);
+  const [pendingTemplateDefaultName, setPendingTemplateDefaultName] = useState<string>('Template');
+
+  type SystemFlowTemplateV1 = {
+    version: 1;
+    name: string;
+    state: SystemFlowState;
+  };
+
+  const parseSystemFlowTemplate = (rendered: string): SystemFlowTemplateV1 => {
+    const src = String(rendered || '').replace(/\r\n?/g, '\n').trim();
+    const m = src.match(/```nexus-systemflow[ \t]*\n([\s\S]*?)\n```/);
+    const body = (m ? m[1] : src).trim();
+    const parsed = JSON.parse(body) as unknown;
+    if (!parsed || typeof parsed !== 'object') throw new Error('Invalid system flow template payload.');
+    const r = parsed as Record<string, unknown>;
+    if (r.version !== 1) throw new Error('Unsupported system flow template version.');
+    const name = typeof r.name === 'string' ? r.name : 'System Flow';
+    const state = r.state as unknown;
+    if (!state || typeof state !== 'object') throw new Error('Missing system flow state.');
+    return { version: 1, name, state: state as SystemFlowState };
+  };
 
   useEffect(() => {
     const yText = doc.getText('nexus');
@@ -110,6 +154,48 @@ export function SystemFlowsCanvas({
     return `systemflow-${max + 1}`;
   };
 
+  const saveSelectedSystemFlowAsTemplate = useCallback(async () => {
+    if (!selectedSfid || !selectedRoot) return;
+    if (!onSaveTemplateFile) return;
+    const state = loadSystemFlowStateFromDoc(doc, selectedSfid);
+    const payload: SystemFlowTemplateV1 = { version: 1, name: selectedRoot.content || 'System Flow', state };
+    const payloadMd = ['```nexus-systemflow', JSON.stringify(payload, null, 2), '```', ''].join('\n');
+    const headerBase: Omit<NexusTemplateHeader, 'name'> = {
+      version: 1,
+      ...(templateSourceLabel ? { description: `Saved from ${templateSourceLabel}` } : {}),
+      targetKind: 'diagram',
+      mode: 'appendFragment',
+      fragmentKind: 'systemFlow',
+      tags: ['systemFlow'],
+    };
+    setPendingTemplatePayload(payloadMd);
+    setPendingTemplateHeaderBase(headerBase);
+    setPendingTemplateDefaultName(payload.name);
+    setSaveTemplateOpen(true);
+  }, [doc, onSaveTemplateFile, selectedRoot, selectedSfid, templateSourceLabel]);
+
+  const insertSystemFlowFromTemplate = useCallback(
+    async (rendered: string) => {
+      const tpl = parseSystemFlowTemplate(rendered);
+      const sfid = nextSystemFlowSfid();
+      const name = String(tpl.name || `System Flow ${sfid.split('-')[1]}`);
+      const yText = doc.getText('nexus');
+      const text = yText.toString();
+      const sep = text.indexOf('\n---\n');
+      const insertAt = sep !== -1 ? sep : text.length;
+      const prefix = text.slice(0, insertAt);
+      const suffix = text.slice(insertAt);
+      const block = `${prefix}${prefix.endsWith('\n') || prefix.length === 0 ? '' : '\n'}\n${name} #systemflow# <!-- sfid:${sfid} -->\n${suffix}`;
+      doc.transact(() => {
+        yText.delete(0, yText.length);
+        yText.insert(0, block);
+      });
+      saveSystemFlowStateToDoc(doc, sfid, tpl.state);
+      setSelectedSfid(sfid);
+    },
+    [doc, nextSystemFlowSfid, parseSystemFlowTemplate],
+  );
+
   const createNewSystemFlow = () => {
     const sfid = nextSystemFlowSfid();
     const name = `System Flow ${sfid.split('-')[1]}`;
@@ -137,7 +223,29 @@ export function SystemFlowsCanvas({
         {viewBarSpacer}
         <div className="mac-titlebar">
           <div className="mac-title">System Flows</div>
-          <div className="absolute right-1 top-1/2 -translate-y-1/2">
+          <div className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-1">
+            {selectedRoot && onSaveTemplateFile ? (
+              <button
+                type="button"
+                className="mac-btn"
+                onClick={() => {
+                  void saveSelectedSystemFlowAsTemplate().catch(() => {});
+                }}
+                title="Save this system flow as a template"
+              >
+                Save template
+              </button>
+            ) : null}
+            {templateFiles && loadTemplateMarkdown ? (
+              <button
+                type="button"
+                className="mac-btn"
+                onClick={() => setInsertSystemFlowFromTemplateOpen(true)}
+                title="Create a new system flow from a template"
+              >
+                Template…
+              </button>
+            ) : null}
             <button type="button" onClick={createNewSystemFlow} className="mac-btn" title="Create new system flow">
               <Plus size={14} />
             </button>
@@ -224,6 +332,13 @@ export function SystemFlowsCanvas({
                 showAnnotations={showAnnotations}
                 onOpenComments={onOpenComments}
                 presence={presence}
+                templateScope={templateScope}
+                onTemplateScopeChange={onTemplateScopeChange}
+                templateFiles={templateFiles}
+                loadTemplateMarkdown={loadTemplateMarkdown}
+                onSaveTemplateFile={onSaveTemplateFile}
+                templateSourceLabel={templateSourceLabel}
+                globalTemplatesEnabled={globalTemplatesEnabled}
               />
             </div>
           </div>
@@ -236,6 +351,48 @@ export function SystemFlowsCanvas({
           </div>
         )}
       </div>
+
+      <InsertFromTemplateModal
+        open={insertSystemFlowFromTemplateOpen}
+        title="New system flow from template"
+        files={templateFiles || []}
+        loadMarkdown={loadTemplateMarkdown || (async () => '')}
+        accept={{ targetKind: 'diagram', mode: 'appendFragment', fragmentKind: 'systemFlow' }}
+        scope={
+          templateScope && onTemplateScopeChange
+            ? {
+                value: templateScope,
+                options: [
+                  { id: 'project', label: 'This project' },
+                  { id: 'account', label: 'Account' },
+                  ...(globalTemplatesEnabled ? [{ id: 'global', label: 'Global' }] : []),
+                ],
+                onChange: (next) => onTemplateScopeChange(next as any),
+              }
+            : undefined
+        }
+        onClose={() => setInsertSystemFlowFromTemplateOpen(false)}
+        onInsert={async ({ content }) => {
+          await insertSystemFlowFromTemplate(content);
+        }}
+      />
+
+      <SaveTemplateModal
+        open={saveTemplateOpen}
+        title="Save template"
+        defaultName={pendingTemplateDefaultName}
+        defaultScope="project"
+        onClose={() => setSaveTemplateOpen(false)}
+        onSave={async ({ name, scope }) => {
+          if (!onSaveTemplateFile) throw new Error('Template saving unavailable.');
+          if (!pendingTemplatePayload || !pendingTemplateHeaderBase) throw new Error('No template content to save.');
+          const header: NexusTemplateHeader = { ...pendingTemplateHeaderBase, name };
+          const content = upsertTemplateHeader(pendingTemplatePayload, header);
+          await onSaveTemplateFile({ name, content, scope });
+          setPendingTemplatePayload(null);
+          setPendingTemplateHeaderBase(null);
+        }}
+      />
     </div>
   );
 }

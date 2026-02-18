@@ -388,6 +388,121 @@ export function useNexusStructure(doc: Y.Doc, roots: NexusNode[]) {
     persistNodeTags(doc, node, tagIds);
   };
 
+  function resolveHubTarget(node: NexusNode, nodeMap: Map<string, NexusNode>, activeVariantId?: string | null): NexusNode {
+    if (!node.isHub) return node;
+    const id = activeVariantId || '';
+    if (!id) return node;
+    const v = node.variants?.find((vv) => vv.id === id) || nodeMap.get(id) || null;
+    return v || node;
+  }
+
+  function getIndentLen(line: string): number {
+    const m = line.match(/^(\s*)/);
+    return m ? m[1].length : 0;
+  }
+
+  function findBlockEndByIndent(lines: string[], startLineIndex: number): number {
+    if (startLineIndex < 0 || startLineIndex >= lines.length) return startLineIndex;
+    const baseIndent = getIndentLen(lines[startLineIndex] || '');
+    let end = startLineIndex;
+    for (let i = startLineIndex + 1; i < lines.length; i++) {
+      const l = lines[i] ?? '';
+      const trimmed = l.trim();
+      if (trimmed === '---') break; // never cross metadata separator
+      if (trimmed.startsWith('```')) break; // never cross code blocks
+      if (trimmed === '') {
+        // Preserve blank lines that are part of the block region.
+        end = i;
+        continue;
+      }
+      const indent = getIndentLen(l);
+      if (indent <= baseIndent) break;
+      end = i;
+    }
+    return end;
+  }
+
+  function normalizeSnippetIndent(lines: string[]): string[] {
+    const nonEmpty = lines.filter((l) => l.trim() !== '');
+    if (nonEmpty.length === 0) return [];
+    const minIndent = nonEmpty.reduce((min, l) => Math.min(min, getIndentLen(l)), Infinity);
+    if (!Number.isFinite(minIndent) || minIndent <= 0) return lines.slice();
+    return lines.map((l) => {
+      if (l.trim() === '') return '';
+      // Only strip if it actually has that much leading whitespace.
+      return l.startsWith(' '.repeat(minIndent)) ? l.slice(minIndent) : l.replace(/^\s+/, '');
+    });
+  }
+
+  const extractSubtreeMarkdown = (node: NexusNode, nodeMap: Map<string, NexusNode>, activeVariantId?: string | null): string => {
+    const targetNode = resolveHubTarget(node, nodeMap, activeVariantId);
+    const yText = doc.getText('nexus');
+    const lines = yText.toString().split('\n');
+    const start = targetNode.lineIndex;
+    const end = findBlockEndByIndent(lines, start);
+    const block = lines.slice(start, end + 1);
+    const normalized = normalizeSnippetIndent(block);
+    return normalized.join('\n').trimEnd() + '\n';
+  };
+
+  const insertSubtreeMarkdownAsChild = (
+    node: NexusNode,
+    nodeMap: Map<string, NexusNode>,
+    snippetMarkdown: string,
+    activeVariantId?: string | null,
+  ) => {
+    const targetNode = resolveHubTarget(node, nodeMap, activeVariantId);
+    const yText = doc.getText('nexus');
+    const lines = yText.toString().split('\n');
+    const insertAfterLine = findBlockEndByIndent(lines, targetNode.lineIndex);
+
+    const rawSnippetLines = String(snippetMarkdown || '')
+      .replace(/\r\n?/g, '\n')
+      .split('\n')
+      .map((l) => l.replace(/\s+$/g, ''));
+
+    // Trim leading/trailing blank lines for clean insertion.
+    while (rawSnippetLines.length && rawSnippetLines[0].trim() === '') rawSnippetLines.shift();
+    while (rawSnippetLines.length && rawSnippetLines[rawSnippetLines.length - 1].trim() === '') rawSnippetLines.pop();
+    if (rawSnippetLines.length === 0) return null;
+
+    const normalized = normalizeSnippetIndent(rawSnippetLines);
+    const indentPrefix = ' '.repeat((targetNode.level + 1) * 2);
+    const insertedLines = normalized.map((l) => (l.trim() === '' ? '' : indentPrefix + l));
+
+    lines.splice(insertAfterLine + 1, 0, ...insertedLines);
+    updateYText(lines.join('\n'));
+    return { lineIndex: insertAfterLine + 1, type: 'select' as const };
+  };
+
+  const insertSubtreeMarkdownAsSiblingAfter = (
+    node: NexusNode,
+    nodeMap: Map<string, NexusNode>,
+    snippetMarkdown: string,
+    activeVariantId?: string | null,
+  ) => {
+    const targetNode = resolveHubTarget(node, nodeMap, activeVariantId);
+    const yText = doc.getText('nexus');
+    const lines = yText.toString().split('\n');
+    const insertAfterLine = findBlockEndByIndent(lines, targetNode.lineIndex);
+
+    const rawSnippetLines = String(snippetMarkdown || '')
+      .replace(/\r\n?/g, '\n')
+      .split('\n')
+      .map((l) => l.replace(/\s+$/g, ''));
+    while (rawSnippetLines.length && rawSnippetLines[0].trim() === '') rawSnippetLines.shift();
+    while (rawSnippetLines.length && rawSnippetLines[rawSnippetLines.length - 1].trim() === '') rawSnippetLines.pop();
+    if (rawSnippetLines.length === 0) return null;
+
+    const normalized = normalizeSnippetIndent(rawSnippetLines);
+    const indentPrefix = ' '.repeat(targetNode.level * 2);
+    const insertedLines = normalized.map((l) => (l.trim() === '' ? '' : indentPrefix + l));
+
+    lines.splice(insertAfterLine + 1, 0, ...insertedLines);
+    updateYText(lines.join('\n'));
+    return { lineIndex: insertAfterLine + 1, type: 'select' as const };
+  };
+
   return {
     createSibling,
     createChild,
@@ -400,5 +515,8 @@ export function useNexusStructure(doc: Y.Doc, roots: NexusNode[]) {
     setNodeDataObjectId,
     setNodeDataObjectAttributeIds,
     setNodeTags,
+    extractSubtreeMarkdown,
+    insertSubtreeMarkdownAsChild,
+    insertSubtreeMarkdownAsSiblingAfter,
   };
 }

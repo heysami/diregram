@@ -1934,46 +1934,48 @@ export function NexusCanvas({
     );
   }, []);
 
-  const onEnterCreate = useCallback(() => {
+  const createChildFromSelection = useCallback(() => {
     const effectiveSelectedId = selectedNodeId || rootFocusId || null;
     if (!effectiveSelectedId) return;
     const node = nodeMap.get(effectiveSelectedId);
     if (!node) return;
     suppressAnimation();
-    // Enter = new child
     const action = structure.createChild(node, rawNodeMap, node.activeVariantId);
-    if (action) {
-      lastCreateRef.current = {
-        lineIndex: action.lineIndex,
-        kind: 'child',
-        fromNodeId: node.id,
-      };
-      setPendingAction(action);
-    }
+    if (!action) return;
+    lastCreateRef.current = {
+      lineIndex: action.lineIndex,
+      kind: 'child',
+      fromNodeId: node.id,
+    };
+    setPendingAction(action);
   }, [nodeMap, rawNodeMap, rootFocusId, selectedNodeId, structure, suppressAnimation]);
 
-  const onTabCreate = useCallback(() => {
+  const createSiblingFromSelection = useCallback(() => {
     const effectiveSelectedId = selectedNodeId || rootFocusId || null;
     if (!effectiveSelectedId) return;
     const node = nodeMap.get(effectiveSelectedId);
     if (!node) return;
     suppressAnimation();
-    // Tab = new sibling. However, when Flow tab focuses a subtree (`rootFocusId`),
-    // creating a sibling for the focused root would insert OUTSIDE the focused subtree.
-    // In that edge case, treat Tab as "add child" to keep interaction stable.
+    // Sibling creation for the focused root would insert OUTSIDE the focused subtree.
+    // In that edge case, fall back to "add child" to keep interaction stable.
     const isFocusedRoot = !!rootFocusId && effectiveSelectedId === rootFocusId;
     const action = isFocusedRoot
       ? structure.createChild(node, rawNodeMap, node.activeVariantId)
       : structure.createSibling(node, rawNodeMap, node.activeVariantId);
-    if (action) {
-      lastCreateRef.current = {
-        lineIndex: action.lineIndex,
-        kind: isFocusedRoot ? 'child' : 'sibling',
-        fromNodeId: node.id,
-      };
-      setPendingAction(action);
-    }
+    if (!action) return;
+    lastCreateRef.current = {
+      lineIndex: action.lineIndex,
+      kind: isFocusedRoot ? 'child' : 'sibling',
+      fromNodeId: node.id,
+    };
+    setPendingAction(action);
   }, [nodeMap, rawNodeMap, rootFocusId, selectedNodeId, structure, suppressAnimation]);
+
+  // Keyboard mapping:
+  // - Horizontal (left→right): Enter = sibling, Tab = child
+  // - Vertical (top→bottom):   Enter = child,   Tab = sibling
+  const onEnterCreate = layoutDirection === 'vertical' ? createChildFromSelection : createSiblingFromSelection;
+  const onTabCreate = layoutDirection === 'vertical' ? createSiblingFromSelection : createChildFromSelection;
 
   useFlowlikeGlobalEnterTab({
     enabled: isFlowLike,
@@ -2424,13 +2426,31 @@ export function NexusCanvas({
     else if (e.key === 'Tab') {
         e.preventDefault();
         commitEdit(editValue);
-        if (!e.shiftKey) { 
-            // Creating a new child can cause a re-layout; temporarily suppress position animation
+        if (!e.shiftKey) {
+            // Creating a new node can cause a re-layout; temporarily suppress position animation
             suppressAnimation();
-            const action = structure.createChild(node, rawNodeMap, node.activeVariantId);
-            if(action) {
-              lastCreateRef.current = { lineIndex: action.lineIndex, kind: 'child', fromNodeId: node.id };
-              setPendingAction(action);
+
+            const tabCreatesSibling = layoutDirection === 'vertical';
+            if (tabCreatesSibling) {
+              // If Tab maps to sibling, preserve Flow-tab focused-root constraint.
+              const isFocusedRoot = !!rootFocusId && node.id === rootFocusId;
+              const action = isFocusedRoot
+                ? structure.createChild(node, rawNodeMap, node.activeVariantId)
+                : structure.createSibling(node, rawNodeMap, node.activeVariantId);
+              if (action) {
+                lastCreateRef.current = {
+                  lineIndex: action.lineIndex,
+                  kind: isFocusedRoot ? 'child' : 'sibling',
+                  fromNodeId: node.id,
+                };
+                setPendingAction(action);
+              }
+            } else {
+              const action = structure.createChild(node, rawNodeMap, node.activeVariantId);
+              if (action) {
+                lastCreateRef.current = { lineIndex: action.lineIndex, kind: 'child', fromNodeId: node.id };
+                setPendingAction(action);
+              }
             }
         }
         setEditingNodeId(null);
@@ -2493,30 +2513,13 @@ export function NexusCanvas({
 
       if (e.key === 'Enter') {
         e.preventDefault();
-        suppressAnimation();
-        const isFocusedRoot = !!rootFocusId && effectiveSelectedId === rootFocusId;
-        const action = isFocusedRoot
-          ? structure.createChild(node, rawNodeMap, node.activeVariantId)
-          : structure.createSibling(node, rawNodeMap, node.activeVariantId);
-        if(action) {
-          lastCreateRef.current = {
-            lineIndex: action.lineIndex,
-            kind: isFocusedRoot ? 'child' : 'sibling',
-            fromNodeId: node.id,
-          };
-          setPendingAction(action);
-        }
+        onEnterCreate();
         return;
       }
-    
+
       if (e.key === 'Tab') {
         e.preventDefault();
-        suppressAnimation();
-        const action = structure.createChild(node, rawNodeMap, node.activeVariantId);
-        if(action) {
-          lastCreateRef.current = { lineIndex: action.lineIndex, kind: 'child', fromNodeId: node.id };
-          setPendingAction(action);
-        }
+        onTabCreate();
         return;
       }
       

@@ -19,6 +19,8 @@ export function StickyBars({
   onUnmergeRegion,
   onOpenMarkdownHelp,
   onOpenTableVisibility,
+  onSaveActiveTableAsTemplate,
+  onInsertTableFromTemplate,
 }: {
   activeTable: GridTableV1 | null;
   cellSelectionCount: number;
@@ -38,12 +40,14 @@ export function StickyBars({
   onUnmergeRegion: () => void;
   onOpenMarkdownHelp?: () => void;
   onOpenTableVisibility?: (anchorEl: HTMLElement) => void;
+  onSaveActiveTableAsTemplate?: () => void;
+  onInsertTableFromTemplate?: () => void;
 }) {
   return (
     <>
       {/* Top bar: keep table header controls here */}
-      <div className="relative z-40 bg-white border-b px-2 h-[34px] flex items-center justify-between gap-2 shadow-sm shrink-0">
-        <div className="flex items-center gap-2">
+      <div className="relative z-40 bg-white border-b px-2 min-h-[34px] h-auto flex items-center justify-between gap-2 shadow-sm shrink-0">
+        <div className="flex items-center gap-2 flex-wrap min-w-0">
           {activeTable ? (
             <div className="ml-2 inline-flex items-center gap-1 text-[11px]">
               <span className="opacity-70">Header rows</span>
@@ -87,10 +91,20 @@ export function StickyBars({
             </label>
           ) : null}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap justify-end">
           <div className="text-[11px] opacity-70">
             {cellSelectionCount > 1 ? `${cellSelectionCount} cell(s) selected` : activeRegionId ? `Region selected: ${activeRegionId}` : ''}
           </div>
+          {onSaveActiveTableAsTemplate ? (
+            <button type="button" className="mac-btn h-7" onClick={onSaveActiveTableAsTemplate} title="Save this table as a reusable template">
+              Save template
+            </button>
+          ) : null}
+          {onInsertTableFromTemplate ? (
+            <button type="button" className="mac-btn h-7" onClick={onInsertTableFromTemplate} title="Insert a saved table template">
+              Insert template…
+            </button>
+          ) : null}
           {activeTable && onOpenTableVisibility ? (
             <button
               type="button"
@@ -105,7 +119,7 @@ export function StickyBars({
       </div>
 
       {/* Actions bar: main actions (sticky while scrolling) */}
-      <div className="relative z-40 bg-white border-b px-2 h-[34px] flex items-center gap-2 shadow-sm shrink-0">
+      <div className="relative z-40 bg-white border-b px-2 min-h-[34px] h-auto flex items-center gap-2 shadow-sm shrink-0 flex-wrap">
         <button type="button" className="mac-btn h-7" onClick={onAddRow} title="Add a row">
           + Row
         </button>
@@ -139,7 +153,7 @@ export function StickyBars({
           </button>
         ) : null}
 
-        <div className="flex-1" />
+        <div className="flex-1 min-w-[8px]" />
         {onOpenMarkdownHelp ? (
           <button type="button" className="mac-btn h-7" onClick={onOpenMarkdownHelp} title="Markdown formatting help">
             Formatting

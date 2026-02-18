@@ -15,6 +15,14 @@ export function extractRunningNumbersFromMarkdown(markdown: string): Map<number,
   return lineIndexToRunning;
 }
 
+/**
+ * Preferred name for RN anchors (<!-- rn:N -->).
+ * This exists to avoid confusion with other "running number" extractors (e.g. expanded-state matcher).
+ */
+export function extractRnCommentsFromMarkdown(markdown: string): Map<number, number> {
+  return extractRunningNumbersFromMarkdown(markdown);
+}
+
 export function stripRunningNumberComment(line: string): string {
   return line.replace(/\s*<!--\s*rn:\d+\s*-->\s*/g, ' ').replace(/\s+$/g, '');
 }

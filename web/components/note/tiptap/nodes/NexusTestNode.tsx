@@ -7,7 +7,7 @@ import { NodeViewWrapper, ReactNodeViewRenderer } from '@tiptap/react';
 import { MessageSquare } from 'lucide-react';
 import { NexusTestBlock } from '@/components/note/embeds/NexusTestBlock';
 import { useWorkspaceFiles } from '@/components/note/embed-config/useWorkspaceFiles';
-import { TestLinkModal } from '@/components/note/embed-config/TestLinkModal';
+import { TestFileLinkModal } from '@/components/note/embed-config/TestFileLinkModal';
 import { buildNoteEmbedCommentTargetKey } from '@/lib/note-comments';
 import { dispatchNoteOpenCommentTarget } from '@/components/note/comments/noteCommentEvents';
 import { useHasCommentThread } from '@/components/note/comments/useHasCommentThread';
@@ -63,13 +63,13 @@ export const NexusTestNode = Node.create({
       const raw = String((node.attrs as any)?.raw || '');
       const parsed = safeJsonParse(raw) as any;
       const spec = parsed && typeof parsed === 'object' ? (parsed as any) : null;
-      const fileId = useMemo(() => {
-        const fid = spec?.fileId;
+      const testFileId = useMemo(() => {
+        const fid = spec?.testFileId;
         return typeof fid === 'string' && fid.trim().length ? fid.trim() : null;
-      }, [spec?.fileId]);
+      }, [spec?.testFileId]);
 
-      const { files, loading } = useWorkspaceFiles({ kinds: ['diagram', 'vision'] });
-      const [showLinkModal, setShowLinkModal] = useState(false);
+      const { files, loading } = useWorkspaceFiles({ kinds: ['test'] });
+      const [showTestFileModal, setShowTestFileModal] = useState(false);
       const [showRaw, setShowRaw] = useState(false);
       const [rawDraft, setRawDraft] = useState(raw);
 
@@ -96,7 +96,9 @@ export const NexusTestNode = Node.create({
 
       const unlink = () => {
         const next = { ...(spec || {}) };
+        delete next.testFileId;
         delete next.fileId;
+        delete next.testId;
         setRawAttr(safeJsonPretty(next));
       };
 
@@ -104,8 +106,12 @@ export const NexusTestNode = Node.create({
         <NodeViewWrapper as="div" contentEditable={false} className="my-2" data-note-embed-id={embedId}>
           <div className="mb-2 flex items-center justify-between gap-2">
             <div className="text-[11px] text-slate-600 truncate">
-              Test {spec?.testId ? <span className="font-mono opacity-70">{String(spec.testId)}</span> : <span className="opacity-70">unset</span>}{' '}
-              {fileId ? <span className="font-mono opacity-70">linked:{fileId.slice(0, 8)}…</span> : <span className="opacity-70">local</span>}
+              Test{' '}
+              {testFileId ? (
+                <span className="font-mono opacity-70">file:{testFileId.slice(0, 8)}…</span>
+              ) : (
+                <span className="opacity-70">unset</span>
+              )}
             </div>
             <div className="flex items-center gap-2">
               {hasComment ? (
@@ -121,10 +127,10 @@ export const NexusTestNode = Node.create({
                   <MessageSquare size={14} />
                 </button>
               ) : null}
-              <button type="button" className="mac-btn h-7" onClick={() => setShowLinkModal(true)}>
-                Link…
+              <button type="button" className="mac-btn h-7" onClick={() => setShowTestFileModal(true)} title="Link a test file (recommended)">
+                Link test…
               </button>
-              {fileId ? (
+              {testFileId ? (
                 <button type="button" className="mac-btn h-7" onClick={unlink}>
                   Unlink
                 </button>
@@ -165,21 +171,20 @@ export const NexusTestNode = Node.create({
             </div>
           ) : null}
 
-          <TestLinkModal
-            open={showLinkModal}
+          <TestFileLinkModal
+            open={showTestFileModal}
             files={files}
             loadingFiles={loading}
-            initialFileId={fileId}
-            initialTestId={typeof spec?.testId === 'string' ? spec.testId : undefined}
-            onClose={() => setShowLinkModal(false)}
+            initialTestFileId={testFileId}
+            onClose={() => setShowTestFileModal(false)}
             onApply={(res) => {
               const base = { ...(spec || {}) };
               if (!base.id) base.id = `test-${crypto.randomUUID()}`;
-              base.testId = res.testId;
-              if (res.fileId) base.fileId = res.fileId;
-              else delete base.fileId;
+              base.testFileId = res.testFileId;
+              delete base.testId;
+              delete base.fileId;
               setRawAttr(safeJsonPretty(base));
-              setShowLinkModal(false);
+              setShowTestFileModal(false);
             }}
           />
 

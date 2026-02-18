@@ -6,6 +6,7 @@ import { NexusCanvas } from '@/components/NexusCanvas';
 import type { PresenceController } from '@/lib/presence';
 import { parseNexusMarkdown } from '@/lib/nexus-parser';
 import type { NexusNode } from '@/types/nexus';
+import { useNexusStructure } from '@/hooks/use-nexus-structure';
 import {
   buildDefaultFlowTabSwimlane,
   loadFlowTabSwimlane,
@@ -21,7 +22,9 @@ import {
   loadFlowTabProcessReferences,
   saveFlowTabProcessReferences,
   type FlowTabProcessReference,
+  type FlowTabProcessReferenceMap,
 } from '@/lib/flowtab-process-references';
+import { computeFlowTabReferenceAnchors } from '@/lib/flowtab-reference-anchors';
 import { loadExpandedGridNodesFromDoc, saveExpandedGridNodesToDoc, type ExpandedGridNodeRuntime } from '@/lib/expanded-grid-storage';
 import { loadExpandedNodeMetadata, saveExpandedNodeMetadata } from '@/lib/expanded-node-metadata';
 import {
@@ -32,6 +35,50 @@ import {
 } from '@/lib/expanded-state-storage';
 import { extractRunningNumbersFromMarkdown } from '@/lib/expanded-state-matcher';
 import type { LayoutDirection } from '@/lib/layout-direction';
+import { upsertTemplateHeader, type NexusTemplateHeader } from '@/lib/nexus-template';
+import { InsertFromTemplateModal, type WorkspaceFileLite as TemplateWorkspaceFileLite } from '@/components/templates/InsertFromTemplateModal';
+import { SaveTemplateModal } from '@/components/templates/SaveTemplateModal';
+import { buildTemplateFlowMetaForSubtree } from '@/lib/template-flow-meta';
+
+type FlowTabTemplateV1 = {
+  version: 1;
+  flowName: string;
+  rootMarkdown: string;
+  swimlane: {
+    lanes: FlowTabSwimlaneData['lanes'];
+    stages: FlowTabSwimlaneData['stages'];
+    pinnedTagIds?: string[];
+    placementByOffset: Record<string, { laneId: string; stage: number }>;
+  };
+  refsByOffset?: Record<string, FlowTabProcessReference>;
+};
+
+function parseFlowTabTemplate(rendered: string): FlowTabTemplateV1 {
+  const src = String(rendered || '').replace(/\r\n?/g, '\n').trim();
+  const m = src.match(/```nexus-flowtab[ \t]*\n([\s\S]*?)\n```/);
+  const body = (m ? m[1] : src).trim();
+  const parsed = JSON.parse(body) as unknown;
+  if (!parsed || typeof parsed !== 'object') throw new Error('Invalid flow template payload.');
+  const r = parsed as Record<string, unknown>;
+  if (r.version !== 1) throw new Error('Unsupported flow template version.');
+  const flowName = typeof r.flowName === 'string' ? r.flowName : 'Flow';
+  const rootMarkdown = typeof r.rootMarkdown === 'string' ? r.rootMarkdown : '';
+  const swim = r.swimlane as any;
+  if (!swim || typeof swim !== 'object') throw new Error('Missing swimlane data.');
+  const lanes = Array.isArray(swim.lanes) ? swim.lanes : [];
+  const stages = Array.isArray(swim.stages) ? swim.stages : [];
+  const pinnedTagIds = Array.isArray(swim.pinnedTagIds) ? swim.pinnedTagIds : [];
+  const placementByOffset =
+    swim.placementByOffset && typeof swim.placementByOffset === 'object' ? (swim.placementByOffset as any) : {};
+  const refsByOffset = r.refsByOffset && typeof r.refsByOffset === 'object' ? (r.refsByOffset as any) : undefined;
+  return {
+    version: 1,
+    flowName,
+    rootMarkdown,
+    swimlane: { lanes, stages, pinnedTagIds, placementByOffset },
+    refsByOffset,
+  };
+}
 
 type Props = {
   doc: Y.Doc;
@@ -62,6 +109,13 @@ type Props = {
   getProcessRunningNumber: (nodeId: string) => number | undefined;
   onOpenComments?: (info: { targetKey: string; targetLabel?: string; scrollToThreadId?: string }) => void;
   presence?: PresenceController | null;
+  templateScope?: 'project' | 'account' | 'global';
+  onTemplateScopeChange?: (next: 'project' | 'account' | 'global') => void;
+  templateFiles?: TemplateWorkspaceFileLite[];
+  loadTemplateMarkdown?: (fileId: string) => Promise<string>;
+  onSaveTemplateFile?: (res: { name: string; content: string; scope?: 'project' | 'account' }) => Promise<void> | void;
+  templateSourceLabel?: string;
+  globalTemplatesEnabled?: boolean;
 };
 
 export function FlowsCanvas({
@@ -91,6 +145,13 @@ export function FlowsCanvas({
   getProcessRunningNumber,
   onOpenComments,
   presence,
+  templateScope,
+  onTemplateScopeChange,
+  templateFiles,
+  loadTemplateMarkdown,
+  onSaveTemplateFile,
+  templateSourceLabel,
+  globalTemplatesEnabled,
 }: Props) {
   const viewBarSpacer = <div className="h-12" aria-hidden />;
 
@@ -129,6 +190,12 @@ export function FlowsCanvas({
     () => new Set(),
   );
   const [descFlowFocusTick, setDescFlowFocusTick] = useState(0);
+  const [insertFromTemplateOpen, setInsertFromTemplateOpen] = useState(false);
+  const [insertFlowFromTemplateOpen, setInsertFlowFromTemplateOpen] = useState(false);
+  const [saveTemplateOpen, setSaveTemplateOpen] = useState(false);
+  const [pendingTemplatePayload, setPendingTemplatePayload] = useState<string | null>(null);
+  const [pendingTemplateHeaderBase, setPendingTemplateHeaderBase] = useState<Omit<NexusTemplateHeader, 'name'> | null>(null);
+  const [pendingTemplateDefaultName, setPendingTemplateDefaultName] = useState<string>('Template');
 
   const tagStore = useTagStore(doc);
   const tagNameById = useMemo(() => new Map(tagStore.tags.map((t) => [t.id, t.name])), [tagStore.tags]);
@@ -303,9 +370,162 @@ export function FlowsCanvas({
   }, [selectedRoot]);
 
   const selectedNode = selectedNodeId ? nodeMap.get(selectedNodeId) || null : null;
+  const structure = useNexusStructure(doc, selectedRoot ? [selectedRoot] : []);
   const selectedNodeRef = selectedNode ? flowRefs[selectedNode.id] : null;
   const referencedNodeIds = useMemo(() => new Set(Object.keys(flowRefs)), [flowRefs]);
   const defaultLaneId = swimlane?.lanes?.[0]?.id || 'branch-1';
+
+  const buildFlowMetaForSubtree = useCallback(
+    (root: NexusNode | null): NexusTemplateHeader['flowMeta'] | undefined =>
+      buildTemplateFlowMetaForSubtree({ doc, root, getProcessRunningNumber }),
+    [doc, getProcessRunningNumber],
+  );
+
+  const saveSelectedFlowAsTemplate = useCallback(async () => {
+    if (!selectedRoot || !swimlane) return;
+    if (!onSaveTemplateFile) return;
+
+    const rootMarkdown = structure.extractSubtreeMarkdown(selectedRoot, nodeMap, null);
+
+    const placementByOffset: Record<string, { laneId: string; stage: number }> = {};
+    const rootLineIndex = selectedRoot.lineIndex;
+    Object.entries(swimlane.placement || {}).forEach(([nodeId, p]) => {
+      const n = nodeMap.get(nodeId) || null;
+      if (!n) return;
+      const off = n.lineIndex - rootLineIndex;
+      if (!Number.isFinite(off) || off < 0) return;
+      placementByOffset[String(off)] = {
+        laneId: String((p as any)?.laneId || ''),
+        stage: Number((p as any)?.stage || 0),
+      };
+    });
+
+    const refsByOffset: Record<string, FlowTabProcessReference> = {};
+    Object.entries(flowRefs || {}).forEach(([nodeId, ref]) => {
+      const n = nodeMap.get(nodeId) || null;
+      if (!n) return;
+      const off = n.lineIndex - rootLineIndex;
+      if (!Number.isFinite(off) || off < 0) return;
+      const r = ref as FlowTabProcessReference;
+      if (r.kind === 'whole') {
+        refsByOffset[String(off)] = { kind: 'whole', rootProcessNodeId: r.rootProcessNodeId, targetNodeId: r.targetNodeId };
+      } else {
+        refsByOffset[String(off)] = { kind: 'inner', rootProcessNodeId: r.rootProcessNodeId, targetNodeId: r.targetNodeId };
+      }
+    });
+
+    const payload: FlowTabTemplateV1 = {
+      version: 1,
+      flowName: selectedRoot.content || 'Flow',
+      rootMarkdown,
+      swimlane: {
+        lanes: swimlane.lanes || [],
+        stages: swimlane.stages || [],
+        pinnedTagIds: Array.isArray(swimlane.pinnedTagIds) ? swimlane.pinnedTagIds : [],
+        placementByOffset,
+      },
+      refsByOffset: Object.keys(refsByOffset).length ? refsByOffset : undefined,
+    };
+
+    const payloadMd = ['```nexus-flowtab', JSON.stringify(payload, null, 2), '```', ''].join('\n');
+    const header: NexusTemplateHeader = {
+      version: 1,
+      name: selectedRoot.content || 'Flow',
+      ...(templateSourceLabel ? { description: `Saved from ${templateSourceLabel}` } : {}),
+      targetKind: 'diagram',
+      mode: 'appendFragment',
+      fragmentKind: 'flowTab',
+      tags: ['flow', 'flowtab'],
+    };
+    const headerBase: Omit<NexusTemplateHeader, 'name'> = {
+      version: 1,
+      ...(templateSourceLabel ? { description: `Saved from ${templateSourceLabel}` } : {}),
+      targetKind: 'diagram',
+      mode: 'appendFragment',
+      fragmentKind: 'flowTab',
+      tags: ['flow', 'flowtab'],
+      ...(buildFlowMetaForSubtree(selectedRoot) ? { flowMeta: buildFlowMetaForSubtree(selectedRoot) } : {}),
+    };
+    setPendingTemplatePayload(payloadMd);
+    setPendingTemplateHeaderBase(headerBase);
+    setPendingTemplateDefaultName(header.name);
+    setSaveTemplateOpen(true);
+  }, [flowRefs, nodeMap, onSaveTemplateFile, selectedFid, selectedRoot, structure, swimlane, templateSourceLabel]);
+
+  const insertFlowFromTemplate = useCallback(
+    async (rendered: string) => {
+      const tpl = parseFlowTabTemplate(rendered);
+      const newFid = nextFlowFid();
+      const rawBlock = String(tpl.rootMarkdown || '').replace(/\r\n?/g, '\n').trimEnd();
+      if (!rawBlock.trim()) throw new Error('Template is empty.');
+      const lines = rawBlock.split('\n');
+      let firstIdx = 0;
+      while (firstIdx < lines.length && !lines[firstIdx].trim()) firstIdx++;
+      if (firstIdx >= lines.length) throw new Error('Template is empty.');
+      const line0 = lines[firstIdx];
+      const hasFid = /<!--\s*fid:[^>]+-->/.test(line0);
+      const nextLine0 = hasFid
+        ? line0.replace(/<!--\s*fid:[^>]+-->/, `<!-- fid:${newFid} -->`)
+        : `${line0} <!-- fid:${newFid} -->`;
+      lines[firstIdx] = nextLine0;
+      const block = lines.join('\n') + '\n';
+
+      const yText = doc.getText('nexus');
+      const text = yText.toString();
+      const sep = text.indexOf('\n---\n');
+      const insertAt = sep !== -1 ? sep : text.length;
+      const prefix = text.slice(0, insertAt);
+      const suffix = text.slice(insertAt);
+      const nextText = `${prefix}${prefix.endsWith('\n') || prefix.length === 0 ? '' : '\n'}\n${block}${suffix}`;
+      doc.transact(() => {
+        yText.delete(0, yText.length);
+        yText.insert(0, nextText);
+      });
+
+      const parsed = parseNexusMarkdown(nextText);
+      const newRoot = parsed.find((n) => (n.metadata as any)?.fid === newFid) || null;
+      const newRootLineIndex = newRoot ? newRoot.lineIndex : null;
+      if (newRootLineIndex === null) throw new Error('Failed to insert flow.');
+
+      const placement: Record<string, { laneId: string; stage: number }> = {};
+      Object.entries(tpl.swimlane.placementByOffset || {}).forEach(([offStr, p]) => {
+        const off = Number(offStr);
+        if (!Number.isFinite(off) || off < 0) return;
+        placement[`node-${newRootLineIndex + off}`] = {
+          laneId: String((p as any)?.laneId || ''),
+          stage: Number((p as any)?.stage || 0),
+        };
+      });
+      saveFlowTabSwimlane(doc, {
+        fid: newFid,
+        lanes: tpl.swimlane.lanes || [{ id: 'branch-1', label: 'Lane 1' }],
+        stages: tpl.swimlane.stages || [{ id: 'stage-1', label: 'Stage 1' }],
+        placement,
+        pinnedTagIds: Array.isArray(tpl.swimlane.pinnedTagIds) ? tpl.swimlane.pinnedTagIds : [],
+      });
+
+      if (tpl.refsByOffset) {
+        const cur: FlowTabProcessReferenceMap = loadFlowTabProcessReferences(doc);
+        Object.entries(tpl.refsByOffset).forEach(([offStr, r]) => {
+          const off = Number(offStr);
+          if (!Number.isFinite(off) || off < 0) return;
+          const nodeId = `node-${newRootLineIndex + off}`;
+          const rr = r as FlowTabProcessReference;
+          if (rr.kind === 'whole')
+            cur[nodeId] = { kind: 'whole', rootProcessNodeId: rr.rootProcessNodeId, targetNodeId: rr.targetNodeId };
+          else cur[nodeId] = { kind: 'inner', rootProcessNodeId: rr.rootProcessNodeId, targetNodeId: rr.targetNodeId };
+        });
+        saveFlowTabProcessReferences(doc, cur);
+        setFlowRefs(cur);
+      }
+
+      setSelectedFid(newFid);
+      setRightPreview({ kind: 'swimlane', fid: newFid });
+      onSelectNode(null);
+      onSelectNodeIds([]);
+    },
+    [doc, nextFlowFid, onSelectNode, onSelectNodeIds],
+  );
 
   const effectiveLaneId = useCallback(
     (node: NexusNode): string => {
@@ -620,11 +840,18 @@ export function FlowsCanvas({
     if (!refPickRootId) return;
     const targetNodeId = refKind === 'whole' ? refPickRootId : refPickNodeId || refPickRootId;
 
+    const anchors = computeFlowTabReferenceAnchors({ doc, rootProcessNodeId: refPickRootId, targetNodeId });
+
     const next = { ...flowRefs };
     next[selectedNode.id] =
       refKind === 'whole'
-        ? { kind: 'whole', rootProcessNodeId: refPickRootId, targetNodeId: refPickRootId }
-        : { kind: 'inner', rootProcessNodeId: refPickRootId, targetNodeId };
+        ? { kind: 'whole', rootProcessNodeId: refPickRootId, targetNodeId: refPickRootId, ...anchors }
+        : {
+            kind: 'inner',
+            rootProcessNodeId: refPickRootId,
+            targetNodeId,
+            ...anchors,
+          };
     setFlowRefs(next);
     saveFlowTabProcessReferences(doc, next);
     setIsRefOpen(false);
@@ -800,7 +1027,29 @@ export function FlowsCanvas({
         {viewBarSpacer}
         <div className="mac-titlebar">
           <div className="mac-title">Flows</div>
-          <div className="absolute right-1 top-1/2 -translate-y-1/2">
+          <div className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-1">
+            {selectedRoot && onSaveTemplateFile ? (
+              <button
+                type="button"
+                onClick={() => {
+                  void saveSelectedFlowAsTemplate().catch(() => {});
+                }}
+                className="mac-btn"
+                title="Save this entire flow as a template"
+              >
+                Save template
+              </button>
+            ) : null}
+            {templateFiles && loadTemplateMarkdown ? (
+              <button
+                type="button"
+                onClick={() => setInsertFlowFromTemplateOpen(true)}
+                className="mac-btn"
+                title="Create a new flow from a template"
+              >
+                Template…
+              </button>
+            ) : null}
             <button type="button" onClick={createNewFlow} className="mac-btn" title="Create new flow">
               <Plus size={14} />
             </button>
@@ -1250,6 +1499,49 @@ export function FlowsCanvas({
                           <NodeTagsEditor doc={doc} node={selectedNode} compact />
                         </div>
 
+                        <div className="pt-2 border-t border-slate-200">
+                          <div className="text-[11px] font-semibold text-slate-700 mb-1">Templates</div>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              className="mac-btn"
+                              disabled={!onSaveTemplateFile}
+                              title={!onSaveTemplateFile ? 'Template actions are not available.' : 'Save this node subtree as a template.'}
+                              onClick={async () => {
+                                if (!selectedNode) return;
+                                if (!onSaveTemplateFile) return;
+                                const rawName = String(selectedNode.content || '').trim();
+                                const baseName = (rawName.match(/^([^#]+)/)?.[1] || rawName || 'Template').trim();
+                                const payload = structure.extractSubtreeMarkdown(selectedNode, nodeMap, null);
+                                const headerBase: Omit<NexusTemplateHeader, 'name'> = {
+                                  version: 1,
+                                  ...(templateSourceLabel ? { description: `Saved from ${templateSourceLabel}` } : {}),
+                                  targetKind: 'diagram',
+                                  mode: 'appendFragment',
+                                  fragmentKind: 'diagramSubtree',
+                                  ...(selectedNode.isFlowNode ? { tags: ['flow'] } : {}),
+                                  ...(buildFlowMetaForSubtree(selectedNode) ? { flowMeta: buildFlowMetaForSubtree(selectedNode) } : {}),
+                                };
+                                setPendingTemplatePayload(payload);
+                                setPendingTemplateHeaderBase(headerBase);
+                                setPendingTemplateDefaultName(baseName);
+                                setSaveTemplateOpen(true);
+                              }}
+                            >
+                              Save
+                            </button>
+                            <button
+                              type="button"
+                              className="mac-btn"
+                              disabled={!templateFiles || !loadTemplateMarkdown || (templateFiles || []).length === 0}
+                              title={(templateFiles || []).length === 0 ? 'No templates yet.' : 'Insert a template as a child of this node.'}
+                              onClick={() => setInsertFromTemplateOpen(true)}
+                            >
+                              Insert…
+                            </button>
+                          </div>
+                        </div>
+
                         <div className="space-y-1">
                           <div className="text-[11px] opacity-70">Lane</div>
                           <select
@@ -1411,6 +1703,75 @@ export function FlowsCanvas({
                 </div>
               </div>
             ) : null}
+
+            <InsertFromTemplateModal
+              open={insertFromTemplateOpen}
+              title="Insert flow template"
+              files={templateFiles || []}
+              loadMarkdown={loadTemplateMarkdown || (async () => '')}
+              accept={{ targetKind: 'diagram', mode: 'appendFragment', fragmentKind: 'diagramSubtree' }}
+              scope={
+                templateScope && onTemplateScopeChange
+                  ? {
+                      value: templateScope,
+                      options: [
+                        { id: 'project', label: 'This project' },
+                        { id: 'account', label: 'Account' },
+                        ...(globalTemplatesEnabled ? [{ id: 'global', label: 'Global' }] : []),
+                      ],
+                      onChange: (next) => onTemplateScopeChange(next as any),
+                    }
+                  : undefined
+              }
+              onClose={() => setInsertFromTemplateOpen(false)}
+              onInsert={async ({ content }) => {
+                if (!selectedNode) throw new Error('No node selected.');
+                const res = structure.insertSubtreeMarkdownAsChild(selectedNode, nodeMap, content, null);
+                if (!res) throw new Error('Nothing to insert.');
+              }}
+            />
+
+            <InsertFromTemplateModal
+              open={insertFlowFromTemplateOpen}
+              title="New flow from template"
+              files={templateFiles || []}
+              loadMarkdown={loadTemplateMarkdown || (async () => '')}
+              accept={{ targetKind: 'diagram', mode: 'appendFragment', fragmentKind: 'flowTab' }}
+              scope={
+                templateScope && onTemplateScopeChange
+                  ? {
+                      value: templateScope,
+                      options: [
+                        { id: 'project', label: 'This project' },
+                        { id: 'account', label: 'Account' },
+                        ...(globalTemplatesEnabled ? [{ id: 'global', label: 'Global' }] : []),
+                      ],
+                      onChange: (next) => onTemplateScopeChange(next as any),
+                    }
+                  : undefined
+              }
+              onClose={() => setInsertFlowFromTemplateOpen(false)}
+              onInsert={async ({ content }) => {
+                await insertFlowFromTemplate(content);
+              }}
+            />
+
+            <SaveTemplateModal
+              open={saveTemplateOpen}
+              title="Save template"
+              defaultName={pendingTemplateDefaultName}
+              defaultScope="project"
+              onClose={() => setSaveTemplateOpen(false)}
+              onSave={async ({ name, scope }) => {
+                if (!onSaveTemplateFile) throw new Error('Template saving unavailable.');
+                if (!pendingTemplatePayload || !pendingTemplateHeaderBase) throw new Error('No template content to save.');
+                const header: NexusTemplateHeader = { ...pendingTemplateHeaderBase, name };
+                const content = upsertTemplateHeader(pendingTemplatePayload, header);
+                await onSaveTemplateFile({ name, content, scope });
+                setPendingTemplatePayload(null);
+                setPendingTemplateHeaderBase(null);
+              }}
+            />
 
           </div>
         ) : rightPreview.kind === 'process' ? (

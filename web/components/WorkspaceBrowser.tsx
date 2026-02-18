@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, FileText, Folder, FolderPlus, Pencil, Trash2, Plus, Mail, Copy, Network, Eye, Table } from 'lucide-react';
+import { ArrowLeft, FileText, Folder, FolderPlus, Pencil, Trash2, Plus, Mail, Copy, Network, Eye, Table, LayoutTemplate, FlaskConical } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 import { AccessPeopleEditor } from '@/components/AccessPeopleEditor';
 import {
@@ -27,13 +27,19 @@ import {
   type LocalFileStore,
 } from '@/lib/local-file-store';
 import { saveFileSnapshot } from '@/lib/local-doc-snapshots';
+import { loadFileSnapshot } from '@/lib/local-doc-snapshots';
 import { makeStarterGridMarkdown } from '@/lib/grid-starter';
 import { makeStarterNoteMarkdown } from '@/lib/note-starter';
 import { makeStarterVisionMarkdown } from '@/lib/vision-starter';
+import { makeStarterTestMarkdown } from '@/lib/test-starter';
 import type { DocKind } from '@/lib/doc-kinds';
+import { NewFromTemplateModal } from '@/components/templates/NewFromTemplateModal';
+import { ProjectActionMenus } from '@/components/workspace/ProjectActionMenus';
+import { downloadProjectBundleZip, exportProjectBundleZip } from '@/lib/export-bundle';
+import { downloadKgVectors, exportKgAndVectorsForProject } from '@/lib/kg-vector-export';
 
 function normalizeKind(raw: unknown): DocKind {
-  return raw === 'note' || raw === 'grid' || raw === 'vision' || raw === 'diagram' ? raw : 'diagram';
+  return raw === 'note' || raw === 'grid' || raw === 'vision' || raw === 'diagram' || raw === 'template' || raw === 'test' ? raw : 'diagram';
 }
 
 function KindIcon({ kind, size }: { kind: unknown; size: number }) {
@@ -41,6 +47,8 @@ function KindIcon({ kind, size }: { kind: unknown; size: number }) {
   if (k === 'grid') return <Table size={size} />;
   if (k === 'note') return <FileText size={size} />;
   if (k === 'vision') return <Eye size={size} />;
+  if (k === 'template') return <LayoutTemplate size={size} />;
+  if (k === 'test') return <FlaskConical size={size} />;
   return <Network size={size} />;
 }
 
@@ -70,6 +78,9 @@ export function WorkspaceBrowser() {
   const [editError, setEditError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const toastTimerRef = useRef<number | null>(null);
+  const [newFromTemplateOpen, setNewFromTemplateOpen] = useState(false);
+  const [projectTab, setProjectTab] = useState<'files' | 'templates'>('files');
+  const [templateScope, setTemplateScope] = useState<'project' | 'account'>('project');
 
   useEffect(() => {
     // Avoid synchronous setState in effect body (lint + perf):
@@ -92,6 +103,8 @@ export function WorkspaceBrowser() {
       toastTimerRef.current = null;
     };
   }, []);
+
+  // Project header dropdowns are encapsulated in `ProjectActionMenus`.
 
   const rootFolders = useMemo(() => store.folders.filter((f) => f.parentId === null), [store.folders]);
 
@@ -209,6 +222,53 @@ export function WorkspaceBrowser() {
 
   const canEditActiveFolder = activeFolder ? canEditFolder(activeFolder, userEmail) : true;
 
+  const projectTemplatesFolderId = useMemo(() => {
+    if (!activeFolder) return null;
+    return store.folders.find((f) => f.parentId === activeFolder.id && f.name === 'Templates')?.id || null;
+  }, [activeFolder, store.folders]);
+
+  const accountTemplatesFolderId = useMemo(() => {
+    return store.folders.find((f) => f.parentId === null && f.name === 'Account Templates')?.id || null;
+  }, [store.folders]);
+
+  useEffect(() => {
+    if (projectTab !== 'templates') return;
+    if (templateScope === 'project') {
+      if (!activeFolder) return;
+      if (projectTemplatesFolderId) return;
+      // Create on-demand when user opens Templates tab.
+      setStore((prev) => createLocalFolder(prev, 'Templates', activeFolder.id));
+      return;
+    }
+    // account scope
+    if (accountTemplatesFolderId) return;
+    setStore((prev) => createLocalFolder(prev, 'Account Templates', null));
+  }, [activeFolder, accountTemplatesFolderId, projectTab, projectTemplatesFolderId, templateScope]);
+
+  useEffect(() => {
+    if (!newFromTemplateOpen) return;
+    if (templateScope === 'project') {
+      if (!activeFolder) return;
+      if (projectTemplatesFolderId) return;
+      setStore((prev) => createLocalFolder(prev, 'Templates', activeFolder.id));
+      return;
+    }
+    if (accountTemplatesFolderId) return;
+    setStore((prev) => createLocalFolder(prev, 'Account Templates', null));
+  }, [accountTemplatesFolderId, activeFolder, newFromTemplateOpen, projectTemplatesFolderId, templateScope]);
+
+  const activeTemplatesFolderId = templateScope === 'account' ? accountTemplatesFolderId : projectTemplatesFolderId;
+
+  const templateFiles = useMemo(() => {
+    if (!activeTemplatesFolderId) return [];
+    return store.files
+      .filter((f) => f.folderId === activeTemplatesFolderId)
+      .slice()
+      .sort((a, b) => (b.lastOpenedAt || 0) - (a.lastOpenedAt || 0));
+  }, [store.files, activeTemplatesFolderId]);
+
+  const shownFiles = projectTab === 'templates' ? templateFiles : folderFiles;
+
   return (
     <div className="w-full">
       {/* toast */}
@@ -233,12 +293,40 @@ export function WorkspaceBrowser() {
             </div>
 
             <div className="flex items-center gap-2">
-              <button
-                type="button"
-                className="mac-btn flex items-center gap-1.5"
-                disabled={!canEditActiveFolder}
-                title={!canEditActiveFolder ? 'No edit access' : 'New map'}
-                onClick={() => {
+              <div className="flex items-center gap-1 rounded border bg-white p-0.5">
+                <button
+                  type="button"
+                  className={`mac-btn h-8 ${projectTab === 'files' ? 'mac-btn--primary' : ''}`}
+                  onClick={() => setProjectTab('files')}
+                  title="Project files"
+                >
+                  Files
+                </button>
+                <button
+                  type="button"
+                  className={`mac-btn h-8 ${projectTab === 'templates' ? 'mac-btn--primary' : ''}`}
+                  onClick={() => setProjectTab('templates')}
+                  title="Project templates"
+                >
+                  Templates
+                </button>
+              </div>
+              {projectTab === 'templates' ? (
+                <select
+                  className="mac-field h-8"
+                  value={templateScope}
+                  onChange={(e) => setTemplateScope(e.target.value as any)}
+                  title="Template library"
+                >
+                  <option value="project">This project</option>
+                  <option value="account">Account</option>
+                </select>
+              ) : null}
+
+              <ProjectActionMenus
+                projectTab={projectTab}
+                canEdit={canEditActiveFolder}
+                onNewMap={() => {
                   if (!canEditActiveFolder) return;
                   setStore((prev) => {
                     const { store: next, file } = createLocalFile(prev, 'New Map', activeFolder.id);
@@ -246,85 +334,116 @@ export function WorkspaceBrowser() {
                     return next;
                   });
                 }}
-              >
-                <Plus size={14} />
-                New map
-              </button>
-              <button
-                type="button"
-                className="mac-btn flex items-center gap-1.5"
-                disabled={!canEditActiveFolder}
-                title={!canEditActiveFolder ? 'No edit access' : 'New grid'}
-                onClick={() => {
+                onNewFromTemplate={() => {
+                  if (!canEditActiveFolder) return;
+                  setNewFromTemplateOpen(true);
+                }}
+                onNewGrid={() => {
                   if (!canEditActiveFolder) return;
                   setStore((prev) => {
                     const { store: next, file } = createLocalFile(prev, 'New Grid', activeFolder.id, 'grid');
-                    // Pre-seed the document so the editor can restore it immediately.
                     saveFileSnapshot(file.id, makeStarterGridMarkdown());
                     queueMicrotask(() => openFile(file.id));
                     return next;
                   });
                 }}
-              >
-                <Plus size={14} />
-                New grid
-              </button>
-              <button
-                type="button"
-                className="mac-btn flex items-center gap-1.5"
-                disabled={!canEditActiveFolder}
-                title={!canEditActiveFolder ? 'No edit access' : 'New note'}
-                onClick={() => {
+                onNewNote={() => {
                   if (!canEditActiveFolder) return;
                   setStore((prev) => {
                     const { store: next, file } = createLocalFile(prev, 'New Note', activeFolder.id, 'note');
-                    // Pre-seed the document so the editor can restore it immediately.
                     saveFileSnapshot(file.id, makeStarterNoteMarkdown());
                     queueMicrotask(() => openFile(file.id));
                     return next;
                   });
                 }}
-              >
-                <Plus size={14} />
-                New note
-              </button>
-              <button
-                type="button"
-                className="mac-btn flex items-center gap-1.5"
-                disabled={!canEditActiveFolder}
-                title={!canEditActiveFolder ? 'No edit access' : 'New vision'}
-                onClick={() => {
+                onNewVision={() => {
                   if (!canEditActiveFolder) return;
                   setStore((prev) => {
                     const { store: next, file } = createLocalFile(prev, 'New Vision', activeFolder.id, 'vision');
-                    // Pre-seed the document so the editor can restore it immediately.
                     saveFileSnapshot(file.id, makeStarterVisionMarkdown());
                     queueMicrotask(() => openFile(file.id));
                     return next;
                   });
                 }}
-              >
-                <Plus size={14} />
-                New vision
-              </button>
-              <button
-                type="button"
-                className="mac-btn flex items-center gap-1.5"
-                disabled={!canEditActiveFolder}
-                title={!canEditActiveFolder ? 'No edit access' : 'Edit project'}
-                onClick={() => openEdit(activeFolder)}
-              >
-                <Pencil size={14} />
-                Edit
-              </button>
+                onNewTest={() => {
+                  if (!canEditActiveFolder) return;
+                  setStore((prev) => {
+                    const { store: next, file } = createLocalFile(prev, 'New Test', activeFolder.id, 'test');
+                    saveFileSnapshot(file.id, makeStarterTestMarkdown());
+                    queueMicrotask(() => openFile(file.id));
+                    return next;
+                  });
+                }}
+                onExportBundle={async () => {
+                  const includeKgVectors = confirm('Include KG + embeddings outputs in the bundle?');
+                  const out = await exportProjectBundleZip({
+                    supabaseMode: false,
+                    supabase: null,
+                    projectFolderId: activeFolder.id,
+                    includeKgVectors,
+                  });
+                  downloadProjectBundleZip(out);
+                  showToast('Exported');
+                }}
+                onExportKg={async () => {
+                  const res = await exportKgAndVectorsForProject({
+                    supabaseMode: false,
+                    supabase: null,
+                    projectFolderId: activeFolder.id,
+                  });
+                  downloadKgVectors({
+                    graphJsonl: res.graphJsonl,
+                    embeddingsJsonl: res.embeddingsJsonl,
+                    basename: `nexusmap-${activeFolder.id}`,
+                  });
+                  showToast('Exported');
+                }}
+                onEditProject={() => {
+                  if (!canEditActiveFolder) return;
+                  openEdit(activeFolder);
+                }}
+              />
             </div>
           </div>
 
+          <NewFromTemplateModal
+            open={newFromTemplateOpen}
+            title="New from template"
+            files={templateFiles.map((f) => ({
+              id: String(f.id),
+              name: String(f.name || 'Untitled'),
+              kind: normalizeKind(f.kind),
+            }))}
+            loadMarkdown={async (fileId) => loadFileSnapshot(fileId) || ''}
+            scope={{
+              value: templateScope,
+              options: [
+                { id: 'project', label: 'This project' },
+                { id: 'account', label: 'Account' },
+              ],
+              onChange: (next) => setTemplateScope(next as any),
+            }}
+            onClose={() => setNewFromTemplateOpen(false)}
+            onCreate={async ({ name, kind, content }) => {
+              // MVP: create a new file seeded with the rendered template payload.
+              // (append/fragment apply is implemented later.)
+              const safeKind: DocKind = normalizeKind(kind);
+              setStore((prev) => {
+                const { store: next, file } = createLocalFile(prev, name, activeFolder.id, safeKind);
+                saveFileSnapshot(file.id, content);
+                queueMicrotask(() => openFile(file.id));
+                return next;
+              });
+            }}
+          />
+
           <div className="grid gap-2">
-            {folderFiles.length === 0 ? (
-              <div className="mac-double-outline p-4 text-xs opacity-80">No maps yet.</div>
+            {shownFiles.filter((f) => canViewFile(f, activeFolder, userEmail)).length === 0 ? (
+              <div className="mac-double-outline p-4 text-xs opacity-80">
+                {projectTab === 'templates' ? 'No templates yet.' : 'No maps yet.'}
+              </div>
             ) : (
-              folderFiles
+              shownFiles
                 .filter((f) => canViewFile(f, activeFolder, userEmail))
                 .map((f) => (
                 <div

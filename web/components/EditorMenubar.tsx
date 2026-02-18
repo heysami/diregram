@@ -112,7 +112,7 @@ export function EditorMenubar({
         ) : null}
       </div>
 
-      <div className="flex items-center gap-2 text-[12px]">
+      <div className="flex items-center gap-2 text-[12px] justify-end min-w-0 flex-wrap">
         {rightContent}
         {showAuthStatus ? <AuthStatus onlineCount={onlineCount} status={status} /> : null}
       </div>

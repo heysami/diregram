@@ -16,6 +16,42 @@ function textNodeWithMarks(text: string, marks: JSONContent['marks'] | undefined
   return n as JSONContent;
 }
 
+function parseInlinePlainText(text: string): JSONContent[] {
+  const s = String(text || '');
+  const out: JSONContent[] = [];
+  let i = 0;
+  while (i < s.length) {
+    const open = s.indexOf('[', i);
+    if (open === -1) {
+      const tail = s.slice(i);
+      if (tail) out.push(textNode(tail));
+      break;
+    }
+
+    const mid = s.indexOf('](', open + 1);
+    if (mid === -1) {
+      // Not a markdown link; emit "[" literally and continue scanning.
+      out.push(textNode(s.slice(i, open + 1)));
+      i = open + 1;
+      continue;
+    }
+    const close = s.indexOf(')', mid + 2);
+    if (close === -1) {
+      out.push(textNode(s.slice(i)));
+      break;
+    }
+
+    const before = s.slice(i, open);
+    if (before) out.push(textNode(before));
+    const label = s.slice(open + 1, mid);
+    const href = s.slice(mid + 2, close);
+    if (label) out.push(textNodeWithMarks(label, [{ type: 'link', attrs: { href } }] as any));
+    else if (href) out.push(textNodeWithMarks(href, [{ type: 'link', attrs: { href } }] as any));
+    i = close + 1;
+  }
+  return out;
+}
+
 function parseInlineWithComments(text: string): JSONContent[] {
   const s = String(text || '');
   const out: JSONContent[] = [];
@@ -24,11 +60,11 @@ function parseInlineWithComments(text: string): JSONContent[] {
     const open = s.indexOf('[[comment:', i);
     if (open === -1) {
       const tail = s.slice(i);
-      if (tail) out.push(textNode(tail));
+      if (tail) out.push(...parseInlinePlainText(tail));
       break;
     }
     const before = s.slice(i, open);
-    if (before) out.push(textNode(before));
+    if (before) out.push(...parseInlinePlainText(before));
     const closeBracket = s.indexOf(']]', open);
     if (closeBracket === -1) {
       out.push(textNode(s.slice(open)));
@@ -91,6 +127,9 @@ function nexusTable(raw: string): JSONContent {
 }
 function nexusTest(raw: string): JSONContent {
   return { type: 'nexusTest', attrs: { raw: safeJsonPretty(raw) } };
+}
+function nexusNoteLink(raw: string): JSONContent {
+  return { type: 'nexusNoteLink', attrs: { raw: safeJsonPretty(raw) } };
 }
 
 function nexusBox(raw: string): JSONContent {
@@ -179,6 +218,7 @@ export function parseMarkdownToTiptap(markdown: string): JSONContent {
     if (lang === 'nexus-embed') out.push(nexusEmbed(code));
     else if (lang === 'nexus-table') out.push(nexusTable(code));
     else if (lang === 'nexus-test') out.push(nexusTest(code));
+    else if (lang === 'nexus-note-link') out.push(nexusNoteLink(code));
     else if (lang === 'nexus-box') out.push(nexusBox(code));
     else if (lang === 'nexus-toggle') out.push(nexusToggle(code));
     else if (lang === 'nexus-columns') out.push(nexusColumns(code));
@@ -317,11 +357,14 @@ function serializeInlineText(node: JSONContent | undefined): string {
     const text = String(node.text || '');
     const marks = Array.isArray((node as any).marks) ? ((node as any).marks as any[]) : [];
     const comment = marks.find((m) => m?.type === 'comment') || null;
+    const link = marks.find((m) => m?.type === 'link') || null;
+    const href = link ? String(link?.attrs?.href || '').trim() : '';
+    const linked = href ? `[${text || href}](${href})` : text;
     if (comment) {
       const id = String(comment?.attrs?.id || '').trim();
-      return `[[comment:${id}]]${text}[[/comment]]`;
+      return `[[comment:${id}]]${linked}[[/comment]]`;
     }
-    return text;
+    return linked;
   }
   if (Array.isArray(node.content)) return node.content.map(serializeInlineText).join('');
   return '';
@@ -364,6 +407,14 @@ export function serializeTiptapToMarkdown(doc: JSONContent): string {
       case 'nexusTest': {
         const raw = String((b.attrs as any)?.raw || '').trim();
         emit('```nexus-test');
+        emit(raw);
+        emit('```');
+        emitBlank();
+        return;
+      }
+      case 'nexusNoteLink': {
+        const raw = String((b.attrs as any)?.raw || '').trim();
+        emit('```nexus-note-link');
         emit(raw);
         emit('```');
         emitBlank();

@@ -94,6 +94,8 @@ export type UseTldrawTileControllerOpts = {
   sessionStorageKey: string;
   /** Output size for thumbnail PNG (square). */
   thumbOutPx?: number;
+  /** Minimum time between thumbnail exports while editing. */
+  thumbMinIntervalMs?: number;
   onChange: (next: { snapshot: Partial<TLEditorSnapshot>; thumbPngDataUrl: string | null }) => void;
   onMountEditor?: (editor: Editor) => void;
 };
@@ -106,7 +108,7 @@ export function useTldrawTileController(opts: UseTldrawTileControllerOpts): {
   getShapeVisibility: (shape: any) => any;
   onMount: (editor: Editor) => void;
 } {
-  const { initialSnapshot, sessionStorageKey, thumbOutPx = 256, onChange, onMountEditor } = opts;
+  const { initialSnapshot, sessionStorageKey, thumbOutPx = 256, thumbMinIntervalMs = 1200, onChange, onMountEditor } = opts;
 
   // IMPORTANT: keep these stable; unstable props can cause editor re-inits and hangs.
   const shapeUtils = useMemo(
@@ -434,7 +436,9 @@ export function useTldrawTileController(opts: UseTldrawTileControllerOpts): {
             }
 
             const now = Date.now();
-            const shouldThumb = now - (lastThumbAtRef.current || 0) > 6000;
+            // Thumbnails are used as "live" card previews; keep them relatively fresh while editing.
+            // (Still bounded by export cost + existing 650ms debounce.)
+            const shouldThumb = now - (lastThumbAtRef.current || 0) > thumbMinIntervalMs;
             const thumb = editor && shouldThumb ? await exportThumb(editor, thumbOutPx) : null;
             if (thumb) lastThumbAtRef.current = now;
             onChange({ snapshot: docOnly, thumbPngDataUrl: thumb });
