@@ -128,6 +128,13 @@ function insertNodeAtPoint(shape: any, localX: number, localY: number): { nxEdit
 export function installVectorPenInteractions(editor: Editor): () => void {
   const onPointerDown = (e: PointerEvent) => {
     if (isTextInput(e.target)) return;
+    // Ignore clicks on tldraw UI chrome (toolbar, style panel, etc.)
+    try {
+      const t = e.target as any;
+      if (t && typeof t.closest === 'function' && t.closest('.tlui')) return;
+    } catch {
+      // ignore
+    }
     const only: any = editor.getOnlySelectedShape?.();
     const penActive = isVectorPenActive(editor);
 
@@ -213,11 +220,44 @@ export function installVectorPenInteractions(editor: Editor): () => void {
     }
   };
 
+  // If the user switches to any other tool, disable vector pen mode.
+  // This prevents “sticky” vector-pen state and fixes the extra-click UX.
+  let toolSyncing = false;
+  let lastToolId = '';
+  const unlistenTool = (editor as any)?.store?.listen?.(
+    () => {
+      if (toolSyncing) return;
+      let tid = '';
+      try {
+        tid = String((editor as any)?.getCurrentToolId?.() || '');
+      } catch {
+        tid = '';
+      }
+      if (!tid || tid === lastToolId) return;
+      lastToolId = tid;
+      // Only auto-disable when switching away from select (vector pen itself returns to select).
+      if (tid === 'select') return;
+      if (!isVectorPenActive(editor)) return;
+      toolSyncing = true;
+      try {
+        setVectorPenMeta(editor, { nxVectorPen: false, nxSelectedNodeId: null } as any);
+      } finally {
+        toolSyncing = false;
+      }
+    },
+    { scope: 'session' as any },
+  );
+
   window.addEventListener('pointerdown', onPointerDown, { capture: true });
   window.addEventListener('keydown', onKeyDown, { capture: true });
   return () => {
     window.removeEventListener('pointerdown', onPointerDown, { capture: true } as any);
     window.removeEventListener('keydown', onKeyDown, { capture: true } as any);
+    try {
+      unlistenTool?.();
+    } catch {
+      // ignore
+    }
   };
 }
 

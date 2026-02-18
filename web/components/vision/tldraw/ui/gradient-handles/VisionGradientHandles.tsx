@@ -6,10 +6,12 @@ import { useEditor, useValue } from 'tldraw';
 import { clamp01 } from '@/components/vision/tldraw/ui/gradient-handles/math';
 import { useVisionGradientUiState } from '@/components/vision/tldraw/ui/gradient-handles/visionGradientUiStore';
 import { parseFillLayers, parseStrokeLayers, serializeFillLayers, serializeStrokeLayers } from '@/components/vision/tldraw/paint/nxPaintLayers';
+import { readNxFxFromMeta } from '@/components/vision/tldraw/fx/nxfxTypes';
+import { useFxInteractionState } from '@/components/vision/tldraw/fx/fxInteractionStore';
 
 function isVisionGradientShape(shape: any) {
   if (!shape) return false;
-  if (shape.type !== 'nxtext' && shape.type !== 'nxrect' && shape.type !== 'nxpath') return false;
+  if (shape.type !== 'nxtext' && shape.type !== 'nxrect' && shape.type !== 'nxpath' && shape.type !== 'nxlayout') return false;
   return true;
 }
 
@@ -19,6 +21,7 @@ export function VisionGradientHandles() {
   const [isDragging, setIsDragging] = useState(false);
   const [isMounted, setIsMounted] = useState(false);
   const gradientUi = useVisionGradientUiState();
+  const fxInteraction = useFxInteractionState();
 
   useEffect(() => {
     setIsMounted(true);
@@ -75,6 +78,91 @@ export function VisionGradientHandles() {
       return { shape, w, h, p0, p1, rect: { left: rect.left, top: rect.top }, paint, layerId: layerId || null };
     },
     [editor, gradientUi?.shapeId, gradientUi?.paint, (gradientUi as any)?.layerId],
+  );
+
+  const maskIndicator = useValue(
+    'visionMaskIndicator',
+    () => {
+      const only: any = editor.getOnlySelectedShape();
+      if (!only) return null;
+      const fx = readNxFxFromMeta((only as any).meta) || null;
+      const ds = Array.isArray((fx as any)?.distortions) ? (fx as any).distortions : [];
+      const m = ds.find((d: any) => d && d.kind === 'mask' && d.enabled !== false) || null;
+      const maskId = typeof (m as any)?.sourceId === 'string' ? String((m as any).sourceId) : '';
+      if (!maskId) return null;
+
+      // Container rect to convert editor screen coords -> window coords.
+      const container: any = (editor as any).getContainer?.() || null;
+      const rect = container?.getBoundingClientRect?.();
+      if (!rect) return null;
+
+      // Use page bounds as a cheap, stable visual indicator.
+      const b: any = (editor as any).getShapePageBounds?.(maskId as any) || null;
+      if (!b) return null;
+      const x = Number(b.x ?? b.minX ?? 0);
+      const y = Number(b.y ?? b.minY ?? 0);
+      const w = Number(b.w ?? b.width ?? 0);
+      const h = Number(b.h ?? b.height ?? 0);
+      if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(w) || !Number.isFinite(h)) return null;
+      if (w <= 0 || h <= 0) return null;
+
+      const p0s = editor.pageToScreen({ x, y });
+      const p1s = editor.pageToScreen({ x: x + w, y: y + h });
+      const left = rect.left + Number(p0s.x || 0);
+      const top = rect.top + Number(p0s.y || 0);
+      const right = rect.left + Number(p1s.x || 0);
+      const bottom = rect.top + Number(p1s.y || 0);
+      const sw = Math.max(1, right - left);
+      const sh = Math.max(1, bottom - top);
+      return { left, top, width: sw, height: sh, maskId };
+    },
+    [editor],
+  );
+
+  const fxGhostIndicator = useValue(
+    'visionFxGhostIndicator',
+    () => {
+      if (!fxInteraction.active) return null;
+      const only: any = editor.getOnlySelectedShape();
+      if (!only) return null;
+
+      const fx = readNxFxFromMeta((only as any).meta) || null;
+      const effects = Array.isArray((fx as any)?.effects) ? (fx as any).effects : [];
+      const distortions = Array.isArray((fx as any)?.distortions) ? (fx as any).distortions : [];
+      const hasAnyFx = effects.length > 0 || distortions.length > 0;
+      if (!hasAnyFx) return null;
+
+      // Only show when this shape actually uses a proxy path (alpha mask or other effects/distortions).
+      const requiresProxy =
+        effects.length > 0 ||
+        distortions.some((d: any) => d && d.kind !== 'mask') ||
+        distortions.some((d: any) => d && d.kind === 'mask' && d.enabled !== false && String((d as any).mode || 'alpha') !== 'shape');
+      if (!requiresProxy) return null;
+
+      const container: any = (editor as any).getContainer?.() || null;
+      const rect = container?.getBoundingClientRect?.();
+      if (!rect) return null;
+
+      const b: any = (editor as any).getShapePageBounds?.(only.id as any) || null;
+      if (!b) return null;
+      const x = Number(b.x ?? b.minX ?? 0);
+      const y = Number(b.y ?? b.minY ?? 0);
+      const w = Number(b.w ?? b.width ?? 0);
+      const h = Number(b.h ?? b.height ?? 0);
+      if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(w) || !Number.isFinite(h)) return null;
+      if (w <= 0 || h <= 0) return null;
+
+      const p0s = editor.pageToScreen({ x, y });
+      const p1s = editor.pageToScreen({ x: x + w, y: y + h });
+      const left = rect.left + Number(p0s.x || 0);
+      const top = rect.top + Number(p0s.y || 0);
+      const right = rect.left + Number(p1s.x || 0);
+      const bottom = rect.top + Number(p1s.y || 0);
+      const sw = Math.max(1, right - left);
+      const sh = Math.max(1, bottom - top);
+      return { left, top, width: sw, height: sh };
+    },
+    [editor, fxInteraction.active],
   );
 
   const begin = useCallback(
@@ -170,31 +258,91 @@ export function VisionGradientHandles() {
     return { x0, y0, x1, y1 };
   }, [active]);
 
-  if (!isMounted || !active || !ui) return null;
+  if (!isMounted) return null;
 
   return createPortal(
-    <div className="nx-gh" style={{ pointerEvents: 'none' }}>
-      <svg className="nx-ghSvg" aria-hidden="true">
-        <line x1={ui.x0} y1={ui.y0} x2={ui.x1} y2={ui.y1} className="nx-ghLine" />
-      </svg>
+    <>
+      {fxGhostIndicator ? (
+        <>
+          <div
+            style={{
+              position: 'fixed',
+              pointerEvents: 'none',
+              left: fxGhostIndicator.left,
+              top: fxGhostIndicator.top,
+              width: fxGhostIndicator.width,
+              height: fxGhostIndicator.height,
+              border: '2px dashed rgba(0,0,0,0.35)',
+              boxShadow: '0 0 0 1px rgba(255,255,255,0.65)',
+              borderRadius: 8,
+              opacity: 0.95,
+            }}
+            aria-hidden="true"
+          />
+          <div
+            style={{
+              position: 'fixed',
+              pointerEvents: 'none',
+              left: fxGhostIndicator.left + 8,
+              top: fxGhostIndicator.top - 18,
+              fontSize: 11,
+              fontFamily: 'Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif',
+              background: 'rgba(255,255,255,0.92)',
+              border: '1px solid rgba(0,0,0,0.12)',
+              padding: '2px 6px',
+              borderRadius: 999,
+              color: 'rgba(0,0,0,0.7)',
+            }}
+            aria-hidden="true"
+          >
+            FX preview (release to render)
+          </div>
+        </>
+      ) : null}
 
-      <button
-        type="button"
-        className={isDragging ? 'nx-ghDot is-dragging' : 'nx-ghDot'}
-        style={{ left: ui.x0, top: ui.y0 }}
-        onPointerDown={(e) => begin('g0', e)}
-        onPointerMove={onMove}
-        onPointerUp={onUp}
-      />
-      <button
-        type="button"
-        className={isDragging ? 'nx-ghDot is-dragging' : 'nx-ghDot'}
-        style={{ left: ui.x1, top: ui.y1 }}
-        onPointerDown={(e) => begin('g1', e)}
-        onPointerMove={onMove}
-        onPointerUp={onUp}
-      />
-    </div>,
+      {maskIndicator ? (
+        <div
+          style={{
+            position: 'fixed',
+            pointerEvents: 'none',
+            left: maskIndicator.left,
+            top: maskIndicator.top,
+            width: maskIndicator.width,
+            height: maskIndicator.height,
+            border: '2px dashed var(--color-selected)',
+            boxShadow: '0 0 0 1px rgba(255,255,255,0.6)',
+            borderRadius: 6,
+            opacity: 0.9,
+          }}
+          aria-hidden="true"
+        />
+      ) : null}
+
+      {active && ui ? (
+        <div className="nx-gh" style={{ pointerEvents: 'none' }}>
+          <svg className="nx-ghSvg" aria-hidden="true">
+            <line x1={ui.x0} y1={ui.y0} x2={ui.x1} y2={ui.y1} className="nx-ghLine" />
+          </svg>
+
+          <button
+            type="button"
+            className={isDragging ? 'nx-ghDot is-dragging' : 'nx-ghDot'}
+            style={{ left: ui.x0, top: ui.y0 }}
+            onPointerDown={(e) => begin('g0', e)}
+            onPointerMove={onMove}
+            onPointerUp={onUp}
+          />
+          <button
+            type="button"
+            className={isDragging ? 'nx-ghDot is-dragging' : 'nx-ghDot'}
+            style={{ left: ui.x1, top: ui.y1 }}
+            onPointerDown={(e) => begin('g1', e)}
+            onPointerMove={onMove}
+            onPointerUp={onUp}
+          />
+        </div>
+      ) : null}
+    </>,
     document.body,
   );
 }

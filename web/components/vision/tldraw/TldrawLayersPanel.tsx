@@ -16,7 +16,8 @@ const DISPLAY_FRONT_TO_BACK = true;
 
 function isGroupLike(shape: TLShape): boolean {
   // tldraw groups are explicit, but frames also parent other shapes.
-  return shape.type === 'group' || shape.type === 'frame';
+  const t = String((shape as any)?.type || '');
+  return t === 'group' || t === 'frame' || t === 'nxlayout';
 }
 
 function getName(shape: TLShape): string {
@@ -87,7 +88,7 @@ function computeInsertIndex(
   }
 }
 
-export function TldrawLayersPanel({ editor }: { editor: Editor | null }) {
+export function TldrawLayersPanel({ editor, embedded }: { editor: Editor | null; embedded?: boolean }) {
   const [docRev, setDocRev] = useState(0);
   const [selectedIds, setSelectedIds] = useState<TLShapeId[]>([]);
   const [open, setOpen] = useState<Record<string, boolean>>({});
@@ -404,6 +405,14 @@ export function TldrawLayersPanel({ editor }: { editor: Editor | null }) {
     return (
       <div className="text-xs opacity-70">
         Loading editor…
+      </div>
+    );
+  }
+
+  if (embedded) {
+    return (
+      <div className="space-y-1 max-h-[320px] overflow-auto pr-1">
+        {(DISPLAY_FRONT_TO_BACK ? nodes.slice().reverse() : nodes).map((n) => renderNode(n, 0))}
       </div>
     );
   }

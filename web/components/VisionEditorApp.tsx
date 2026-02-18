@@ -200,6 +200,7 @@ export function VisionEditorApp() {
       folderId={activeFile.folderId}
       title={activeFile.name}
       statusLabel={statusLabel}
+      yDoc={yDoc}
       doc={visionDoc}
       onChange={handleVisionChange}
       onBack={() => router.push('/workspace')}

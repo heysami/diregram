@@ -23,7 +23,7 @@ export function isProxy(shape: any): boolean {
 }
 
 export function isGroupLike(shape: any): boolean {
-  return shape?.type === 'group' || shape?.type === 'frame';
+  return shape?.type === 'group' || shape?.type === 'frame' || shape?.type === 'nxlayout';
 }
 
 export function getProxySourceId(shape: any): string | null {

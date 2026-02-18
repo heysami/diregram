@@ -63,7 +63,9 @@ function collectSubtreeIdsPreorder(children: Map<string, string[]>, rootId: stri
 export function syncAnnotatorMirror(editor: Editor, ids: { assetId: string; annotatorId: string }): void {
   const assetId = coerceId(ids.assetId);
   const annotatorId = coerceId(ids.annotatorId);
-  if (!assetId || !annotatorId) return;
+  if (!assetId || !annotatorId) {
+    return;
+  }
 
   const allIds = getAllShapeIdsDeep(editor);
   const kids = buildChildrenMapFromDeep(editor);
@@ -237,15 +239,19 @@ export function syncAnnotatorMirror(editor: Editor, ids: { assetId: string; anno
   safeCreateShapes(editor, toCreate);
   safeUpdateShapes(editor, toUpdate);
 
-  // Re-lock mirror root subtree.
-  const relockIds = getDescendantIds(editor, mirrorRootId);
-  const relock: any[] = [];
-  for (const id of relockIds) {
-    const s = getShape(editor, id);
-    if (!s) continue;
-    relock.push({ id: s.id, type: s.type, isLocked: true });
+  // IMPORTANT:
+  // Do NOT re-lock the entire mirrored subtree.
+  // The FX proxy system (and other runtime features) needs to update mirror clones (and their proxies)
+  // via `updateShapes` (e.g. meta.hidden, bounds, rev). If we lock everything here, those updates can fail
+  // and the mirror will appear stale or missing effects.
+  //
+  // Keep only the mirror root locked as a lightweight guard.
+  try {
+    const root: any = getShape(editor, mirrorRootId);
+    if (root) safeUpdateShapes(editor, [{ id: root.id, type: root.type, isLocked: true } as any]);
+  } catch {
+    // ignore
   }
-  safeUpdateShapes(editor, relock);
 
   // Keep the mirror root behind overlays.
   try {

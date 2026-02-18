@@ -2,6 +2,8 @@
 
 import type { Editor } from 'tldraw';
 import { getTheme, tokenToFillHex, tokenToSolidHex } from '@/components/vision/tldraw/autoconvert/colors';
+import { makeDefaultFillLayer, makeDefaultStrokeLayer, serializeFillLayers, serializeStrokeLayers } from '@/components/vision/tldraw/paint/nxPaintLayers';
+import { computeSvgPathsBBox, detectSvgFillOnlyPath, extractPathDFromSvg, readSvgViewBox } from '@/components/vision/tldraw/autoconvert/svgExtract';
 
 type PathConversion = {
   type: 'nxpath';
@@ -14,46 +16,6 @@ type PathConversion = {
   props: any;
   meta: any;
 };
-
-function clamp(v: number, lo: number, hi: number) {
-  if (!Number.isFinite(v)) return lo;
-  return Math.max(lo, Math.min(hi, v));
-}
-
-function extractPathD(svgFragment: string): string {
-  try {
-    const doc = new DOMParser().parseFromString(String(svgFragment || ''), 'image/svg+xml');
-    const paths = Array.from(doc.querySelectorAll('path'));
-    const ds = paths
-      .map((p) => p.getAttribute('d') || '')
-      .map((s) => s.trim())
-      .filter(Boolean);
-    return ds.join(' ');
-  } catch {
-    return '';
-  }
-}
-
-function readSvgSize(svg: string): { w: number; h: number } | null {
-  try {
-    const doc = new DOMParser().parseFromString(String(svg || ''), 'image/svg+xml');
-    const root = doc.querySelector('svg');
-    if (!root) return null;
-    const vb = String(root.getAttribute('viewBox') || '');
-    const m = vb.match(/(-?\d*\.?\d+)\s+(-?\d*\.?\d+)\s+(-?\d*\.?\d+)\s+(-?\d*\.?\d+)/);
-    if (m) {
-      const w = Number(m[3]);
-      const h = Number(m[4]);
-      if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0) return { w, h };
-    }
-    const wAttr = Number(root.getAttribute('width') || 0);
-    const hAttr = Number(root.getAttribute('height') || 0);
-    if (Number.isFinite(wAttr) && Number.isFinite(hAttr) && wAttr > 0 && hAttr > 0) return { w: wAttr, h: hAttr };
-  } catch {
-    // ignore
-  }
-  return null;
-}
 
 function sizeTokenToStrokeWidth(sizeToken: string): number {
   const s = String(sizeToken || 'm');
@@ -69,9 +31,9 @@ export async function tryMakeVisionPathFromAnyTldrawShape(editor: Editor, rec: a
   const id = String(rec.id);
 
   // Avoid converting Vision-native shapes.
-  if (rec.type === 'nxpath' || rec.type === 'nxrect' || rec.type === 'nxtext' || rec.type === 'nxfx') return null;
+  if (rec.type === 'nxpath' || rec.type === 'nxrect' || rec.type === 'nxtext' || rec.type === 'nxfx' || rec.type === 'nxlayout') return null;
   // Don't convert groups/frames; those are structural (and core frames are intentional).
-  if (rec.type === 'group' || rec.type === 'frame') return null;
+  if (rec.type === 'group' || rec.type === 'frame' || rec.type === 'nxlayout') return null;
 
   // Respect opt-out.
   if (rec?.meta?.nxNoAutoConvert) return null;
@@ -83,7 +45,7 @@ export async function tryMakeVisionPathFromAnyTldrawShape(editor: Editor, rec: a
   } catch {
     svg = '';
   }
-  const d = extractPathD(svg);
+  const d = extractPathDFromSvg(svg);
   if (!d) return null;
 
   const theme = getTheme(editor as any);
@@ -99,14 +61,49 @@ export async function tryMakeVisionPathFromAnyTldrawShape(editor: Editor, rec: a
   const strokeWidth = sizeTokenToStrokeWidth(sizeToken);
 
   // Prefer actual SVG size; fall back to record props.
-  const sz = svg ? readSvgSize(svg) : null;
-  const w = Math.max(1, Number(sz?.w ?? rec.props?.w ?? 120));
-  const h = Math.max(1, Number(sz?.h ?? rec.props?.h ?? 120));
+  const vb = svg ? readSvgViewBox(svg) : null;
+  const bbox = svg ? computeSvgPathsBBox(svg) : null;
+  const w = Math.max(1, Number(bbox?.w ?? vb?.w ?? rec.props?.w ?? 120));
+  const h = Math.max(1, Number(bbox?.h ?? vb?.h ?? rec.props?.h ?? 120));
+  // Use path-space bbox origin for normalization in the renderer.
+  const vbX = Number(bbox?.x ?? 0) || 0;
+  const vbY = Number(bbox?.y ?? 0) || 0;
+
+  // IMPORTANT: For some default shapes (notably `draw`), record `x/y` can be 0 even when the shape
+  // is elsewhere. Prefer page bounds for placement to avoid "jump to top-left" after conversion.
+  let pageX = Number(rec.x || 0);
+  let pageY = Number(rec.y || 0);
+  try {
+    const b: any = (editor as any).getShapePageBounds?.(id as any);
+    const bx = Number(b?.x ?? b?.minX ?? 0);
+    const by = Number(b?.y ?? b?.minY ?? 0);
+    if (Number.isFinite(bx) && Number.isFinite(by)) {
+      pageX = bx;
+      pageY = by;
+    }
+  } catch {
+    // ignore
+  }
+  // Convert page-space position to parent-space coordinates (for nested shapes).
+  let px = pageX;
+  let py = pageY;
+  try {
+    const p = (editor as any).getPointInParentSpace?.(id as any, { x: pageX, y: pageY });
+    if (p && Number.isFinite(p.x) && Number.isFinite(p.y)) {
+      px = Number(p.x);
+      py = Number(p.y);
+    }
+  } catch {
+    // ignore
+  }
+
+  // Determine whether this is a "brush-like" filled path export (tldraw draw strokes often export as fill-only paths).
+  const svgFillOnly = svg ? detectSvgFillOnlyPath(svg) : false;
 
   return {
     type: 'nxpath',
-    x: rec.x,
-    y: rec.y,
+    x: px,
+    y: py,
     rotation: rec.rotation,
     parentId: rec.parentId,
     index: rec.index,
@@ -115,31 +112,73 @@ export async function tryMakeVisionPathFromAnyTldrawShape(editor: Editor, rec: a
       w,
       h,
       d,
+      // Preserve SVG viewBox origin; tldraw exports sometimes use non-zero minX/minY.
+      ...(vbX || vbY ? { vbX, vbY } : {}),
+
+      // IMPORTANT: NXPathShapeUtil defaults include transparent stroke layers; override explicitly.
+      fills: serializeFillLayers([
+        makeDefaultFillLayer({
+          mode: 'solid',
+          // If svg exports as fill-only (brush stroke), treat fill as the primary paint.
+          solid: svgFillOnly ? strokeHex : hasFill ? fillHex : 'transparent',
+          stops: JSON.stringify([
+            { offset: 0, color: svgFillOnly ? strokeHex : hasFill ? fillHex : 'transparent' },
+            { offset: 1, color: svgFillOnly ? strokeHex : hasFill ? fillHex : 'transparent' },
+          ]),
+          pattern: 'stripes',
+          angle: 45,
+          gx0: 0,
+          gy0: 0,
+          gx1: 1,
+          gy1: 0,
+        } as any),
+      ]),
+      strokes: serializeStrokeLayers([
+        makeDefaultStrokeLayer({
+          mode: 'solid',
+          solid: svgFillOnly ? 'transparent' : strokeHex,
+          stops: JSON.stringify([
+            { offset: 0, color: svgFillOnly ? 'transparent' : strokeHex },
+            { offset: 1, color: svgFillOnly ? 'transparent' : strokeHex },
+          ]),
+          pattern: 'dots',
+          angle: 45,
+          width: svgFillOnly ? 0 : strokeWidth,
+          align: 'center',
+          dash: { kind: 'solid' },
+          cap: 'round',
+          join: 'round',
+          gx0: 0,
+          gy0: 0,
+          gx1: 1,
+          gy1: 0,
+        } as any),
+      ]),
 
       // Shared paint model
       fillMode: 'solid',
-      fill: hasFill ? fillHex : 'transparent',
-      fillA: hasFill ? fillHex : 'transparent',
+      fill: svgFillOnly ? strokeHex : hasFill ? fillHex : 'transparent',
+      fillA: svgFillOnly ? strokeHex : hasFill ? fillHex : 'transparent',
       fillB: '#ffffff',
       fillAngle: 45,
       fillStops: JSON.stringify([
-        { offset: 0, color: hasFill ? fillHex : 'transparent' },
-        { offset: 1, color: hasFill ? fillHex : 'transparent' },
+        { offset: 0, color: svgFillOnly ? strokeHex : hasFill ? fillHex : 'transparent' },
+        { offset: 1, color: svgFillOnly ? strokeHex : hasFill ? fillHex : 'transparent' },
       ]),
       fillPattern: 'stripes',
 
       strokeMode: 'solid',
-      stroke: strokeHex,
-      strokeA: strokeHex,
+      stroke: svgFillOnly ? 'transparent' : strokeHex,
+      strokeA: svgFillOnly ? 'transparent' : strokeHex,
       strokeB: '#ffffff',
       strokeAngle: 45,
       strokeStops: JSON.stringify([
-        { offset: 0, color: strokeHex },
-        { offset: 1, color: strokeHex },
+        { offset: 0, color: svgFillOnly ? 'transparent' : strokeHex },
+        { offset: 1, color: svgFillOnly ? 'transparent' : strokeHex },
       ]),
       strokePattern: 'dots',
 
-      strokeWidth,
+      strokeWidth: svgFillOnly ? 0 : strokeWidth,
       gx0: 0,
       gy0: 0,
       gx1: 1,

@@ -6,6 +6,7 @@ import { TldrawFillSection, TldrawOutlineSection, TldrawTextSection } from '@/co
 
 export function TldrawTypeSections({
   enabled,
+  showText = true,
   editor,
   fill,
   outline,
@@ -16,6 +17,7 @@ export function TldrawTypeSections({
   onPickTextColor,
 }: {
   enabled: boolean;
+  showText?: boolean;
   editor: Editor;
   fill: { color: string; mixed: boolean; placeholder: string; fillStyle: string };
   outline: { color: string; mixed: boolean; placeholder: string; dashStyle: string };
@@ -73,24 +75,26 @@ export function TldrawTypeSections({
         }}
       />
 
-      <TldrawTextSection
-        color={text.color}
-        mixed={text.mixed}
-        placeholder={text.placeholder}
-        sizeNumber={sizeNumber}
-        onPickColor={(hex) => onPickTextColor(hex)}
-        onCommitHex={(hex) => onPickTextColor(hex)}
-        onChangeSizeNumber={(n) => {
-          const nn = Math.max(1, Math.min(4, Math.round(Number(n || 2))));
-          const token = sizeTokenFromNumber(nn);
-          try {
-            editor.setStyleForSelectedShapes(DefaultSizeStyle as any, token as any);
-            editor.setStyleForNextShapes(DefaultSizeStyle as any, token as any);
-          } catch {
-            // ignore
-          }
-        }}
-      />
+      {showText ? (
+        <TldrawTextSection
+          color={text.color}
+          mixed={text.mixed}
+          placeholder={text.placeholder}
+          sizeNumber={sizeNumber}
+          onPickColor={(hex) => onPickTextColor(hex)}
+          onCommitHex={(hex) => onPickTextColor(hex)}
+          onChangeSizeNumber={(n) => {
+            const nn = Math.max(1, Math.min(4, Math.round(Number(n || 2))));
+            const token = sizeTokenFromNumber(nn);
+            try {
+              editor.setStyleForSelectedShapes(DefaultSizeStyle as any, token as any);
+              editor.setStyleForNextShapes(DefaultSizeStyle as any, token as any);
+            } catch {
+              // ignore
+            }
+          }}
+        />
+      ) : null}
     </>
   );
 }

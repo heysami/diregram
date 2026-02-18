@@ -13,23 +13,34 @@ import {
 } from 'tldraw';
 import { Box } from '@tldraw/editor';
 import { DefaultDashStyle, DefaultFillStyle, DefaultSizeStyle } from '@tldraw/editor';
+import { DefaultColorStyle } from '@tldraw/tlschema';
 import { NXPathShapeUtil } from '@/components/vision/tldraw/shapes/NXPathShapeUtil';
+import { NxLayoutShapeUtil } from '@/components/vision/tldraw/shapes/NxLayoutShapeUtil';
 import { NxRectShapeUtil } from '@/components/vision/tldraw/shapes/NxRectShapeUtil';
 import { NxTextShapeUtil } from '@/components/vision/tldraw/shapes/NxTextShapeUtil';
 import { NxFxShapeUtil } from '@/components/vision/tldraw/fx/NxFxShapeUtil';
 import { installVisionFxProxy } from '@/components/vision/tldraw/fx/installVisionFxProxy';
 import { installBooleanEditOnSelect } from '@/components/vision/tldraw/boolean/installBooleanEditOnSelect';
 import { installAutoConvertVisionShapes } from '@/components/vision/tldraw/installAutoConvertVisionShapes';
+import { installNxLayout } from '@/components/vision/tldraw/layout/installNxLayout';
 import { VisionStylePanel } from '@/components/vision/tldraw/ui/VisionStylePanel';
 import { VisionHandles } from '@/components/vision/tldraw/ui/VisionHandles';
 import { VisionGradientHandles } from '@/components/vision/tldraw/ui/VisionGradientHandles';
 import { filterVisionTools } from '@/components/vision/tldraw/ui/visionToolAllowlist';
 import { VisionToolbar } from '@/components/vision/tldraw/ui/VisionToolbar';
 import { isFxVisibilityOverrideActive } from '@/components/vision/tldraw/fx/fxVisibilityOverride';
+import { getShapePageBounds } from '@/components/vision/tldraw/fx/proxy/proxyBounds';
 import { cropAndScaleDataUrl } from '@/lib/vision-thumbs';
 import { ensureCoreFrames, findCoreFrameId, syncAnnotatorMirror } from './core/visionCoreSections';
 import { isBooleanSourceMeta } from '@/components/vision/tldraw/boolean/booleanSourceState';
 import { installAutoRecomputeBooleans } from '@/components/vision/tldraw/boolean/useAutoRecomputeBooleans';
+import { makeTheme, nearestTokenForHex } from '@/components/vision/tldraw/ui/style-panel/color-utils';
+import { addVisionAnnotationTools, visionAnnotationTranslations } from '@/components/vision/tldraw/annotations/visionAnnotationTools';
+import { installVisionAnnotationSemanticSync } from '@/components/vision/tldraw/annotations/installVisionAnnotationSemanticSync';
+import { installVisionAnnotationToolInteractions } from '@/components/vision/tldraw/annotations/installVisionAnnotationToolInteractions';
+import { addVectorPenTool, vectorPenTranslations } from '@/components/vision/tldraw/vector-pen/tooling';
+import { installVectorPenInteractions } from '@/components/vision/tldraw/vector-pen/interactions';
+import { withVisionFrameShapeUtil } from '@/components/vision/tldraw/frame/visionFrameShapeUtil';
 
 function safeJsonParse<T = unknown>(s: string): T | null {
   try {
@@ -98,7 +109,10 @@ export function useTldrawTileController(opts: UseTldrawTileControllerOpts): {
   const { initialSnapshot, sessionStorageKey, thumbOutPx = 256, onChange, onMountEditor } = opts;
 
   // IMPORTANT: keep these stable; unstable props can cause editor re-inits and hangs.
-  const shapeUtils = useMemo(() => [...defaultShapeUtils, NXPathShapeUtil, NxRectShapeUtil, NxTextShapeUtil, NxFxShapeUtil], []);
+  const shapeUtils = useMemo(
+    () => [...withVisionFrameShapeUtil(defaultShapeUtils as any), NXPathShapeUtil, NxLayoutShapeUtil, NxRectShapeUtil, NxTextShapeUtil, NxFxShapeUtil],
+    [],
+  );
   const store = useMemo(() => createTLStore({ shapeUtils }), [shapeUtils]);
 
   const editorRef = useRef<Editor | null>(null);
@@ -109,8 +123,11 @@ export function useTldrawTileController(opts: UseTldrawTileControllerOpts): {
   const lastThumbAtRef = useRef<number>(0);
   const coreMutatingRef = useRef(false);
   const mirrorMutatingRef = useRef(false);
+  const sectionParentingMutatingRef = useRef(false);
+  const pendingAutoParentRef = useRef<Map<string, string>>(new Map()); // shapeId -> targetParentId
   const mirrorRafRef = useRef<number | null>(null);
   const lastMirrorAtRef = useRef<number>(0);
+  const loggedToolsOnceRef = useRef(false);
 
   const scheduleMirrorSync = useCallback(() => {
     if (hydratingRef.current) return;
@@ -144,10 +161,12 @@ export function useTldrawTileController(opts: UseTldrawTileControllerOpts): {
 
   const uiOverrides = useMemo<TLUiOverrides>(
     () => ({
-      tools: (_editor, tools) => {
+      tools: (editor, tools) => {
         const filtered = filterVisionTools(tools as any) as any;
-        return filtered;
+        // Add our custom tools (vector pen + annotations) on top of the allowed base set.
+        return addVisionAnnotationTools(editor, addVectorPenTool(editor, filtered)) as any;
       },
+      translations: { en: { ...(visionAnnotationTranslations as any).en, ...(vectorPenTranslations as any).en } } as any,
     }),
     [],
   );
@@ -196,6 +215,15 @@ export function useTldrawTileController(opts: UseTldrawTileControllerOpts): {
       // Stop treating subsequent store events as "initial hydration".
       window.setTimeout(() => {
         hydratingRef.current = false;
+        // IMPORTANT: post-hydration resync.
+        // If the editor mounts before snapshot application completes, the onMount mirror sync can
+        // run against an empty asset subtree. Store listeners ignore changes during hydration,
+        // so we must force one resync right after hydration ends.
+        try {
+          scheduleMirrorSync();
+        } catch {
+          // ignore
+        }
       }, 0);
     };
 
@@ -227,8 +255,148 @@ export function useTldrawTileController(opts: UseTldrawTileControllerOpts): {
   // Persist doc changes (document-scope only).
   useEffect(() => {
     const cleanup = store.listen(
-      () => {
+      (entry: any) => {
         if (hydratingRef.current) return;
+
+        // Ensure newly-created shapes are parented into the correct core section.
+        // Without this, the asset subtree stays empty (nxlayout containers don't auto-parent like frames),
+        // and the annotator mirror has nothing to clone.
+        try {
+          const editor = editorRef.current;
+          if (editor && !mirrorMutatingRef.current && !sectionParentingMutatingRef.current) {
+            const core = ensureCoreFrames(editor);
+            const assetId = String(core?.assetId || '');
+            const thumbId = String((core as any)?.thumbId || '');
+            const annotatorId = String(core?.annotatorId || '');
+
+            const assetB: any = assetId ? getShapePageBounds(editor, assetId as any) : null;
+            const thumbB: any = thumbId ? getShapePageBounds(editor, thumbId as any) : null;
+            const annotatorB: any = annotatorId ? getShapePageBounds(editor, annotatorId as any) : null;
+
+            const edAny: any = editor as any;
+            const isDrawingNow = (() => {
+              try {
+                const states = ['line.pointing', 'line.dragging', 'draw.pointing', 'draw.dragging', 'arrow.pointing', 'arrow.dragging'];
+                for (const st of states) {
+                  try {
+                    if (typeof edAny?.isInAny === 'function' && edAny.isInAny(st)) return true;
+                  } catch {
+                    // ignore
+                  }
+                }
+              } catch {
+                // ignore
+              }
+              return false;
+            })();
+
+            const contains = (b: any, x: number, y: number) => {
+              const bx = Number(b?.x ?? b?.minX ?? 0);
+              const by = Number(b?.y ?? b?.minY ?? 0);
+              const bw = Number(b?.w ?? b?.width ?? 0);
+              const bh = Number(b?.h ?? b?.height ?? 0);
+              if (!(Number.isFinite(bx) && Number.isFinite(by) && Number.isFinite(bw) && Number.isFinite(bh))) return false;
+              return x >= bx && x <= bx + bw && y >= by && y <= by + bh;
+            };
+
+            const pickTargetParent = (cx: number, cy: number): string | null => {
+              if (assetB && contains(assetB, cx, cy)) return assetId || null;
+              if (annotatorB && contains(annotatorB, cx, cy)) return annotatorId || null;
+              if (thumbB && contains(thumbB, cx, cy)) return thumbId || null;
+              return null;
+            };
+
+            const enqueueIfNeeded = (sid: string) => {
+              if (!sid) return;
+              const shape: any = (editor as any).getShape?.(sid as any) || null;
+              if (!shape) return;
+              if (shape?.meta?.nxCoreSection) return;
+              if (shape?.meta?.nxMirrorRoot === true) return;
+              if (typeof shape?.meta?.nxMirrorSourceId === 'string' && shape.meta.nxMirrorSourceId) return;
+              if (shape?.meta?.nxSkipAutoParenting === true) return;
+
+              const parentId = String(shape?.parentId || '');
+              if (!(parentId.startsWith('page:') || parentId === assetId || parentId === thumbId || parentId === annotatorId)) return;
+
+              const b: any = getShapePageBounds(editor, sid as any);
+              if (!b) return;
+              const cx = Number(b.x || 0) + Number(b.w || 0) / 2;
+              const cy = Number(b.y || 0) + Number(b.h || 0) / 2;
+              if (!Number.isFinite(cx) || !Number.isFinite(cy)) return;
+
+              const target = pickTargetParent(cx, cy);
+              if (!target) return;
+              if (String(target) === parentId) return;
+              pendingAutoParentRef.current.set(String(sid), String(target));
+            };
+
+            // Collect newly-added shapes into the pending queue.
+            if (entry?.changes?.added && Object.keys(entry.changes.added).length) {
+              for (const rec of Object.values<any>(entry.changes.added || {})) {
+                const sid = String(rec?.id || '');
+                enqueueIfNeeded(sid);
+              }
+            }
+
+            // If the user is actively drawing, defer reparenting until a later store event (after pointerup).
+            if (isDrawingNow) return;
+
+            // Flush any pending reparenting requests now that we're not in a drawing interaction.
+            const pending = pendingAutoParentRef.current;
+            if (pending.size) {
+              const toReparent: Array<{ id: string; to: string }> = [];
+              for (const [id, to] of Array.from(pending.entries())) {
+                const s: any = (editor as any).getShape?.(id as any) || null;
+                if (!s) {
+                  pending.delete(id);
+                  continue;
+                }
+                if (s?.meta?.nxSkipAutoParenting === true) {
+                  pending.delete(id);
+                  continue;
+                }
+                const parentId = String(s?.parentId || '');
+                if (parentId === String(to)) {
+                  pending.delete(id);
+                  continue;
+                }
+                // Still only intervene from page/core parents.
+                if (!(parentId.startsWith('page:') || parentId === assetId || parentId === thumbId || parentId === annotatorId)) {
+                  pending.delete(id);
+                  continue;
+                }
+                toReparent.push({ id, to });
+                pending.delete(id);
+              }
+
+              if (toReparent.length) {
+                sectionParentingMutatingRef.current = true;
+                try {
+                  const byTarget = new Map<string, string[]>();
+                  for (const r of toReparent) {
+                    const arr = byTarget.get(r.to) || [];
+                    arr.push(r.id);
+                    byTarget.set(r.to, arr);
+                  }
+                  for (const [to, ids] of byTarget.entries()) {
+                    try {
+                      (editor as any).reparentShapes?.(ids as any, to as any);
+                    } catch {
+                      // ignore
+                    }
+                  }
+                } finally {
+                  window.setTimeout(() => {
+                    sectionParentingMutatingRef.current = false;
+                  }, 0);
+                }
+              }
+            }
+          }
+        } catch {
+          // ignore
+        }
+
         // Keep the annotator mirror in sync continuously (do not wait for save debounce).
         scheduleMirrorSync();
 
@@ -342,6 +510,10 @@ export function useTldrawTileController(opts: UseTldrawTileControllerOpts): {
         editor.setStyleForNextShapes(DefaultDashStyle as any, 'solid' as any);
         editor.setStyleForNextShapes(DefaultFillStyle as any, 'solid' as any);
         editor.setStyleForNextShapes(DefaultSizeStyle as any, 'm' as any);
+        // Default outline / primary color (token-based, so it works with tldraw's theme variants).
+        const theme = makeTheme(editor);
+        const token = nearestTokenForHex({ theme, hex: '#999999', variant: 'solid' });
+        if (token) editor.setStyleForNextShapes(DefaultColorStyle as any, token as any);
         editor.setCurrentTool('select');
       } catch {
         // ignore
@@ -370,6 +542,11 @@ export function useTldrawTileController(opts: UseTldrawTileControllerOpts): {
         // ignore
       }
       try {
+        cleanups.push(installNxLayout(editor));
+      } catch {
+        // ignore (layout is best-effort)
+      }
+      try {
         cleanups.push(installBooleanEditOnSelect(editor));
       } catch {
         // ignore (boolean UX is best-effort)
@@ -384,6 +561,21 @@ export function useTldrawTileController(opts: UseTldrawTileControllerOpts): {
         cleanups.push(installVisionFxProxy(editor));
       } catch {
         // ignore (fx proxy is best-effort)
+      }
+      try {
+        cleanups.push(installVisionAnnotationSemanticSync(editor));
+      } catch {
+        // ignore (semantic sync is best-effort)
+      }
+      try {
+        cleanups.push(installVisionAnnotationToolInteractions(editor));
+      } catch {
+        // ignore (annotation tools are best-effort)
+      }
+      try {
+        cleanups.push(installVectorPenInteractions(editor));
+      } catch {
+        // ignore (vector pen is best-effort)
       }
 
       editorCleanupRef.current = () => {

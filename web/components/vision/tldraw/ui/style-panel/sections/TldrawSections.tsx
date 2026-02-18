@@ -3,6 +3,52 @@
 import { Blend, Hash, PaintBucket, PenLine, Type } from 'lucide-react';
 import { ColorPickerRow } from '@/components/vision/tldraw/ui/style-panel/ui-primitives';
 
+export function TldrawFrameSection({
+  name,
+  color,
+  mixedColor,
+  placeholder,
+  onChangeName,
+  onPickColor,
+  onCommitHex,
+}: {
+  name: string;
+  color: string;
+  mixedColor: boolean;
+  placeholder: string;
+  onChangeName: (next: string) => void;
+  onPickColor: (hex: string) => void;
+  onCommitHex: (hex: string) => void;
+}) {
+  return (
+    <div className="nx-vsp-section">
+      <div className="nx-vsp-title">Frame</div>
+      <div className="nx-vsp-group">
+        <div className="nx-vsp-stack">
+          <div className="nx-vsp-row">
+            <div className="nx-vsp-icon">Aa</div>
+            <input
+              className="nx-vsp-field flex-1"
+              value={name}
+              placeholder="Frame name"
+              onChange={(e) => onChangeName(String(e.target.value || ''))}
+              title="Frame name"
+            />
+          </div>
+          <ColorPickerRow
+            icon={<PenLine size={14} />}
+            color={color}
+            mixed={mixedColor}
+            placeholder={placeholder}
+            onPick={onPickColor}
+            onCommitHex={onCommitHex}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function TldrawFillSection({
   color,
   mixed,

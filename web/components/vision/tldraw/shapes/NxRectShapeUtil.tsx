@@ -5,6 +5,7 @@ import { BaseBoxShapeUtil, type TLHandle, type TLHandleDragInfo } from '@tldraw/
 import { T, TLBaseShape } from 'tldraw';
 import { parseStopsJson, type GradientStop } from '@/components/vision/tldraw/lib/gradient-stops';
 import { shouldSuppressVectorSourceRender } from '@/components/vision/tldraw/fx/sourceSuppression';
+import { getVectorShapeMaskDef } from '@/components/vision/tldraw/fx/vectorShapeMask';
 import { getPaintDefs, paintUrl, safeSvgId, type PaintMode, type PatternKind } from '@/components/vision/tldraw/paint/paintDefs';
 import {
   makeDefaultFillLayer,
@@ -202,9 +203,9 @@ export class NxRectShapeUtil extends BaseBoxShapeUtil<any> {
       strokes: serializeStrokeLayers([
         makeDefaultStrokeLayer({
           mode: 'solid',
-          solid: '#111111ff',
+          solid: '#999999ff',
           stops: JSON.stringify([
-            { offset: 0, color: '#111111ff' },
+            { offset: 0, color: '#999999ff' },
             { offset: 1, color: '#ffffffff' },
           ]),
           pattern: 'dots',
@@ -233,12 +234,12 @@ export class NxRectShapeUtil extends BaseBoxShapeUtil<any> {
       fillPattern: 'stripes',
 
       strokeMode: 'solid',
-      stroke: '#111111ff',
-      strokeA: '#111111ff',
+      stroke: '#999999ff',
+      strokeA: '#999999ff',
       strokeB: '#ffffffff',
       strokeAngle: 45,
       strokeStops: JSON.stringify([
-        { offset: 0, color: '#111111ff' },
+        { offset: 0, color: '#999999ff' },
         { offset: 1, color: '#ffffffff' },
       ]),
       strokePattern: 'dots',
@@ -296,6 +297,7 @@ export class NxRectShapeUtil extends BaseBoxShapeUtil<any> {
     const w = Math.max(1, shape.props.w || 1);
     const h = Math.max(1, shape.props.h || 1);
     const sid = safeId(String(shape.id || 'nxrect'));
+    const vectorMask = getVectorShapeMaskDef({ editor: (this as any).editor || null, targetShape: shape, targetSid: sid });
 
     const radiusUniform = !!shape.props.radiusUniform;
     const r = clamp(Number(shape.props.radius ?? 0), 0, Math.min(w, h) / 2);
@@ -504,70 +506,120 @@ export class NxRectShapeUtil extends BaseBoxShapeUtil<any> {
               <path d={pathD} />
             </clipPath>
             {extraMasks}
+            {vectorMask ? vectorMask.defs : null}
           </defs>
 
-          {/* Fill stack */}
-          {fillStackActive ? (
-            enabledFills.length ? (
-              enabledFills.map((layer) => {
-                const id = String((layer as any).id || 'layer');
-                const mode = String((layer as any).mode || 'solid') as PaintMode;
-                const solidRaw = String((layer as any).solid || fillSolidRaw || 'transparent');
-                const paint = mode === 'solid' ? hex8ToRgbaCss(solidRaw) : paintUrl('fill', sid, id);
-                return <path key={`f-${id}`} d={pathD} fill={paint} stroke="none" />;
-              })
-            ) : null
-          ) : (
-            <path d={pathD} fill={fillPaint} stroke="none" />
-          )}
+          <g mask={vectorMask ? vectorMask.maskAttr : undefined}>
+            {/* Fill stack */}
+            {fillStackActive ? (
+              enabledFills.length ? (
+                enabledFills.map((layer) => {
+                  const id = String((layer as any).id || 'layer');
+                  const mode = String((layer as any).mode || 'solid') as PaintMode;
+                  const solidRaw = String((layer as any).solid || fillSolidRaw || 'transparent');
+                  const paint = mode === 'solid' ? hex8ToRgbaCss(solidRaw) : paintUrl('fill', sid, id);
+                  return <path key={`f-${id}`} d={pathD} fill={paint} stroke="none" />;
+                })
+              ) : null
+            ) : (
+              <path d={pathD} fill={fillPaint} stroke="none" />
+            )}
 
-          {/* Stroke stack */}
-          {strokeStackActive ? (
-            enabledStrokes.length ? (
-              enabledStrokes.map((layer) => {
-                const id = String((layer as any).id || 'layer');
-                const mode = String((layer as any).mode || 'solid') as PaintMode;
-                const solidRaw = String((layer as any).solid || strokeSolidRaw || 'transparent');
-                const paint = mode === 'solid' ? hex8ToRgbaCss(solidRaw) : paintUrl('stroke', sid, id);
-                const width = clamp(Number((layer as any).width ?? strokeWidth), 0, 256);
-                const align = String((layer as any).align || 'center') as any;
-                const cap = String((layer as any).cap || 'round');
-                const join = String((layer as any).join || 'round');
-                const dash = (layer as any).dash || { kind: 'solid' };
-                const { dasharray, dashoffset } = dashToSvg(dash, width);
+            {/* Stroke stack */}
+            {strokeStackActive ? (
+              enabledStrokes.length ? (
+                enabledStrokes.map((layer) => {
+                  const id = String((layer as any).id || 'layer');
+                  const mode = String((layer as any).mode || 'solid') as PaintMode;
+                  const solidRaw = String((layer as any).solid || strokeSolidRaw || 'transparent');
+                  const paint = mode === 'solid' ? hex8ToRgbaCss(solidRaw) : paintUrl('stroke', sid, id);
+                  const width = clamp(Number((layer as any).width ?? strokeWidth), 0, 256);
+                  const align = String((layer as any).align || 'center') as any;
+                  const cap = String((layer as any).cap || 'round');
+                  const join = String((layer as any).join || 'round');
+                  const dash = (layer as any).dash || { kind: 'solid' };
+                  const { dasharray, dashoffset } = dashToSvg(dash, width);
 
-                const renderWidth = align === 'center' ? width : width * 2;
-                const p = (
-                  <path
-                    d={pathD}
-                    fill="none"
-                    stroke={paint}
-                    strokeWidth={renderWidth}
-                    strokeLinejoin={join as any}
-                    strokeLinecap={cap as any}
-                    strokeDasharray={dasharray}
-                    strokeDashoffset={dashoffset}
-                  />
-                );
-
-                if (align === 'inside') {
-                  return (
-                    <g key={`s-${id}`} clipPath={`url(#${sid}__clip)`}>
-                      {p}
-                    </g>
+                  const renderWidth = align === 'center' ? width : width * 2;
+                  const p = (
+                    <path
+                      d={pathD}
+                      fill="none"
+                      stroke={paint}
+                      strokeWidth={renderWidth}
+                      strokeLinejoin={join as any}
+                      strokeLinecap={cap as any}
+                      strokeDasharray={dasharray}
+                      strokeDashoffset={dashoffset}
+                    />
                   );
-                }
-                if (align === 'outside') {
-                  return (
-                    <g key={`s-${id}`} mask={`url(#${sid}__strokeOutside__${safeId(id)})`}>
-                      {p}
-                    </g>
-                  );
-                }
-                return <g key={`s-${id}`}>{p}</g>;
-              })
-            ) : null
-          ) : strokeUniform ? (
+
+                  if (align === 'inside') {
+                    return (
+                      <g key={`s-${id}`} clipPath={`url(#${sid}__clip)`}>
+                        {p}
+                      </g>
+                    );
+                  }
+                  if (align === 'outside') {
+                    return (
+                      <g key={`s-${id}`} mask={`url(#${sid}__strokeOutside__${safeId(id)})`}>
+                        {p}
+                      </g>
+                    );
+                  }
+                  return <g key={`s-${id}`}>{p}</g>;
+                })
+              ) : null
+            ) : strokeUniform ? (
+              <path d={pathD} fill="none" stroke={strokePaint} strokeWidth={strokeWidth} strokeLinejoin="round" />
+            ) : (
+              <g clipPath={`url(#${sid}__clip)`}>
+                {/* Border rectangles; clipped to outer rounded rect */}
+                {st > 0 ? <rect x={0} y={0} width={w} height={st} fill={strokePaint} /> : null}
+                {sb > 0 ? <rect x={0} y={Math.max(0, h - sb)} width={w} height={sb} fill={strokePaint} /> : null}
+                {sl > 0 ? <rect x={0} y={0} width={sl} height={h} fill={strokePaint} /> : null}
+                {sr > 0 ? <rect x={Math.max(0, w - sr)} y={0} width={sr} height={h} fill={strokePaint} /> : null}
+              </g>
+            )}
+
+            {label ? (
+              <g clipPath={`url(#${sid}__clip)`} pointerEvents="none">
+                <text
+                  x={textX}
+                  y={h / 2}
+                  textAnchor={textAnchor as any}
+                  dominantBaseline="middle"
+                  fontFamily={'Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif'}
+                  fontSize={labelSize}
+                  fill={labelColor}
+                >
+                  {label}
+                </text>
+              </g>
+            ) : null}
+          </g>
+        </svg>
+      );
+    }
+
+    return (
+      <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} style={{ display: 'block', overflow: 'visible' }}>
+        <defs>
+          {fillDef}
+          {strokeDef}
+          <clipPath id={`${sid}__clip`}>
+            <path d={pathD} />
+          </clipPath>
+          {vectorMask ? vectorMask.defs : null}
+        </defs>
+
+        <g mask={vectorMask ? vectorMask.maskAttr : undefined}>
+          {/* Fill */}
+          <path d={pathD} fill={fillPaint} stroke="none" />
+
+          {/* Stroke */}
+          {strokeUniform ? (
             <path d={pathD} fill="none" stroke={strokePaint} strokeWidth={strokeWidth} strokeLinejoin="round" />
           ) : (
             <g clipPath={`url(#${sid}__clip)`}>
@@ -594,51 +646,7 @@ export class NxRectShapeUtil extends BaseBoxShapeUtil<any> {
               </text>
             </g>
           ) : null}
-        </svg>
-      );
-    }
-
-    return (
-      <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} style={{ display: 'block', overflow: 'visible' }}>
-        <defs>
-          {fillDef}
-          {strokeDef}
-          <clipPath id={`${sid}__clip`}>
-            <path d={pathD} />
-          </clipPath>
-        </defs>
-
-        {/* Fill */}
-        <path d={pathD} fill={fillPaint} stroke="none" />
-
-        {/* Stroke */}
-        {strokeUniform ? (
-          <path d={pathD} fill="none" stroke={strokePaint} strokeWidth={strokeWidth} strokeLinejoin="round" />
-        ) : (
-          <g clipPath={`url(#${sid}__clip)`}>
-            {/* Border rectangles; clipped to outer rounded rect */}
-            {st > 0 ? <rect x={0} y={0} width={w} height={st} fill={strokePaint} /> : null}
-            {sb > 0 ? <rect x={0} y={Math.max(0, h - sb)} width={w} height={sb} fill={strokePaint} /> : null}
-            {sl > 0 ? <rect x={0} y={0} width={sl} height={h} fill={strokePaint} /> : null}
-            {sr > 0 ? <rect x={Math.max(0, w - sr)} y={0} width={sr} height={h} fill={strokePaint} /> : null}
-          </g>
-        )}
-
-        {label ? (
-          <g clipPath={`url(#${sid}__clip)`} pointerEvents="none">
-            <text
-              x={textX}
-              y={h / 2}
-              textAnchor={textAnchor as any}
-              dominantBaseline="middle"
-              fontFamily={'Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif'}
-              fontSize={labelSize}
-              fill={labelColor}
-            >
-              {label}
-            </text>
-          </g>
-        ) : null}
+        </g>
       </svg>
     );
   }

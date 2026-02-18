@@ -40,3 +40,6 @@ Open `http://localhost:3000`.
 
 See `web/env.example` for environment keys (copy values into `.env.local`, created manually).
 
+### Docs
+
+- Markdown file formats (grid/note/vision): `docs/markdown-file-formats.md`

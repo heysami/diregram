@@ -4,6 +4,7 @@ import { Fragment } from 'react';
 import { BaseBoxShapeUtil, type TLHandle, type TLHandleDragInfo } from '@tldraw/editor';
 import { T, TLBaseShape } from 'tldraw';
 import { shouldSuppressVectorSourceRender } from '@/components/vision/tldraw/fx/sourceSuppression';
+import { getVectorShapeMaskDef } from '@/components/vision/tldraw/fx/vectorShapeMask';
 import { getPaintDefs, paintUrl, safeSvgId, type PaintMode, type PatternKind } from '@/components/vision/tldraw/paint/paintDefs';
 import { parseStopsJson } from '@/components/vision/tldraw/lib/gradient-stops';
 import {
@@ -223,6 +224,7 @@ export class NxTextShapeUtil extends BaseBoxShapeUtil<any> {
     const w = Math.max(1, shape.props.w || 1);
     const h = Math.max(1, shape.props.h || 1);
     const sid = safeId(String(shape.id || 'nxtext'));
+    const vectorMask = getVectorShapeMaskDef({ editor: (this as any).editor || null, targetShape: shape, targetSid: sid });
     const fillLayers = parseFillLayers(shape.props.fills);
     const strokeLayers = parseStrokeLayers(shape.props.strokes);
     const fillStackActive = fillLayers !== null;
@@ -377,97 +379,107 @@ export class NxTextShapeUtil extends BaseBoxShapeUtil<any> {
 
       return (
         <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} style={{ display: 'block', overflow: 'visible' }}>
-          {defs.length ? <defs>{defs}</defs> : null}
+          {(defs.length || vectorMask) ? (
+            <defs>
+              {defs}
+              {vectorMask ? vectorMask.defs : null}
+            </defs>
+          ) : null}
 
-          {/* Fill stack */}
-          {fillStackActive ? (
-            enabledFills.length ? (
-              enabledFills.map((layer) => {
-                const id = String((layer as any).id || 'layer');
-                const mode = String((layer as any).mode || 'solid') as PaintMode;
-                const solidRaw = String((layer as any).solid || fillSolidRaw || '#111111');
-                const paint = mode === 'solid' ? hex8ToRgbaCss(solidRaw) : paintUrl('fill', sid, id);
-                return (
-                  <text key={`f-${id}`} {...(commonTextProps as any)} fill={paint} stroke="none">
-                    {shape.props.text || ''}
-                  </text>
-                );
-              })
-            ) : null
-          ) : (
-            <text {...(commonTextProps as any)} fill={fillPaint} stroke="none">
-              {shape.props.text || ''}
-            </text>
-          )}
+          <g mask={vectorMask ? vectorMask.maskAttr : undefined}>
+            {/* Fill stack */}
+            {fillStackActive ? (
+              enabledFills.length ? (
+                enabledFills.map((layer) => {
+                  const id = String((layer as any).id || 'layer');
+                  const mode = String((layer as any).mode || 'solid') as PaintMode;
+                  const solidRaw = String((layer as any).solid || fillSolidRaw || '#111111');
+                  const paint = mode === 'solid' ? hex8ToRgbaCss(solidRaw) : paintUrl('fill', sid, id);
+                  return (
+                    <text key={`f-${id}`} {...(commonTextProps as any)} fill={paint} stroke="none">
+                      {shape.props.text || ''}
+                    </text>
+                  );
+                })
+              ) : null
+            ) : (
+              <text {...(commonTextProps as any)} fill={fillPaint} stroke="none">
+                {shape.props.text || ''}
+              </text>
+            )}
 
-          {/* Stroke stack */}
-          {strokeStackActive ? (
-            enabledStrokes.length ? (
-              enabledStrokes.map((layer) => {
-                const id = String((layer as any).id || 'layer');
-                const mode = String((layer as any).mode || 'solid') as PaintMode;
-                const solidRaw = String((layer as any).solid || strokeSolidRaw || '#000000');
-                const paint = mode === 'solid' ? hex8ToRgbaCss(solidRaw) : paintUrl('stroke', sid, id);
-                const width = Math.max(0, Number((layer as any).width ?? strokeWidth));
-                const join = String((layer as any).join || 'round');
-                const dash = (layer as any).dash || { kind: 'solid' };
-                const { dasharray, dashoffset } = dashToSvg(dash, width);
-                return (
-                  <text
-                    key={`s-${id}`}
-                    {...(commonTextProps as any)}
-                    fill="none"
-                    stroke={paint}
-                    strokeWidth={width > 0 ? width : 0}
-                    strokeLinejoin={join as any}
-                    strokeDasharray={dasharray}
-                    strokeDashoffset={dashoffset}
-                    paintOrder="stroke"
-                  >
-                    {shape.props.text || ''}
-                  </text>
-                );
-              })
-            ) : null
-          ) : (
-            <text
-              {...(commonTextProps as any)}
-              fill={fillPaint}
-              stroke={strokePaint}
-              strokeWidth={strokeWidth > 0 ? strokeWidth : 0}
-              paintOrder="stroke fill"
-              strokeLinejoin="round"
-            >
-              {shape.props.text || ''}
-            </text>
-          )}
+            {/* Stroke stack */}
+            {strokeStackActive ? (
+              enabledStrokes.length ? (
+                enabledStrokes.map((layer) => {
+                  const id = String((layer as any).id || 'layer');
+                  const mode = String((layer as any).mode || 'solid') as PaintMode;
+                  const solidRaw = String((layer as any).solid || strokeSolidRaw || '#000000');
+                  const paint = mode === 'solid' ? hex8ToRgbaCss(solidRaw) : paintUrl('stroke', sid, id);
+                  const width = Math.max(0, Number((layer as any).width ?? strokeWidth));
+                  const join = String((layer as any).join || 'round');
+                  const dash = (layer as any).dash || { kind: 'solid' };
+                  const { dasharray, dashoffset } = dashToSvg(dash, width);
+                  return (
+                    <text
+                      key={`s-${id}`}
+                      {...(commonTextProps as any)}
+                      fill="none"
+                      stroke={paint}
+                      strokeWidth={width > 0 ? width : 0}
+                      strokeLinejoin={join as any}
+                      strokeDasharray={dasharray}
+                      strokeDashoffset={dashoffset}
+                      paintOrder="stroke"
+                    >
+                      {shape.props.text || ''}
+                    </text>
+                  );
+                })
+              ) : null
+            ) : (
+              <text
+                {...(commonTextProps as any)}
+                fill={fillPaint}
+                stroke={strokePaint}
+                strokeWidth={strokeWidth > 0 ? strokeWidth : 0}
+                paintOrder="stroke fill"
+                strokeLinejoin="round"
+              >
+                {shape.props.text || ''}
+              </text>
+            )}
+          </g>
         </svg>
       );
     }
 
     return (
       <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} style={{ display: 'block', overflow: 'visible' }}>
-        {(fillMode !== 'solid' || strokeMode !== 'solid') ? (
+        {(fillMode !== 'solid' || strokeMode !== 'solid' || vectorMask) ? (
           <defs>
             {fillDef}
             {strokeDef}
+            {vectorMask ? vectorMask.defs : null}
           </defs>
         ) : null}
-        <text
-          x={x}
-          y={h / 2}
-          textAnchor={anchor as any}
-          dominantBaseline="middle"
-          fontFamily={shape.props.fontFamily || 'Inter'}
-          fontSize={Math.max(6, Number(shape.props.fontSize || 16))}
-          fill={fillPaint}
-          stroke={strokePaint}
-          strokeWidth={strokeWidth > 0 ? strokeWidth : 0}
-          paintOrder="stroke fill"
-          strokeLinejoin="round"
-        >
-          {shape.props.text || ''}
-        </text>
+        <g mask={vectorMask ? vectorMask.maskAttr : undefined}>
+          <text
+            x={x}
+            y={h / 2}
+            textAnchor={anchor as any}
+            dominantBaseline="middle"
+            fontFamily={shape.props.fontFamily || 'Inter'}
+            fontSize={Math.max(6, Number(shape.props.fontSize || 16))}
+            fill={fillPaint}
+            stroke={strokePaint}
+            strokeWidth={strokeWidth > 0 ? strokeWidth : 0}
+            paintOrder="stroke fill"
+            strokeLinejoin="round"
+          >
+            {shape.props.text || ''}
+          </text>
+        </g>
       </svg>
     );
   }

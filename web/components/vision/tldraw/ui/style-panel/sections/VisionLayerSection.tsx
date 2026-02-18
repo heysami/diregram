@@ -3,6 +3,7 @@
 import type { Editor } from 'tldraw';
 import { ActionsSection } from '@/components/vision/tldraw/ui/style-panel/sections/ActionsSection';
 import { OpacitySection } from '@/components/vision/tldraw/ui/style-panel/sections/OpacitySection';
+import { MaskSection } from '@/components/vision/tldraw/ui/style-panel/sections/MaskSection';
 import { NxRectCornersSection } from '@/components/vision/tldraw/ui/style-panel/sections/NxRectSections';
 import { RectCornerRoundnessSection } from '@/components/vision/tldraw/vector-pen';
 
@@ -11,9 +12,11 @@ export function VisionLayerSection({
   selectionCount,
   showActionsWithVectorize,
   showUngroup,
+  showUnframe,
   showFlatten,
   showVectorize,
   onUngroup,
+  onUnframe,
   onVectorize,
   onUnion,
   onSubtract,
@@ -21,6 +24,7 @@ export function VisionLayerSection({
   onFlatten,
   opacityValue,
   onChangeOpacity,
+  mask,
   rectCorners,
   vectorRoundness,
 }: {
@@ -28,9 +32,11 @@ export function VisionLayerSection({
   selectionCount: number;
   showActionsWithVectorize: boolean;
   showUngroup: boolean;
+  showUnframe: boolean;
   showFlatten: boolean;
   showVectorize: boolean;
   onUngroup: () => void;
+  onUnframe: () => void;
   onVectorize: () => void;
   onUnion: () => void;
   onSubtract: () => void;
@@ -38,6 +44,22 @@ export function VisionLayerSection({
   onFlatten: () => void;
   opacityValue: number;
   onChangeOpacity: (v: number) => void;
+  mask?:
+    | {
+        supportsFxProxy: boolean;
+        canApply: boolean;
+        hasMask: boolean;
+        maskSourceLabel: string;
+        mode: 'shape' | 'alpha';
+        invert: boolean;
+        strength: number;
+        onApply: () => void;
+        onClear: () => void;
+        onChangeMode: (m: 'shape' | 'alpha') => void;
+        onChangeInvert: (v: boolean) => void;
+        onChangeStrength: (v: number) => void;
+      }
+    | null;
   rectCorners?:
     | {
         radiusUniform: boolean;
@@ -69,9 +91,11 @@ export function VisionLayerSection({
           editor={editor}
           selectionCount={selectionCount}
           showUngroup={showUngroup}
+          showUnframe={showUnframe}
           showFlatten={showFlatten}
           showVectorize={showVectorize}
           onUngroup={onUngroup}
+          onUnframe={onUnframe}
           onVectorize={onVectorize}
           onUnion={onUnion}
           onSubtract={onSubtract}
@@ -81,6 +105,24 @@ export function VisionLayerSection({
       ) : null}
 
       <OpacitySection embedded value={opacityValue} onChange={onChangeOpacity} />
+
+      {mask?.supportsFxProxy ? (
+        <MaskSection
+          embedded
+          selectionCount={selectionCount}
+          canApply={mask.canApply}
+          hasMask={mask.hasMask}
+          maskSourceLabel={mask.maskSourceLabel}
+          mode={mask.mode}
+          invert={mask.invert}
+          strength={mask.strength}
+          onApply={mask.onApply}
+          onClear={mask.onClear}
+          onChangeMode={mask.onChangeMode}
+          onChangeInvert={mask.onChangeInvert}
+          onChangeStrength={mask.onChangeStrength}
+        />
+      ) : null}
 
       {rectCorners ? (
         <NxRectCornersSection

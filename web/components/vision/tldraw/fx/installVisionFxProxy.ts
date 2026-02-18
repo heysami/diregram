@@ -10,29 +10,11 @@ import { computeExpandedBoundsForFx, getParentSpacePoint, getShapePageBounds } f
 import { computeRenderSignature } from '@/components/vision/tldraw/fx/proxy/proxySignature';
 import { collectAllDescendants, debounce, getAllPageShapeIds, getProxySourceId, isEditMode, isGroupLike, isProxy } from '@/components/vision/tldraw/fx/proxy/proxyUtil';
 import { setHiddenForSubtree, setProxyReadyFlag } from '@/components/vision/tldraw/fx/proxy/proxyVisibility';
-
-function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
-  const timeoutMs = Math.max(1, Number(ms || 0));
-  return new Promise((resolve) => {
-    let settled = false;
-    const t = window.setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      resolve(null);
-    }, timeoutMs);
-    p.then((v) => {
-      if (settled) return;
-      settled = true;
-      window.clearTimeout(t);
-      resolve(v);
-    }).catch(() => {
-      if (settled) return;
-      settled = true;
-      window.clearTimeout(t);
-      resolve(null);
-    });
-  });
-}
+import { setFxInteractionActive } from '@/components/vision/tldraw/fx/fxInteractionStore';
+import { withTimeout } from '@/components/vision/tldraw/fx/proxy/fxProxyTimeout';
+import { requiresFxProxy } from '@/components/vision/tldraw/fx/proxy/fxProxyEligibility';
+import { computeFxRasterParams } from '@/components/vision/tldraw/fx/proxy/fxProxyRasterParams';
+import { startFxInteractionMonitor } from '@/components/vision/tldraw/fx/proxy/fxProxyInteractionMonitor';
 
 function setEditMode(editor: Editor, sourceId: TLShapeId, enabled: boolean): void {
   const s: any = editor.getShape(sourceId as any);
@@ -52,6 +34,8 @@ export function installVisionFxProxy(editor: Editor): () => void {
   const lastRenderedSig = new Map<string, string>(); // sourceId -> signature
   const lastEditMode = new Map<string, boolean>(); // sourceId -> wasEditMode
   let redirectingSelection = false;
+  let interactionActive = false;
+  let interactionCleanup: null | (() => void) = null;
 
   const scheduleSync = debounce(() => {
     if (disposed) return;
@@ -69,17 +53,7 @@ export function installVisionFxProxy(editor: Editor): () => void {
   async function renderForSource(sourceId: string, proxyId: string): Promise<boolean> {
     const token = (inFlight.get(sourceId) || 0) + 1;
     inFlight.set(sourceId, token);
-    const maxDim = 1400;
-    let pixelRatio = 2;
-    try {
-      const b = getShapePageBounds(editor, sourceId as any);
-      if (b) {
-        const m = Math.max(1, Math.max(b.w, b.h));
-        pixelRatio = Math.max(0.5, Math.min(2, maxDim / m));
-      }
-    } catch {
-      pixelRatio = 2;
-    }
+    const { maxDim, pixelRatio } = computeFxRasterParams(editor, sourceId);
     const sigAtStart = (() => {
       try {
         const s: any = editor.getShape(sourceId as any);
@@ -136,6 +110,12 @@ export function installVisionFxProxy(editor: Editor): () => void {
   }
 
   async function renderDirty() {
+    // While interacting (drag/resize/rotate), keep showing the vector source "ghost"
+    // and wait until interaction ends to do the expensive raster render.
+    if (interactionActive) {
+      if (dirtySources.size) scheduleRender();
+      return;
+    }
     const batch = Array.from(dirtySources);
     const nextDirty = new Set<string>();
     for (const sourceId of batch) {
@@ -144,6 +124,7 @@ export function installVisionFxProxy(editor: Editor): () => void {
       if (!source) continue;
       const fx = readNxFxFromMeta(source.meta);
       if (isNxFxEmpty(fx)) continue;
+      if (!requiresFxProxy(editor, source)) continue;
       if (isEditMode(source)) continue;
 
       // Find proxy for source (cached from last sync).
@@ -208,8 +189,8 @@ export function installVisionFxProxy(editor: Editor): () => void {
       const s: any = editor.getShape(id as any);
       if (!s || isProxy(s)) continue;
       const fx = readNxFxFromMeta(s.meta);
-      const hasFx = !isNxFxEmpty(fx);
-      if (!hasFx) continue;
+      const needsProxy = requiresFxProxy(editor, s);
+      if (!needsProxy) continue;
       if (isEditMode(s)) continue;
       // Mark descendants as covered.
       let kids: string[] = [];
@@ -240,21 +221,33 @@ export function installVisionFxProxy(editor: Editor): () => void {
     // Find sources needing proxies.
     let fxSourceCount = 0;
     let createdProxyCount = 0;
+    let mirrorFxSourceCount = 0;
+    let mirrorFxSourceLockedParentCount = 0;
+    let proxyCreateFailedCount = 0;
     for (const id of allIds) {
       const s: any = editor.getShape(id as any);
       if (!s || isProxy(s)) continue;
       if (coveredByAncestorFx.has(String(s.id))) continue;
 
       const fx = readNxFxFromMeta(s.meta);
-      const hasFx = !isNxFxEmpty(fx);
-      if (hasFx) fxSourceCount++;
+      const needsProxy = requiresFxProxy(editor, s);
+      if (needsProxy) fxSourceCount++;
+      if (needsProxy && typeof s?.meta?.nxMirrorSourceId === 'string' && s.meta.nxMirrorSourceId) {
+        mirrorFxSourceCount++;
+        try {
+          const parent: any = s.parentId ? editor.getShape(s.parentId as any) : null;
+          if (parent?.isLocked === true) mirrorFxSourceLockedParentCount++;
+        } catch {
+          // ignore
+        }
+      }
       const proxyId = proxiesBySource.get(String(s.id)) || null;
       const wasEdit = lastEditMode.get(String(s.id)) || false;
       const nowEdit = isEditMode(s);
       lastEditMode.set(String(s.id), nowEdit);
 
-      if (!hasFx) {
-        // Remove orphan proxy if it exists.
+      if (!needsProxy) {
+        // Remove proxy if it exists (vector mask path does not use proxies).
         if (proxyId) {
           try {
             editor.deleteShapes([proxyId as any]);
@@ -271,6 +264,12 @@ export function installVisionFxProxy(editor: Editor): () => void {
           // ignore
         }
         lastRenderedSig.delete(String(s.id));
+        // Ensure proxyReady flag is cleared so vector source render isn't suppressed.
+        try {
+          setProxyReadyFlag(editor, s, false);
+        } catch {
+          // ignore
+        }
         continue;
       }
 
@@ -306,6 +305,7 @@ export function installVisionFxProxy(editor: Editor): () => void {
           }
         } catch {
           // ignore
+          proxyCreateFailedCount++;
           pid = null;
         }
       } else {
@@ -350,8 +350,14 @@ export function installVisionFxProxy(editor: Editor): () => void {
 
       if (!pid) continue;
 
-      // Hide/show based on edit mode.
-      if (isEditMode(s)) {
+      const sig = computeRenderSignature(editor, s);
+      const sigChanged = sig && lastRenderedSig.get(String(s.id)) !== sig;
+      if (sigChanged) dirtySources.add(String(s.id));
+
+      const isDirty = dirtySources.has(String(s.id));
+
+      // Hide/show based on edit mode or active user interaction.
+      if (isEditMode(s) || interactionActive || isDirty) {
         // Editing contents: hide proxy, show source subtree.
         try {
           const p: any = editor.getShape(pid as any);
@@ -363,15 +369,14 @@ export function installVisionFxProxy(editor: Editor): () => void {
         }
         setProxyReadyFlag(editor, s, false);
         setHiddenForSubtree(editor, s.id, false);
+        // Keep dirty so we rerender as soon as interaction ends.
+        if (!isEditMode(s)) dirtySources.add(String(s.id));
       } else {
         // Normal: only show proxy once a raster is ready. Until then, keep the source visible
         // so the user doesn’t get stuck seeing the placeholder.
         const rasterReady = Boolean(getNxFxRaster(String(pid))?.url);
         // If we just left edit mode, force a re-render.
         if (wasEdit && !nowEdit) dirtySources.add(String(s.id));
-        // If fx/props changed since last render, re-render.
-        const sig = computeRenderSignature(editor, s);
-        if (sig && lastRenderedSig.get(String(s.id)) !== sig) dirtySources.add(String(s.id));
         if (rasterReady) {
           try {
             const p: any = editor.getShape(pid as any);
@@ -439,6 +444,30 @@ export function installVisionFxProxy(editor: Editor): () => void {
     { scope: 'session' as any },
   );
 
+  interactionCleanup = startFxInteractionMonitor(editor, (active) => {
+    if (disposed) return;
+    interactionActive = active;
+    try {
+      setFxInteractionActive(interactionActive);
+    } catch {
+      // ignore
+    }
+    // On release, ensure we rerender anything that's dirty.
+    if (!interactionActive && dirtySources.size) {
+      try {
+        scheduleRender();
+      } catch {
+        // ignore
+      }
+    }
+    // Sync visibility (proxy hidden vs shown) immediately.
+    try {
+      scheduleSync();
+    } catch {
+      // ignore
+    }
+  });
+
   const unlisten = editor.store.listen(
     () => {
       if (!syncing) scheduleSync();
@@ -449,6 +478,11 @@ export function installVisionFxProxy(editor: Editor): () => void {
   return () => {
     disposed = true;
     try {
+      setFxInteractionActive(false);
+    } catch {
+      // ignore
+    }
+    try {
       unlisten?.();
     } catch {
       // ignore
@@ -458,6 +492,12 @@ export function installVisionFxProxy(editor: Editor): () => void {
     } catch {
       // ignore
     }
+    try {
+      interactionCleanup?.();
+    } catch {
+      // ignore
+    }
+    interactionCleanup = null;
     try {
       scheduleSync.cancel();
       scheduleRender.cancel();

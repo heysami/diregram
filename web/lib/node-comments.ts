@@ -6,6 +6,16 @@ export type CommentReply = {
   createdAt: number;
 };
 
+export type CommentAnchor =
+  | {
+      kind: 'visionPoint';
+      /** tldraw page id */
+      pageId: string;
+      /** tldraw page coordinates */
+      x: number;
+      y: number;
+    };
+
 export type CommentThread = {
   id: string;
   targetLabel?: string;
@@ -19,6 +29,8 @@ type CommentsDocShape = {
   version: 1;
   // targetKey -> thread (we intentionally keep it “one thread per target”, Figma-style)
   threads: Record<string, CommentThread | undefined>;
+  /** Optional anchor metadata for canvas-style comment targets (e.g. Vision click-anywhere pins). */
+  anchors?: Record<string, CommentAnchor | undefined>;
 };
 
 const MAP_NAME = 'node-comments-v1';
@@ -29,7 +41,7 @@ function nowId(prefix: string): string {
 }
 
 function defaultShape(): CommentsDocShape {
-  return { version: 1, threads: {} };
+  return { version: 1, threads: {}, anchors: {} };
 }
 
 function readShape(doc: Y.Doc): CommentsDocShape {
@@ -61,7 +73,23 @@ function readShape(doc: Y.Doc): CommentsDocShape {
       ...(typeof t.resolved === 'boolean' ? { resolved: t.resolved } : {}),
     } satisfies CommentThread;
   });
-  return { version, threads };
+
+  const anchorsRaw = rec.anchors && typeof rec.anchors === 'object' ? (rec.anchors as Record<string, unknown>) : {};
+  const anchors: Record<string, CommentAnchor | undefined> = {};
+  Object.entries(anchorsRaw).forEach(([k, v]) => {
+    if (!v || typeof v !== 'object') return;
+    const a = v as Record<string, unknown>;
+    const kind = String(a.kind || '');
+    if (kind === 'visionPoint') {
+      const pageId = typeof a.pageId === 'string' ? a.pageId : '';
+      const x = typeof a.x === 'number' ? a.x : NaN;
+      const y = typeof a.y === 'number' ? a.y : NaN;
+      if (!pageId || !Number.isFinite(x) || !Number.isFinite(y)) return;
+      anchors[k] = { kind: 'visionPoint', pageId, x, y };
+    }
+  });
+
+  return { version, threads, anchors };
 }
 
 function writeShape(doc: Y.Doc, shape: CommentsDocShape): void {
@@ -84,6 +112,14 @@ export function buildSystemFlowBoxCommentTargetKey(sfid: string, boxKey: string)
   return `sf:${sfid}:box:${boxKey}`;
 }
 
+export function buildVisionPointCommentTargetKey(id: string): string {
+  return `vision:p:${id}`;
+}
+
+export function isVisionPointCommentTargetKey(targetKey: string): boolean {
+  return typeof targetKey === 'string' && targetKey.startsWith('vision:p:');
+}
+
 export function getThread(doc: Y.Doc, targetKey: string): CommentThread | null {
   const shape = readShape(doc);
   return shape.threads[targetKey] || null;
@@ -96,6 +132,35 @@ export function getAllThreads(doc: Y.Doc): Record<string, CommentThread> {
     if (t) out[k] = t;
   });
   return out;
+}
+
+export function getAnchor(doc: Y.Doc, targetKey: string): CommentAnchor | null {
+  const shape = readShape(doc);
+  return shape.anchors?.[targetKey] || null;
+}
+
+export function getAllAnchors(doc: Y.Doc): Record<string, CommentAnchor> {
+  const shape = readShape(doc);
+  const out: Record<string, CommentAnchor> = {};
+  Object.entries(shape.anchors || {}).forEach(([k, a]) => {
+    if (a) out[k] = a;
+  });
+  return out;
+}
+
+export function upsertAnchor(doc: Y.Doc, targetKey: string, anchor: CommentAnchor): void {
+  const shape = readShape(doc);
+  const anchors = shape.anchors || {};
+  anchors[targetKey] = anchor;
+  shape.anchors = anchors;
+  writeShape(doc, shape);
+}
+
+export function deleteAnchor(doc: Y.Doc, targetKey: string): void {
+  const shape = readShape(doc);
+  if (!shape.anchors || !shape.anchors[targetKey]) return;
+  delete shape.anchors[targetKey];
+  writeShape(doc, shape);
 }
 
 export function upsertThread(doc: Y.Doc, targetKey: string, body: string): CommentThread {
@@ -151,8 +216,11 @@ export function addReply(doc: Y.Doc, targetKey: string, body: string): CommentRe
 
 export function deleteThread(doc: Y.Doc, targetKey: string): void {
   const shape = readShape(doc);
-  if (!shape.threads[targetKey]) return;
+  const hadThread = !!shape.threads[targetKey];
+  const hadAnchor = !!shape.anchors?.[targetKey];
+  if (!hadThread && !hadAnchor) return;
   delete shape.threads[targetKey];
+  if (shape.anchors) delete shape.anchors[targetKey];
   writeShape(doc, shape);
 }
 

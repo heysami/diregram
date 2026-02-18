@@ -12,6 +12,7 @@ import {
   type TLUiOverrides,
 } from 'tldraw';
 import { NXPathShapeUtil } from '@/components/vision/tldraw/shapes/NXPathShapeUtil';
+import { NxLayoutShapeUtil } from '@/components/vision/tldraw/shapes/NxLayoutShapeUtil';
 import { NxRectShapeUtil } from '@/components/vision/tldraw/shapes/NxRectShapeUtil';
 import { NxTextShapeUtil } from '@/components/vision/tldraw/shapes/NxTextShapeUtil';
 import { NxCardShapeUtil } from '@/components/vision/v2/tldraw/shapes/NxCardShapeUtil';
@@ -21,6 +22,8 @@ import { VisionGradientHandles } from '@/components/vision/tldraw/ui/VisionGradi
 import { VisionCanvasToolbar } from '@/components/vision/v2/tldraw/ui/VisionCanvasToolbar';
 import { filterVisionCanvasTools } from '@/components/vision/v2/tldraw/toolAllowlist';
 import { addVisionCardTool, visionCardTranslations } from '@/components/vision/v2/tldraw/visionCardTool';
+import { installAutoConvertVisionShapes } from '@/components/vision/tldraw/installAutoConvertVisionShapes';
+import { installNxLayout } from '@/components/vision/tldraw/layout/installNxLayout';
 
 function safeJsonParse<T = unknown>(s: string): T | null {
   try {
@@ -42,7 +45,8 @@ export type UseTldrawVisionCanvasControllerOpts = {
  *
  * Invariants:
  * - Use stock tldraw tools (`draw`, `arrow`, `text`, `rectangle`) for stable pointer behavior.
- * - Do NOT install any global capture listeners or auto-conversion logic on the main canvas.
+ * - Avoid global capture listeners; keep pointer behavior stable.
+ * - Convert stock tldraw shapes to Vision-native `nx*` shapes after creation.
  * - Persist *document-only* snapshots to avoid per-user session churn in markdown.
  */
 export function useTldrawVisionCanvasController(opts: UseTldrawVisionCanvasControllerOpts): {
@@ -55,7 +59,10 @@ export function useTldrawVisionCanvasController(opts: UseTldrawVisionCanvasContr
   const { initialSnapshot, sessionStorageKey, onChange, onMountEditor } = opts;
 
   // Keep these stable; unstable props can cause editor re-inits.
-  const shapeUtils = useMemo(() => [...defaultShapeUtils, NXPathShapeUtil, NxRectShapeUtil, NxTextShapeUtil, NxCardShapeUtil], []);
+  const shapeUtils = useMemo(
+    () => [...defaultShapeUtils, NXPathShapeUtil, NxLayoutShapeUtil, NxRectShapeUtil, NxTextShapeUtil, NxCardShapeUtil],
+    [],
+  );
   const store = useMemo(() => createTLStore({ shapeUtils }), [shapeUtils]);
 
   const editorRef = useRef<Editor | null>(null);
@@ -212,8 +219,27 @@ export function useTldrawVisionCanvasController(opts: UseTldrawVisionCanvasContr
       }
       editorCleanupRef.current = null;
 
-      // NOTE: keep main canvas stable; no extra interactions installed.
-      editorCleanupRef.current = () => {};
+      // Main canvas: keep tools stable but auto-convert created shapes to Vision-native `nx*` ones.
+      const cleanups: Array<() => void> = [];
+      try {
+        cleanups.push(installAutoConvertVisionShapes(editor));
+      } catch {
+        // ignore
+      }
+      try {
+        cleanups.push(installNxLayout(editor));
+      } catch {
+        // ignore (layout is best-effort)
+      }
+      editorCleanupRef.current = () => {
+        for (const fn of cleanups) {
+          try {
+            fn?.();
+          } catch {
+            // ignore
+          }
+        }
+      };
 
       try {
         onMountEditor?.(editor);

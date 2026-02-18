@@ -10,7 +10,11 @@
 export function filterVisionTools(tools: Record<string, any>) {
   // IMPORTANT: Vision should avoid default tldraw "generic" shape tools (`geo`, `shape`, `frame`, etc.).
   // We allow only tools that we either implement natively or auto-convert deterministically.
-  const allowed = new Set(['select', 'hand', 'draw', 'arrow', 'text', 'rectangle', 'ellipse', 'frame']);
+  // - Keep `draw` visible as freehand draw.
+  // - Keep `line` as the stable line tool.
+  // - Remove `arrow` (users found it confusing vs our annotation tooling).
+  // - Include custom `nxvectorpen` (point editing / add nodes on `nxpath`).
+  const allowed = new Set(['select', 'hand', 'draw', 'nxvectorpen', 'line', 'text', 'rectangle', 'ellipse', 'frame']);
   const next: Record<string, any> = {};
   for (const [key, tool] of Object.entries(tools as any)) {
     const id = (tool as any)?.id ?? key;

@@ -30,6 +30,12 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
+# local caches (do not commit)
+.npm-cache/
+**/.npm-cache/
+.playwright-browsers/
+**/.playwright-browsers/
+
 # env files (can opt-in for committing if needed)
 .env*
 

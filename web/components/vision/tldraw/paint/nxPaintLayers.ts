@@ -205,7 +205,7 @@ export function makeDefaultStrokeLayer(init?: Partial<NxStrokeLayer>): NxStrokeL
     id: makeLayerId('s'),
     enabled: true,
     mode: 'solid',
-    solid: '#111111ff',
+    solid: '#999999ff',
     width: 2,
     align: 'center',
     dash: { kind: 'solid' },

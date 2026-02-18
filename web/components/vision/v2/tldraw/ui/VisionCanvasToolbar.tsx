@@ -8,7 +8,7 @@ export function VisionCanvasToolbar() {
     <DefaultToolbar>
       <>
         <DefaultToolbarContent />
-        <TldrawUiMenuToolItem toolId={VISION_CARD_TOOL_ID} isSelected={false} />
+        <TldrawUiMenuToolItem toolId={VISION_CARD_TOOL_ID} />
       </>
     </DefaultToolbar>
   );

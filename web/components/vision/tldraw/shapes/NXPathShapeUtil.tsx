@@ -5,6 +5,7 @@ import { Rectangle2d, ShapeUtil, T, TLBaseShape } from 'tldraw';
 import type { TLHandle, TLHandleDragInfo } from '@tldraw/editor';
 import { getNxpathEditableHandles, onNxpathEditableHandleDrag } from '@/components/vision/tldraw/vector-pen';
 import { shouldSuppressVectorSourceRender } from '@/components/vision/tldraw/fx/sourceSuppression';
+import { getVectorShapeMaskDef } from '@/components/vision/tldraw/fx/vectorShapeMask';
 import { getPaintDefs, paintUrl, safeSvgId, type PaintMode, type PatternKind } from '@/components/vision/tldraw/paint/paintDefs';
 import { parseStopsJson } from '@/components/vision/tldraw/lib/gradient-stops';
 import {
@@ -25,6 +26,9 @@ export type NXPathShape = TLBaseShape<
     h: number;
     /** SVG path data in local (0,0)-(w,h) coordinates */
     d: string;
+    /** Optional: preserve SVG viewBox origin for imported paths. */
+    vbX?: number;
+    vbY?: number;
     /** JSON string of NxFillLayer[] (layer stack). */
     fills?: string;
     /** JSON string of NxStrokeLayer[] (layer stack). */
@@ -79,6 +83,8 @@ export class NXPathShapeUtil extends ShapeUtil<any> {
     w: T.number,
     h: T.number,
     d: T.string,
+    vbX: T.optional(T.number),
+    vbY: T.optional(T.number),
     fills: T.optional(T.string),
     strokes: T.optional(T.string),
     fillMode: T.optional(T.literalEnum('solid', 'linear', 'radial', 'pattern')),
@@ -142,7 +148,7 @@ export class NXPathShapeUtil extends ShapeUtil<any> {
           mode: 'solid',
           solid: 'transparent',
           stops: JSON.stringify([
-            { offset: 0, color: '#111111ff' },
+            { offset: 0, color: '#999999ff' },
             { offset: 1, color: '#ffffffff' },
           ]),
           pattern: 'dots',
@@ -171,11 +177,11 @@ export class NXPathShapeUtil extends ShapeUtil<any> {
 
       strokeMode: 'solid',
       stroke: 'transparent',
-      strokeA: '#111111ff',
+      strokeA: '#999999ff',
       strokeB: '#ffffffff',
       strokeAngle: 45,
       strokeStops: JSON.stringify([
-        { offset: 0, color: '#111111ff' },
+        { offset: 0, color: '#999999ff' },
         { offset: 1, color: '#ffffffff' },
       ]),
       strokePattern: 'dots',
@@ -214,9 +220,14 @@ export class NXPathShapeUtil extends ShapeUtil<any> {
     }
     const w = Math.max(1, shape.props.w || 1);
     const h = Math.max(1, shape.props.h || 1);
+    const vbX = Number.isFinite(shape.props.vbX) ? Number(shape.props.vbX) : 0;
+    const vbY = Number.isFinite(shape.props.vbY) ? Number(shape.props.vbY) : 0;
+    const dTransform = vbX || vbY ? `translate(${-vbX} ${-vbY})` : undefined;
     const sid = safeSvgId(String(shape.id || 'nxpath'));
     const d = String(shape.props.d || '');
     const isClosed = /[zZ]\s*$/.test(d.trim());
+
+    const vectorMask = getVectorShapeMaskDef({ editor: (this as any).editor || null, targetShape: shape, targetSid: sid });
 
     const fillLayers = parseFillLayers(shape.props.fills);
     const strokeLayers = parseStrokeLayers(shape.props.strokes);
@@ -355,7 +366,7 @@ export class NXPathShapeUtil extends ShapeUtil<any> {
           extraMasks.push(
             <mask key={`m-${layerId}`} id={`${sid}__strokeOutside__${safeSvgId(layerId)}`} maskUnits="userSpaceOnUse">
               <rect x={-w * 2} y={-h * 2} width={w * 5} height={h * 5} fill="white" />
-              <path d={d} fill="black" />
+              <path d={d} fill="black" transform={dTransform} />
             </mask>,
           );
         }
@@ -387,100 +398,116 @@ export class NXPathShapeUtil extends ShapeUtil<any> {
 
       return (
         <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} style={{ display: 'block', overflow: 'visible' }}>
-          {(defs.length || extraMasks.length || needsClip) ? (
+          {(defs.length || extraMasks.length || needsClip || vectorMask) ? (
             <defs>
               {defs}
               {needsClip ? (
                 <clipPath id={`${sid}__clip`}>
-                  <path d={d} />
+                  <path d={d} transform={dTransform} />
                 </clipPath>
               ) : null}
               {extraMasks}
+              {vectorMask ? vectorMask.defs : null}
             </defs>
           ) : null}
 
-          {/* Fill stack */}
-          {fillStackActive ? (
-            enabledFills.length ? (
-              enabledFills.map((layer) => {
+          <g mask={vectorMask ? vectorMask.maskAttr : undefined}>
+            {/* Fill stack */}
+            {fillStackActive ? (
+              enabledFills.length ? (
+                enabledFills.map((layer) => {
+                  const id = String((layer as any).id || 'layer');
+                  const mode = String((layer as any).mode || 'solid') as PaintMode;
+                  const solidRaw = String((layer as any).solid || fillSolidRaw || 'transparent');
+                  const paint = mode === 'solid' ? hex8ToRgbaCss(solidRaw) : paintUrl('fill', sid, id);
+                  return <path key={`f-${id}`} d={d} fill={paint} stroke="none" transform={dTransform} />;
+                })
+              ) : null
+            ) : (
+              <path d={d} fill={fillPaint} stroke="none" transform={dTransform} />
+            )}
+
+            {/* Stroke stack */}
+            {strokeStackActive ? (
+              enabledStrokes.length ? (
+                enabledStrokes.map((layer) => {
                 const id = String((layer as any).id || 'layer');
                 const mode = String((layer as any).mode || 'solid') as PaintMode;
-                const solidRaw = String((layer as any).solid || fillSolidRaw || 'transparent');
-                const paint = mode === 'solid' ? hex8ToRgbaCss(solidRaw) : paintUrl('fill', sid, id);
-                return <path key={`f-${id}`} d={d} fill={paint} stroke="none" />;
-              })
-            ) : null
-          ) : (
-            <path d={d} fill={fillPaint} stroke="none" />
-          )}
-
-          {/* Stroke stack */}
-          {strokeStackActive ? (
-            enabledStrokes.length ? (
-              enabledStrokes.map((layer) => {
-              const id = String((layer as any).id || 'layer');
-              const mode = String((layer as any).mode || 'solid') as PaintMode;
-              const solidRaw = String((layer as any).solid || strokeSolidRaw || 'transparent');
-              const paint = mode === 'solid' ? hex8ToRgbaCss(solidRaw) : paintUrl('stroke', sid, id);
-              const width = Math.max(0, Number((layer as any).width ?? shape.props.strokeWidth ?? 1));
-              const align = isClosed ? String((layer as any).align || 'center') : 'center';
-              const cap = String((layer as any).cap || 'round');
-              const join = String((layer as any).join || 'round');
-              const dash = (layer as any).dash || { kind: 'solid' };
-              const { dasharray, dashoffset } = dashToSvg(dash, width);
-              const renderWidth = align === 'center' ? width : width * 2;
-              const p = (
-                <path
-                  d={d}
-                  fill="none"
-                  stroke={paint}
-                  strokeWidth={renderWidth}
-                  strokeLinejoin={join as any}
-                  strokeLinecap={cap as any}
-                  strokeDasharray={dasharray}
-                  strokeDashoffset={dashoffset}
-                />
-              );
-              if (align === 'inside') {
-                return (
-                  <g key={`s-${id}`} clipPath={`url(#${sid}__clip)`}>
-                    {p}
-                  </g>
+                const solidRaw = String((layer as any).solid || strokeSolidRaw || 'transparent');
+                const paint = mode === 'solid' ? hex8ToRgbaCss(solidRaw) : paintUrl('stroke', sid, id);
+                const width = Math.max(0, Number((layer as any).width ?? shape.props.strokeWidth ?? 1));
+                const align = isClosed ? String((layer as any).align || 'center') : 'center';
+                const cap = String((layer as any).cap || 'round');
+                const join = String((layer as any).join || 'round');
+                const dash = (layer as any).dash || { kind: 'solid' };
+                const { dasharray, dashoffset } = dashToSvg(dash, width);
+                const renderWidth = align === 'center' ? width : width * 2;
+                const p = (
+                  <path
+                    d={d}
+                    fill="none"
+                    stroke={paint}
+                    strokeWidth={renderWidth}
+                    strokeLinejoin={join as any}
+                    strokeLinecap={cap as any}
+                    strokeDasharray={dasharray}
+                    strokeDashoffset={dashoffset}
+                    transform={dTransform}
+                  />
                 );
-              }
-              if (align === 'outside') {
-                return (
-                  <g key={`s-${id}`} mask={`url(#${sid}__strokeOutside__${safeSvgId(id)})`}>
-                    {p}
-                  </g>
-                );
-              }
-              return <g key={`s-${id}`}>{p}</g>;
-              })
-            ) : null
-          ) : (
-            <path
-              d={d}
-              fill={fillPaint}
-              stroke={strokePaint}
-              strokeWidth={shape.props.strokeWidth || 1}
-              strokeLinejoin="round"
-              strokeLinecap="round"
-            />
-          )}
+                if (align === 'inside') {
+                  return (
+                    <g key={`s-${id}`} clipPath={`url(#${sid}__clip)`}>
+                      {p}
+                    </g>
+                  );
+                }
+                if (align === 'outside') {
+                  return (
+                    <g key={`s-${id}`} mask={`url(#${sid}__strokeOutside__${safeSvgId(id)})`}>
+                      {p}
+                    </g>
+                  );
+                }
+                return <g key={`s-${id}`}>{p}</g>;
+                })
+              ) : null
+            ) : (
+              <path
+                d={d}
+                fill={fillPaint}
+                stroke={strokePaint}
+                strokeWidth={shape.props.strokeWidth || 1}
+                strokeLinejoin="round"
+                strokeLinecap="round"
+                transform={dTransform}
+              />
+            )}
+          </g>
         </svg>
       );
     }
 
     return (
       <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} style={{ display: 'block', overflow: 'visible' }}>
-        {(fillMode !== 'solid' || strokeMode !== 'solid') ? (
+        {(fillMode !== 'solid' || strokeMode !== 'solid' || vectorMask) ? (
           <defs>
             {fillDef}
             {strokeDef}
+            {vectorMask ? vectorMask.defs : null}
           </defs>
         ) : null}
-        <path d={d} fill={fillPaint} stroke={strokePaint} strokeWidth={shape.props.strokeWidth || 1} strokeLinejoin="round" strokeLinecap="round" />
+        <g mask={vectorMask ? vectorMask.maskAttr : undefined}>
+          <path
+            d={d}
+            fill={fillPaint}
+            stroke={strokePaint}
+            strokeWidth={shape.props.strokeWidth || 1}
+            strokeLinejoin="round"
+            strokeLinecap="round"
+            transform={dTransform}
+          />
+        </g>
       </svg>
     );
   }

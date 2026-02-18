@@ -123,6 +123,7 @@ export function NxFillStackSection({
   useOutsideClick(menuRef, () => setMenuOpen(false), menuOpen);
 
   const dragging = useRef<number | null>(null);
+  const lastEnterIdxRef = useRef<number | null>(null);
 
   if (!layers) {
     return (
@@ -155,6 +156,8 @@ export function NxFillStackSection({
   const sel = layers.length ? layers[Math.max(0, Math.min(selected, layers.length - 1))] : null;
   const selIdx = sel ? layers.indexOf(sel) : -1;
   const mode = (sel?.mode || 'solid') as any;
+
+  const viewLayers = layers.slice().reverse();
 
   return (
     <div className="nx-vsp-section">
@@ -196,24 +199,32 @@ export function NxFillStackSection({
       </div>
       <div className="nx-vsp-group">
         <div className="nx-vsp-layerList">
-          {layers.map((l, i) => {
+          {viewLayers.map((l, viewIdx) => {
+            const modelIdx = layers.length - 1 - viewIdx;
             const enabled = l.enabled !== false;
-            const isSel = i === selIdx;
+            const isSel = modelIdx === selIdx;
             return (
               <div
                 key={l.id}
                 className={isSel ? 'nx-vsp-layerItem is-selected' : 'nx-vsp-layerItem'}
-                onClick={() => setSelected(i)}
-                onDragOver={(e) => {
-                  e.preventDefault();
+                onClick={() => setSelected(modelIdx)}
+                onDragEnter={() => {
                   if (dragging.current === null) return;
+                  if (lastEnterIdxRef.current === modelIdx) return;
+                  lastEnterIdxRef.current = modelIdx;
+
+                  // Reorder on drag-enter (dragover is unreliable in some browsers/overlays).
                   const from = dragging.current;
-                  const to = i;
-                  if (from === to) return;
+                  const to = modelIdx;
+                  if (from === null || from === to) return;
+                  if (from < 0 || to < 0 || from >= layers.length || to >= layers.length) return;
                   const next = reorder(layers, from, to);
                   commit(next);
                   dragging.current = to;
                   if (selected === from) setSelected(to);
+                }}
+                onDragOver={(e) => {
+                  e.preventDefault();
                 }}
                 onDrop={() => {}}
               >
@@ -221,11 +232,11 @@ export function NxFillStackSection({
                   className="nx-vsp-dragHandle"
                   draggable
                   onDragStart={(e) => {
-                    dragging.current = i;
+                    dragging.current = modelIdx;
                     try {
                       e.dataTransfer.effectAllowed = 'move';
                       // Required by Safari/Firefox to allow drop.
-                      e.dataTransfer.setData('text/plain', String(i));
+                      e.dataTransfer.setData('text/plain', String(modelIdx));
                     } catch {
                       // ignore
                     }
@@ -244,7 +255,7 @@ export function NxFillStackSection({
                   className="nx-vsp-iconBtn"
                   onClick={(e) => {
                     e.stopPropagation();
-                    commit(layers.map((x, j) => (j === i ? { ...x, enabled: !enabled } : x)));
+                    commit(layers.map((x, j) => (j === modelIdx ? { ...x, enabled: !enabled } : x)));
                   }}
                   title={enabled ? 'Hide' : 'Show'}
                 >
@@ -255,7 +266,7 @@ export function NxFillStackSection({
                   className="nx-vsp-iconBtn"
                   onClick={(e) => {
                     e.stopPropagation();
-                    const next = layers.filter((_, j) => j !== i);
+                    const next = layers.filter((_, j) => j !== modelIdx);
                     commit(next);
                     setSelected(Math.max(0, Math.min(selected, Math.max(0, next.length - 1))));
                   }}
@@ -364,6 +375,7 @@ export function NxStrokeStackSection({
   const menuRef = useRef<HTMLDivElement | null>(null);
   useOutsideClick(menuRef, () => setMenuOpen(false), menuOpen);
   const dragging = useRef<number | null>(null);
+  const lastEnterIdxRef = useRef<number | null>(null);
 
   if (!layers) {
     const disabled = !!strokeStacksDisabledReason;
@@ -397,6 +409,8 @@ export function NxStrokeStackSection({
   const sel = layers.length ? layers[Math.max(0, Math.min(selected, layers.length - 1))] : null;
   const selIdx = sel ? layers.indexOf(sel) : -1;
   const mode = (sel?.mode || 'solid') as any;
+
+  const viewLayers = layers.slice().reverse();
 
   const dashKind = String(((sel as any)?.dash as any)?.kind || 'solid');
   const dashIsCustom = dashKind === 'custom';
@@ -450,24 +464,30 @@ export function NxStrokeStackSection({
       </div>
       <div className="nx-vsp-group">
         <div className="nx-vsp-layerList">
-          {layers.map((l, i) => {
+          {viewLayers.map((l, viewIdx) => {
+            const modelIdx = layers.length - 1 - viewIdx;
             const enabled = l.enabled !== false;
-            const isSel = i === selIdx;
+            const isSel = modelIdx === selIdx;
             return (
               <div
                 key={l.id}
                 className={isSel ? 'nx-vsp-layerItem is-selected' : 'nx-vsp-layerItem'}
-                onClick={() => setSelected(i)}
-                onDragOver={(e) => {
-                  e.preventDefault();
+                onClick={() => setSelected(modelIdx)}
+                onDragEnter={() => {
                   if (dragging.current === null) return;
+                  if (lastEnterIdxRef.current === modelIdx) return;
+                  lastEnterIdxRef.current = modelIdx;
                   const from = dragging.current;
-                  const to = i;
-                  if (from === to) return;
+                  const to = modelIdx;
+                  if (from === null || from === to) return;
+                  if (from < 0 || to < 0 || from >= layers.length || to >= layers.length) return;
                   const next = reorder(layers as any, from, to) as any;
                   commit(next);
                   dragging.current = to;
                   if (selected === from) setSelected(to);
+                }}
+                onDragOver={(e) => {
+                  e.preventDefault();
                 }}
                 onDrop={() => {}}
               >
@@ -475,10 +495,10 @@ export function NxStrokeStackSection({
                   className="nx-vsp-dragHandle"
                   draggable
                   onDragStart={(e) => {
-                    dragging.current = i;
+                    dragging.current = modelIdx;
                     try {
                       e.dataTransfer.effectAllowed = 'move';
-                      e.dataTransfer.setData('text/plain', String(i));
+                      e.dataTransfer.setData('text/plain', String(modelIdx));
                     } catch {
                       // ignore
                     }
@@ -497,7 +517,7 @@ export function NxStrokeStackSection({
                   className="nx-vsp-iconBtn"
                   onClick={(e) => {
                     e.stopPropagation();
-                    commit(layers.map((x, j) => (j === i ? ({ ...x, enabled: !enabled } as any) : x)) as any);
+                    commit(layers.map((x, j) => (j === modelIdx ? ({ ...x, enabled: !enabled } as any) : x)) as any);
                   }}
                   title={enabled ? 'Hide' : 'Show'}
                 >
@@ -508,7 +528,7 @@ export function NxStrokeStackSection({
                   className="nx-vsp-iconBtn"
                   onClick={(e) => {
                     e.stopPropagation();
-                    const next = layers.filter((_, j) => j !== i);
+                    const next = layers.filter((_, j) => j !== modelIdx);
                     commit(next as any);
                     setSelected(Math.max(0, Math.min(selected, Math.max(0, next.length - 1))));
                   }}

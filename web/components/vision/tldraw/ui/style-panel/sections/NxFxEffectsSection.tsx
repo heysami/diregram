@@ -43,9 +43,11 @@ export function NxFxEffectsSection({
   onAddInnerShadow: () => void;
 }) {
   const effects = fx.effects || [];
+  const viewEffects = effects.slice().reverse();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const sel = effects.find((e) => e.id === selectedId) || effects[0] || null;
   const draggingRef = useRef<number | null>(null);
+  const lastEnterIdxRef = useRef<number | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -193,7 +195,8 @@ export function NxFxEffectsSection({
 
       <div className="nx-vsp-group">
         <div className="nx-vsp-layerList">
-          {effects.map((e, idx) => {
+          {viewEffects.map((e, viewIdx) => {
+            const idx = effects.length - 1 - viewIdx;
             const enabled = e.enabled !== false;
             const isSel = sel ? sel.id === e.id : false;
             const label = e.kind === 'dropShadow' ? 'Drop shadow' : 'Inner shadow';
@@ -202,6 +205,16 @@ export function NxFxEffectsSection({
                 key={e.id}
                 className={isSel ? 'nx-vsp-layerItem is-selected' : 'nx-vsp-layerItem'}
                 onClick={() => setSelectedId(e.id)}
+                onDragEnter={() => {
+                  const from = draggingRef.current;
+                  if (from === null) return;
+                  if (lastEnterIdxRef.current === idx) return;
+                  lastEnterIdxRef.current = idx;
+                  const to = idx;
+                  if (from === to) return;
+                  move(from, to);
+                  draggingRef.current = to;
+                }}
                 onDragOver={(ev) => {
                   ev.preventDefault();
                   const from = draggingRef.current;

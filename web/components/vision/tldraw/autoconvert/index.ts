@@ -6,4 +6,5 @@ export { makeVisionEllipseFromGeo, isEllipseGeo } from '@/components/vision/tldr
 export { makeVisionTextFromTldrawText } from '@/components/vision/tldraw/autoconvert/convertText';
 export { tryMakeVisionArrowFromTldrawArrow } from '@/components/vision/tldraw/autoconvert/convertArrow';
 export { tryMakeVisionPathFromAnyTldrawShape } from '@/components/vision/tldraw/autoconvert/convertAnyToPath';
+export { extractPathDFromSvg, readSvgViewBox, computeSvgPathsBBox, detectSvgFillOnlyPath } from '@/components/vision/tldraw/autoconvert/svgExtract';
 

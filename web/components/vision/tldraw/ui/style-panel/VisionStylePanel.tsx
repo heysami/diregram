@@ -29,7 +29,11 @@ import { VisionPathTypeSections } from '@/components/vision/tldraw/ui/style-pane
 import { VisionRectTypeSections } from '@/components/vision/tldraw/ui/style-panel/sections/VisionRectTypeSections';
 import { VisionTextTypeSections } from '@/components/vision/tldraw/ui/style-panel/sections/VisionTextTypeSections';
 import { TldrawTypeSections } from '@/components/vision/tldraw/ui/style-panel/sections/TldrawTypeSections';
+import { VisionFrameTypeSections } from '@/components/vision/tldraw/ui/style-panel/sections/VisionFrameTypeSections';
 import { VisionRectLabelSection } from '@/components/vision/tldraw/ui/style-panel/sections/VisionRectLabelSection';
+import { NxLayoutContainerSection } from '@/components/vision/tldraw/ui/style-panel/sections/NxLayoutContainerSection';
+import { NxLayoutChildSection } from '@/components/vision/tldraw/ui/style-panel/sections/NxLayoutChildSection';
+import { NX_CORE_SECTION_META_KEY } from '@/components/vision/tldraw/core/visionCoreFrames';
 
 type NxPathLike = { id: string; type: string; props?: any };
 function isNxPathShape(s: any): s is NxPathLike {
@@ -52,6 +56,98 @@ export const VisionStylePanel = track(function VisionStylePanel(props: TLUiStyle
   const selectedIds = editor.getSelectedShapeIds().map(String);
   const selectedShapes = editor.getSelectedShapes() as any[];
   const selectionCount = selectedIds.length;
+  const only = selectionCount === 1 ? selectedShapes[0] : null;
+  const selectedIsGroup = selectionCount === 1 && String(only?.type || '') === 'group';
+  const selectedIsNxLayout = selectionCount === 1 && String(only?.type || '') === 'nxlayout';
+  const selectedIsFrame = selectionCount === 1 && String(only?.type || '') === 'frame';
+  const selectedIsCoreSection = selectionCount === 1 && Boolean((only?.meta as any)?.[NX_CORE_SECTION_META_KEY]);
+  const selectedIsCoreContainer = selectedIsCoreSection && (selectedIsFrame || selectedIsNxLayout);
+  const selectedIsFrameLike = selectedIsFrame || selectedIsCoreContainer;
+
+  const nxLayoutSelectedAsChildCtx = (() => {
+    if (!selectedIsNxLayout || !only) return null;
+    const pid = String((only as any)?.parentId || '');
+    if (!pid.startsWith('shape:')) return null;
+    try {
+      const p: any = editor.getShape(pid as any);
+      if (p && String(p.type || '') === 'nxlayout') return { parent: p, target: only };
+    } catch {
+      // ignore
+    }
+    return null;
+  })();
+
+  const nxLayoutChildCtx = (() => {
+    if (selectionCount < 1) return null;
+    if (!selectedShapes.length) return null;
+    const hasNxlayoutInSelection = selectedShapes.some((s) => String(s?.type || '') === 'nxlayout');
+    // Special case: selected shape(s) are `nxlayout` themselves. Allow `nxlayout` to act as a child of another `nxlayout`.
+    if (hasNxlayoutInSelection) {
+      const allAreNxlayout = selectedShapes.every((s) => String(s?.type || '') === 'nxlayout');
+      if (!allAreNxlayout) return null;
+
+      const parentIds = Array.from(
+        new Set(
+          selectedShapes
+            .map((s) => String((s as any)?.parentId || ''))
+            .filter((pid) => pid.startsWith('shape:')),
+        ),
+      );
+      if (parentIds.length !== 1) return null;
+      const parentId = parentIds[0];
+      let parentShape: any = null;
+      try {
+        parentShape = editor.getShape(parentId as any);
+      } catch {
+        parentShape = null;
+      }
+      if (!parentShape || String(parentShape.type || '') !== 'nxlayout') return null;
+      return { parent: parentShape, targets: selectedShapes };
+    }
+
+    const getParentCandidates = (pidRaw: any): string[] => {
+      const pid = String(pidRaw || '');
+      if (!pid) return [];
+      // Prefer canonical TLShapeId form (what `getSelectedShapeIds` returns).
+      if (pid.startsWith('shape:')) return [pid, pid.slice('shape:'.length)];
+      // Some codepaths may store raw ids; tolerate and also try shape:-prefixed.
+      return [pid, `shape:${pid}`];
+    };
+
+    const findNxLayoutAncestor = (shape: any): any | null => {
+      let cur: any = shape;
+      const chain: string[] = [];
+      for (let i = 0; i < 32; i++) {
+        const pidStr = String(cur?.parentId || '');
+        chain.push(pidStr);
+        if (!pidStr) return null;
+        // Stop at page/unknown parents.
+        if (pidStr.startsWith('page:')) return null;
+        if (!pidStr.startsWith('shape:') && !pidStr.includes(':')) return null;
+        let p: any = null;
+        const candidates = getParentCandidates(pidStr);
+        for (const cand of candidates) {
+          if (p) break;
+          try {
+            p = editor.getShape(cand as any);
+          } catch {
+            p = null;
+          }
+        }
+        if (!p) return null;
+        if (String(p.type || '') === 'nxlayout') return p;
+        cur = p;
+      }
+      return null;
+    };
+
+    const parents = selectedShapes.map((s) => findNxLayoutAncestor(s)).filter(Boolean) as any[];
+    if (parents.length !== selectedShapes.length) return null;
+    const firstId = String(parents[0]?.id || '');
+    if (!firstId) return null;
+    if (parents.some((p) => String(p?.id || '') !== firstId)) return null;
+    return { parent: parents[0], targets: selectedShapes };
+  })();
 
   const panelTargets = resolveStylePanelTargets(editor, selectedShapes);
 
@@ -78,10 +174,6 @@ export const VisionStylePanel = track(function VisionStylePanel(props: TLUiStyle
     props.styles ||
     null;
 
-  // Hide the entire right panel when nothing is selected.
-  // (Must be after hooks so hook order is stable across renders.)
-  if (selectionCount === 0) return null;
-
   const sharedColor = styles?.get(DefaultColorStyle);
   const sharedLabelColor = styles?.get(DefaultLabelColorStyle);
   const sharedFill = styles?.get(DefaultFillStyle);
@@ -97,15 +189,27 @@ export const VisionStylePanel = track(function VisionStylePanel(props: TLUiStyle
   const opacityShared = editor.getSharedOpacity();
   const opacityValue = opacityShared?.type === 'shared' ? clamp01(Number((opacityShared as any).value)) : 1;
 
+  const supportsFxProxy = (() => {
+    try {
+      return Boolean((editor as any).hasShapeUtil?.('nxfx'));
+    } catch {
+      return false;
+    }
+  })();
+
   const flattenInfo = getFlattenInfoFromSelection(editor, selectedIds);
   const canBoolean = selectionCount >= 2;
   const canVectorize = selectionCount === 1 ? canConvertSelectionToVectorPoints(editor) : false;
 
-  const { showActions, showFlatten, showUngroup } = getVisionActionVisibility(selectedIds, selectedShapes, flattenInfo);
+  const { showActions, showFlatten, showUngroup, showUnframe } = getVisionActionVisibility(selectedIds, selectedShapes, flattenInfo);
   const showActionsWithVectorize = showActions || canVectorize;
 
   const theme = makeTheme(editor);
   const fillVariant = getFillVariant(fillStyle);
+
+  // Hide the entire right panel when nothing is selected.
+  // (Must be after hooks so hook order is stable across renders.)
+  if (selectionCount === 0) return null;
 
   const setPrimaryColorFromHex = (hex: string, variant: 'fill' | 'semi' | 'pattern' | 'solid') => {
     const token = nearestTokenForHex({ theme, hex, variant });
@@ -116,6 +220,23 @@ export const VisionStylePanel = track(function VisionStylePanel(props: TLUiStyle
     } catch {
       // ignore
     }
+
+    // Frames in this app behave more reliably when their `props.color` is also patched.
+    // (Some tldraw frame codepaths read directly from props, not only from shared styles.)
+    try {
+      const frames = (Array.isArray(selectedShapes) ? selectedShapes : []).filter((s) => String(s?.type || '') === 'frame');
+      if (!frames.length) return;
+      editor.updateShapes(
+        frames.map((f: any) => ({
+          id: f.id,
+          type: f.type,
+          props: { ...(f.props || {}), color: token },
+        })) as any,
+      );
+    } catch {
+      // ignore
+    }
+
   };
 
   const setTextColorFromHex = (hex: string) => {
@@ -220,6 +341,60 @@ export const VisionStylePanel = track(function VisionStylePanel(props: TLUiStyle
     updateFxMetaForTargets((prevMeta) => writeNxFxToMeta(prevMeta, coerceNxFx(nextFx)));
   };
 
+  const getShapeLabel = (id: string): string => {
+    const sid = String(id || '');
+    if (!sid) return '';
+    try {
+      const s: any = editor.getShape(sid as any);
+      if (!s) return sid;
+      const m: any = s.meta || {};
+      if (typeof m.nxName === 'string' && m.nxName.trim()) return m.nxName.trim();
+      if (String(s.type || '') === 'text') {
+        const p: any = s.props || {};
+        if (typeof p.text === 'string' && p.text.trim()) return p.text.trim().slice(0, 24);
+      }
+      return String(s.type || sid);
+    } catch {
+      return sid;
+    }
+  };
+
+  const patchFxForShapeIds = (ids: string[], patch: (prevFx: any) => any) => {
+    if (!ids.length) return;
+    const updates: any[] = [];
+    for (const id of ids) {
+      if (!id) continue;
+      let s: any = null;
+      try {
+        s = editor.getShape(id as any);
+      } catch {
+        s = null;
+      }
+      if (!s) continue;
+      const prevFx = readNxFxFromMeta(s.meta) || makeEmptyNxFx();
+      const nextFx = coerceNxFx(patch(prevFx));
+      updates.push({ id: s.id, type: s.type, meta: writeNxFxToMeta(s.meta, nextFx) } as any);
+    }
+    if (!updates.length) return;
+    try {
+      editor.updateShapes(updates as any);
+    } catch {
+      // ignore
+    }
+  };
+
+  const onlyMaskDistortion = (() => {
+    if (!supportsFxProxy) return null;
+    if (selectionCount !== 1) return null;
+    const s: any = panelTargets[0] || only;
+    if (!s) return null;
+    const fx = readNxFxFromMeta(s.meta) || null;
+    const ds = Array.isArray((fx as any)?.distortions) ? (fx as any).distortions : [];
+    const m = ds.find((d: any) => d && d.kind === 'mask' && d.enabled !== false) || null;
+    if (!m || typeof m.sourceId !== 'string' || !m.sourceId) return null;
+    return m as any;
+  })();
+
   return (
     <DefaultStylePanel {...props}>
       <div className="nx-vsp">
@@ -228,6 +403,7 @@ export const VisionStylePanel = track(function VisionStylePanel(props: TLUiStyle
           selectionCount={selectionCount}
           showActionsWithVectorize={showActionsWithVectorize}
           showUngroup={showUngroup}
+          showUnframe={showUnframe}
           showFlatten={showFlatten}
           showVectorize={canVectorize}
           onUngroup={() => {
@@ -240,6 +416,35 @@ export const VisionStylePanel = track(function VisionStylePanel(props: TLUiStyle
             try {
               const ids = editor.getSelectedShapeIds();
               if (ids.length) editor.ungroupShapes(ids);
+            } catch {
+              // ignore
+            }
+          }}
+          onUnframe={() => {
+            try {
+              const ids = editor.getSelectedShapeIds();
+              if (!ids || ids.length !== 1) return;
+              const id = ids[0] as any;
+              const frame: any = editor.getShape(id);
+              if (!frame || String(frame.type || '') !== 'frame') return;
+              if (Boolean(frame?.meta?.[NX_CORE_SECTION_META_KEY])) return;
+
+              const childIds = ((editor as any).getSortedChildIdsForParent?.(frame.id as any) || []).filter(Boolean);
+              try {
+                if (childIds.length) editor.reparentShapes(childIds as any, frame.parentId as any);
+              } catch {
+                // ignore
+              }
+              try {
+                editor.deleteShapes([frame.id as any]);
+              } catch {
+                // ignore
+              }
+              try {
+                if (childIds.length) editor.setSelectedShapes(childIds as any);
+              } catch {
+                // ignore
+              }
             } catch {
               // ignore
             }
@@ -261,6 +466,93 @@ export const VisionStylePanel = track(function VisionStylePanel(props: TLUiStyle
               // ignore
             }
           }}
+          mask={
+            selectedIsFrameLike
+              ? null
+              : supportsFxProxy
+                ? {
+                  supportsFxProxy,
+                  canApply: selectionCount >= 2,
+                  hasMask: Boolean(onlyMaskDistortion),
+                  maskSourceLabel: onlyMaskDistortion ? getShapeLabel(String((onlyMaskDistortion as any).sourceId || '')) : '',
+                  mode: String((onlyMaskDistortion as any)?.mode || 'alpha') === 'shape' ? 'shape' : 'alpha',
+                  invert: Boolean((onlyMaskDistortion as any)?.invert),
+                  strength: clamp01(Number((onlyMaskDistortion as any)?.strength ?? 1)),
+                  onApply: () => {
+                    if (selectionCount < 2) return;
+                    const ids = editor.getSelectedShapeIds().map(String);
+                    if (ids.length < 2) return;
+                    const maskId = String(ids[ids.length - 1] || '');
+                    if (!maskId) return;
+                    const targets = ids.slice(0, -1).filter((id) => id && id !== maskId);
+                    if (!targets.length) return;
+                    // Default to fast vector "shape" masking only when the mask source is a supported Vision vector shape.
+                    // Otherwise default to alpha mode (raster proxy) so masking still works for arbitrary shapes.
+                    let defaultMode: 'shape' | 'alpha' = 'alpha';
+                    try {
+                      const ms: any = editor.getShape(maskId as any);
+                      const t = String(ms?.type || '');
+                      if (t === 'nxrect' || t === 'nxpath') defaultMode = 'shape';
+                    } catch {
+                      defaultMode = 'alpha';
+                    }
+                    patchFxForShapeIds(targets, (prevFx) => {
+                      const prevDs = Array.isArray((prevFx as any)?.distortions) ? (prevFx as any).distortions : [];
+                      const nextDs = [
+                        ...prevDs.filter((d: any) => !(d && d.kind === 'mask')),
+                        { id: makeFxId('mask'), kind: 'mask', enabled: true, sourceId: maskId, mode: defaultMode, invert: false, strength: 1 },
+                      ];
+                      return { ...(prevFx as any), distortions: nextDs };
+                    });
+                  },
+                  onClear: () => {
+                    if (selectionCount !== 1) return;
+                    const ids = editor.getSelectedShapeIds().map(String);
+                    const id = String(ids[0] || '');
+                    if (!id) return;
+                    patchFxForShapeIds([id], (prevFx) => {
+                      const prevDs = Array.isArray((prevFx as any)?.distortions) ? (prevFx as any).distortions : [];
+                      const nextDs = prevDs.filter((d: any) => !(d && d.kind === 'mask'));
+                      return { ...(prevFx as any), distortions: nextDs };
+                    });
+                  },
+                  onChangeMode: (m) => {
+                    if (selectionCount !== 1) return;
+                    const ids = editor.getSelectedShapeIds().map(String);
+                    const id = String(ids[0] || '');
+                    if (!id) return;
+                    patchFxForShapeIds([id], (prevFx) => {
+                      const prevDs = Array.isArray((prevFx as any)?.distortions) ? (prevFx as any).distortions : [];
+                      const nextDs = prevDs.map((d: any) => (d && d.kind === 'mask' ? { ...d, mode: m } : d));
+                      return { ...(prevFx as any), distortions: nextDs };
+                    });
+                  },
+                  onChangeInvert: (v) => {
+                    if (selectionCount !== 1) return;
+                    const ids = editor.getSelectedShapeIds().map(String);
+                    const id = String(ids[0] || '');
+                    if (!id) return;
+                    patchFxForShapeIds([id], (prevFx) => {
+                      const prevDs = Array.isArray((prevFx as any)?.distortions) ? (prevFx as any).distortions : [];
+                      const nextDs = prevDs.map((d: any) => (d && d.kind === 'mask' ? { ...d, invert: Boolean(v) } : d));
+                      return { ...(prevFx as any), distortions: nextDs };
+                    });
+                  },
+                  onChangeStrength: (v) => {
+                    if (selectionCount !== 1) return;
+                    const ids = editor.getSelectedShapeIds().map(String);
+                    const id = String(ids[0] || '');
+                    if (!id) return;
+                    const vv = clamp01(Number(v));
+                    patchFxForShapeIds([id], (prevFx) => {
+                      const prevDs = Array.isArray((prevFx as any)?.distortions) ? (prevFx as any).distortions : [];
+                      const nextDs = prevDs.map((d: any) => (d && d.kind === 'mask' ? { ...d, strength: vv } : d));
+                      return { ...(prevFx as any), distortions: nextDs };
+                    });
+                  },
+                  }
+                : null
+          }
           rectCorners={
             nxRects.length > 0
               ? {
@@ -299,6 +591,25 @@ export const VisionStylePanel = track(function VisionStylePanel(props: TLUiStyle
               : null
           }
         />
+
+        {/* NxLayout container + child controls */}
+        {selectedIsNxLayout && only ? (
+          <NxLayoutContainerSection
+            editor={editor}
+            shape={only as any}
+            inParent={nxLayoutSelectedAsChildCtx ? (nxLayoutSelectedAsChildCtx as any).parent : null}
+            hideLayout={selectedIsCoreContainer}
+            onActivateFillHandles={(layerId) =>
+              setVisionGradientUiState({ shapeId: String((only as any)?.id || ''), paint: 'fill', layerId })
+            }
+            onActivateStrokeHandles={(layerId) =>
+              setVisionGradientUiState({ shapeId: String((only as any)?.id || ''), paint: 'stroke', layerId })
+            }
+          />
+        ) : null}
+        {nxLayoutChildCtx && !selectedIsNxLayout ? (
+          <NxLayoutChildSection editor={editor} targets={(nxLayoutChildCtx as any).targets} parent={(nxLayoutChildCtx as any).parent} />
+        ) : null}
 
         {/* Type-specific: paint stacks (vision shapes) or default tldraw styles */}
         <VisionPathTypeSections
@@ -507,7 +818,8 @@ export const VisionStylePanel = track(function VisionStylePanel(props: TLUiStyle
         />
 
         <TldrawTypeSections
-          enabled={!hasVisionSelection}
+          enabled={!hasVisionSelection && !selectedIsGroup && !selectedIsNxLayout && !selectedIsFrame}
+          showText={!selectedIsFrameLike}
           editor={editor}
           fill={{
             color: tldrawFillHex,
@@ -532,9 +844,19 @@ export const VisionStylePanel = track(function VisionStylePanel(props: TLUiStyle
           onPickTextColor={setTextColorFromHex}
         />
 
+        <VisionFrameTypeSections
+          enabled={selectedIsFrame && !!only}
+          editor={editor}
+          frameShape={only as any}
+          theme={theme}
+          currentColorHex={tldrawOutlineHex}
+          colorMixed={sharedColor?.type === 'mixed'}
+          colorPlaceholder={sharedColor?.type === 'mixed' ? 'mixed' : '#rrggbb'}
+        />
+
         {/* FX (applies to any selection target) */}
         <VisionFxSections
-          enabled={fxTargets.length > 0}
+          enabled={fxTargets.length > 0 && !selectedIsFrameLike}
           fx={firstFx as any}
           onChangeFx={(next) => setFxForTargets(next)}
           onAddDropShadow={() => {

@@ -126,9 +126,11 @@ export function NxFxDistortionSection({
   onAdd: (kind: NxFxDistortion['kind']) => void;
 }) {
   const ds = fx.distortions || [];
+  const viewDs = ds.slice().reverse();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const sel = ds.find((d) => d.id === selectedId) || ds[0] || null;
   const draggingRef = useRef<number | null>(null);
+  const lastEnterIdxRef = useRef<number | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -512,7 +514,8 @@ export function NxFxDistortionSection({
 
       <div className="nx-vsp-group">
         <div className="nx-vsp-layerList">
-          {ds.map((d, idx) => {
+          {viewDs.map((d, viewIdx) => {
+            const idx = ds.length - 1 - viewIdx;
             const enabled = d.enabled !== false;
             const isSel = sel ? sel.id === d.id : false;
             return (
@@ -520,6 +523,16 @@ export function NxFxDistortionSection({
                 key={d.id}
                 className={isSel ? 'nx-vsp-layerItem is-selected' : 'nx-vsp-layerItem'}
                 onClick={() => setSelectedId(d.id)}
+                onDragEnter={() => {
+                  if (draggingRef.current === null) return;
+                  if (lastEnterIdxRef.current === idx) return;
+                  lastEnterIdxRef.current = idx;
+                  const from = draggingRef.current;
+                  const to = idx;
+                  if (from === null || from === to) return;
+                  move(from, to);
+                  draggingRef.current = to;
+                }}
                 onDragOver={(ev) => {
                   ev.preventDefault();
                   const from = draggingRef.current;

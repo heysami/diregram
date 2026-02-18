@@ -99,7 +99,30 @@ export type NxFxDoodle = {
   seed: number;
 };
 
-export type NxFxDistortion = NxFxBlur | NxFxMotionBlur | NxFxBloom | NxFxGlitch | NxFxMosh | NxFxGrain | NxFxDoodle;
+/**
+ * Alpha mask distortion.
+ * `sourceId` points at another shape whose rendered alpha will be used as a mask.
+ * This is applied during rasterization (needs access to the editor), not in `applyStack.ts`.
+ */
+export type NxFxMask = {
+  id: string;
+  kind: 'mask';
+  enabled: boolean;
+  /** Shape id used as mask source. */
+  sourceId: string;
+  /**
+   * Mask mode:
+   * - `shape`: treat the mask shape as fully opaque wherever it renders (ignore its color/gradient alpha)
+   * - `alpha`: use the mask shape’s rendered alpha values (e.g. stroke-only, gradient-to-transparent)
+   */
+  mode?: 'shape' | 'alpha';
+  /** If true, use (1 - alpha) instead of alpha. */
+  invert?: boolean;
+  /** Multiplier applied to mask alpha, 0..1 (default 1). */
+  strength?: number;
+};
+
+export type NxFxDistortion = NxFxBlur | NxFxMotionBlur | NxFxBloom | NxFxGlitch | NxFxMosh | NxFxGrain | NxFxDoodle | NxFxMask;
 
 export type NxFxStack = {
   v: 1;
@@ -211,6 +234,21 @@ function coerceDistortion(x: any): NxFxDistortion | null {
   const kind = (x as any).kind;
   const id = asString((x as any).id, '');
   if (!id) return null;
+  if (kind === 'mask') {
+    const sourceId = asString((x as any).sourceId, '');
+    if (!sourceId) return null;
+    const modeRaw = asString((x as any).mode, 'alpha');
+    const mode = modeRaw === 'shape' ? 'shape' : 'alpha';
+    return {
+      id,
+      kind,
+      enabled: asBool((x as any).enabled, true),
+      sourceId,
+      mode,
+      invert: asBool((x as any).invert, false),
+      strength: clamp((x as any).strength, 0, 1, 1),
+    };
+  }
   if (kind === 'blur') {
     const ramp = coerceRamp((x as any).ramp);
     return {

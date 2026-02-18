@@ -3,6 +3,7 @@
 import type { Editor } from 'tldraw';
 import { add, boundsOf, len, mul, norm, perp, pt, sub, type Pt } from '@/components/vision/tldraw/autoconvert/geom';
 import { getTheme, tokenToSolidHex } from '@/components/vision/tldraw/autoconvert/colors';
+import { makeDefaultFillLayer, makeDefaultStrokeLayer, serializeFillLayers, serializeStrokeLayers } from '@/components/vision/tldraw/paint/nxPaintLayers';
 
 export type ArrowConversion = {
   type: 'nxpath';
@@ -16,7 +17,11 @@ export type ArrowConversion = {
     w: number;
     h: number;
     d: string;
+    fills: string;
+    strokes: string;
+    fillMode: 'solid';
     fill: string;
+    strokeMode: 'solid';
     stroke: string;
     strokeWidth: number;
   };
@@ -100,7 +105,54 @@ export async function tryMakeVisionArrowFromTldrawArrow(editor: Editor, rec: any
     parentId: rec.parentId,
     index: rec.index,
     opacity: rec.opacity,
-    props: { w, h, d, fill: 'transparent', stroke: strokeHex, strokeWidth },
+    props: {
+      w,
+      h,
+      d,
+      // IMPORTANT: NXPathShapeUtil defaults include transparent stroke layers; override explicitly.
+      fills: serializeFillLayers([
+        makeDefaultFillLayer({
+          mode: 'solid',
+          solid: 'transparent',
+          stops: JSON.stringify([
+            { offset: 0, color: 'transparent' },
+            { offset: 1, color: 'transparent' },
+          ]),
+          pattern: 'stripes',
+          angle: 45,
+          gx0: 0,
+          gy0: 0,
+          gx1: 1,
+          gy1: 0,
+        } as any),
+      ]),
+      strokes: serializeStrokeLayers([
+        makeDefaultStrokeLayer({
+          mode: 'solid',
+          solid: strokeHex,
+          stops: JSON.stringify([
+            { offset: 0, color: strokeHex },
+            { offset: 1, color: strokeHex },
+          ]),
+          pattern: 'dots',
+          angle: 45,
+          width: strokeWidth,
+          align: 'center',
+          dash: { kind: 'solid' },
+          cap: 'round',
+          join: 'round',
+          gx0: 0,
+          gy0: 0,
+          gx1: 1,
+          gy1: 0,
+        } as any),
+      ]),
+      fillMode: 'solid',
+      fill: 'transparent',
+      strokeMode: 'solid',
+      stroke: strokeHex,
+      strokeWidth,
+    },
     meta: { ...(rec.meta || {}), nxName: rec.meta?.nxName || 'VisionArrow', nxNoAutoConvert: true },
   };
 }
