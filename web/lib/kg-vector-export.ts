@@ -12,6 +12,8 @@ import { loadTagStore } from '@/lib/tag-store';
 import { loadDataObjects } from '@/lib/data-object-storage';
 import { loadSystemFlowStateFromMarkdown } from '@/lib/system-flow-storage';
 import { loadDataObjectAttributes } from '@/lib/data-object-attributes';
+import { loadExpandedGridNodesFromDoc } from '@/lib/expanded-grid-storage';
+import { loadFlowNodeData } from '@/lib/flow-node-storage';
 
 export type KgEntityRecord = {
   type: 'entity';
@@ -192,6 +194,14 @@ function systemFlowLinkEntityId(fileId: string, sfid: string, linkId: string) {
   return `systemflowLink:${fileId}:${sfid}:${linkId}`;
 }
 
+function expandedGridNodeEntityId(fileId: string, expid: number, gridNodeKey: string) {
+  return `expandedGridNode:${fileId}:${expid}:${gridNodeKey}`;
+}
+
+function flowGraphNodeEntityId(fileId: string, runningNumber: number, flowNodeId: string) {
+  return `flowGraphNode:${fileId}:${runningNumber}:${flowNodeId}`;
+}
+
 function noteEmbedEntityId(fileId: string, embedId: string) {
   return `noteEmbed:${fileId}:${embedId}`;
 }
@@ -360,12 +370,14 @@ function exportNoteSemanticKg(opts: {
   try {
     let inFence = false;
     let fenceLang = '';
+    let fenceStartLineIndex = -1;
     let buf: string[] = [];
-    const flush = () => {
+    const flush = (startLineIndex: number) => {
       const lang = String(fenceLang || '').trim().toLowerCase();
       const raw = buf.join('\n').trim();
       buf = [];
       fenceLang = '';
+      fenceStartLineIndex = -1;
       if (!raw) return;
       const parsed = (() => {
         try {
@@ -424,7 +436,12 @@ function exportNoteSemanticKg(opts: {
 
       if (lang === 'nexus-note-link') {
         const spec: any = parsed;
-        const linkId = typeof spec?.id === 'string' && spec.id.trim() ? spec.id.trim() : `noteLink-${Math.random().toString(16).slice(2, 8)}`;
+        const linkId =
+          typeof spec?.id === 'string' && spec.id.trim()
+            ? spec.id.trim()
+            : startLineIndex >= 0
+              ? `line-${startLineIndex}`
+              : `line-unknown`;
         const lid = noteLinkEntityId(f.id, linkId);
         const targetFileId = typeof spec?.fileId === 'string' && spec.fileId.trim() ? String(spec.fileId).trim() : null;
         const blockId = typeof spec?.blockId === 'string' && spec.blockId.trim() ? String(spec.blockId).trim() : null;
@@ -451,10 +468,11 @@ function exportNoteSemanticKg(opts: {
         if (!inFence) {
           inFence = true;
           fenceLang = String(m[1] || '');
+          fenceStartLineIndex = i;
           buf = [];
         } else {
           inFence = false;
-          flush();
+          flush(fenceStartLineIndex);
         }
         continue;
       }
@@ -487,6 +505,19 @@ function exportDiagramSemanticKg(opts: {
   const tagById = new Map(tagStore.tags.map((t) => [t.id, t]));
   const groupById = new Map(tagStore.groups.map((g) => [g.id, g]));
   void groupById;
+  const attrByObjectId = new Map<
+    string,
+    Map<
+      string,
+      {
+        id: string;
+        name?: unknown;
+        type?: unknown;
+        values?: unknown;
+        sample?: unknown;
+      }
+    >
+  >();
 
   // Export tag groups + tags (project-scoped).
   for (const g of tagStore.groups || []) {
@@ -523,8 +554,10 @@ function exportDiagramSemanticKg(opts: {
     });
     edges.push({ type: 'edge', id: edgeId('file_defines_data_object', fid, oid), edgeType: 'file_defines_data_object', src: fid, dst: oid });
     const attrs = loadDataObjectAttributes(o.data || {});
+    const byAttrId = new Map<string, { id: string; name?: unknown; type?: unknown; values?: unknown; sample?: unknown }>();
     for (const a of attrs) {
       const aid = dataObjectAttrEntityId(rootProjectFolderId, o.id, a.id);
+      byAttrId.set(a.id, { id: a.id, name: (a as any).name, type: (a as any).type, values: (a as any).values, sample: (a as any).sample });
       entities.push({
         type: 'entity',
         id: aid,
@@ -539,6 +572,7 @@ function exportDiagramSemanticKg(opts: {
       });
       edges.push({ type: 'edge', id: edgeId('data_object_has_attribute', oid, aid), edgeType: 'data_object_has_attribute', src: oid, dst: aid });
     }
+    attrByObjectId.set(o.id, byAttrId);
   }
 
   // Helper: map running number -> node entity id (best-effort).
@@ -553,7 +587,7 @@ function exportDiagramSemanticKg(opts: {
     const actorTagIds = tags.filter((id: string) => (tagById.get(id)?.groupId || '') === 'tg-actors' || /^actor-/.test(id));
     const uiSurfaceTagIds = tags.filter((id: string) => (tagById.get(id)?.groupId || '') === 'tg-uiSurface');
 
-    entities.push({
+    const nodeRec: KgEntityRecord = {
       type: 'entity',
       id: nid,
       entityType: 'node',
@@ -574,8 +608,155 @@ function exportDiagramSemanticKg(opts: {
       sfid: typeof (n as any)?.metadata?.sfid === 'string' ? (n as any).metadata.sfid : undefined,
       uiSurfaceTagIds: uiSurfaceTagIds.length ? uiSurfaceTagIds : undefined,
       actorTagIds: actorTagIds.length ? actorTagIds : undefined,
-    });
+    };
+    entities.push(nodeRec);
     edges.push({ type: 'edge', id: edgeId('file_has_node', fid, nid), edgeType: 'file_has_node', src: fid, dst: nid });
+
+    // Expanded UI (expanded-grid-N): export inner "grid nodes" as first-class entities.
+    // This is where "tabs/wizard/content/etc" UI types live.
+    if (typeof expid === 'number' && Number.isFinite(expid)) {
+      try {
+        const loaded = loadExpandedGridNodesFromDoc(ydoc, expid);
+        const gridNodes = loaded?.nodes || [];
+        const uiTypeCounts: Record<string, number> = {};
+        for (const g of gridNodes) {
+          const key = String(g.key || g.id || '').trim();
+          if (!key) continue;
+          const uiType = typeof (g as any).uiType === 'string' ? String((g as any).uiType).trim() : '';
+          if (uiType) uiTypeCounts[uiType] = (uiTypeCounts[uiType] || 0) + 1;
+          const gid = expandedGridNodeEntityId(f.id, expid, key);
+          const uiTabsLabels = Array.isArray((g as any).uiTabs) ? (g as any).uiTabs.map((t: any) => String(t?.label || '').trim()).filter(Boolean) : [];
+          const uiSectionsLabels = Array.isArray((g as any).uiSections) ? (g as any).uiSections.map((s: any) => String(s?.label || '').trim()).filter(Boolean) : [];
+          entities.push({
+            type: 'entity',
+            id: gid,
+            entityType: 'expandedGridNode',
+            fileId: f.id,
+            expid,
+            key,
+            content: String(g.content || ''),
+            uiType: (g as any).uiType || undefined,
+            icon: (g as any).icon || undefined,
+            color: (g as any).color || undefined,
+            dataObjectId: (g as any).dataObjectId || undefined,
+            dataObjectAttributeIds: Array.isArray((g as any).dataObjectAttributeIds) ? (g as any).dataObjectAttributeIds : undefined,
+            dataObjectAttributeMode: (g as any).dataObjectAttributeMode || undefined,
+            relationKind: (g as any).relationKind || undefined,
+            relationCardinality: (g as any).relationCardinality || undefined,
+            gridX: (g as any).gridX,
+            gridY: (g as any).gridY,
+            gridWidth: (g as any).gridWidth,
+            gridHeight: (g as any).gridHeight,
+            uiTabsLabels: uiTabsLabels.length ? uiTabsLabels.slice(0, 12) : undefined,
+            uiSectionsLabels: uiSectionsLabels.length ? uiSectionsLabels.slice(0, 12) : undefined,
+            uiTabsCount: uiTabsLabels.length || undefined,
+            uiSectionsCount: uiSectionsLabels.length || undefined,
+            sourceChildDataObjectId: (g as any).sourceChildDataObjectId || undefined,
+            sourceFlowNodeId: (g as any).sourceFlowNodeId || undefined,
+          });
+          const gridRec = entities[entities.length - 1] as any;
+          edges.push({
+            type: 'edge',
+            id: edgeId('node_has_expanded_grid_node', nid, gid),
+            edgeType: 'node_has_expanded_grid_node',
+            src: nid,
+            dst: gid,
+          });
+
+          // Optional semantic links to data objects.
+          const doid = typeof (g as any).dataObjectId === 'string' ? String((g as any).dataObjectId).trim() : '';
+          if (doid) {
+            const did = dataObjectEntityId(rootProjectFolderId, doid);
+            edges.push({ type: 'edge', id: edgeId('grid_node_about_data_object', gid, did), edgeType: 'grid_node_about_data_object', src: gid, dst: did });
+          }
+          const attrIds = Array.isArray((g as any).dataObjectAttributeIds) ? (g as any).dataObjectAttributeIds.map((x: any) => String(x).trim()).filter(Boolean) : [];
+          if (doid && attrIds.length) {
+            for (const a of attrIds) {
+              const aid = dataObjectAttrEntityId(rootProjectFolderId, doid, a);
+              edges.push({
+                type: 'edge',
+                id: edgeId('grid_node_touches_data_object_attr', gid, aid),
+                edgeType: 'grid_node_touches_data_object_attr',
+                src: gid,
+                dst: aid,
+              });
+            }
+          }
+          if (doid && attrIds.length) {
+            const byAttr = attrByObjectId.get(doid) || null;
+            if (byAttr) {
+              const snaps = attrIds
+                .filter((a: string) => a !== '__objectName__')
+                .map((a: string) => byAttr.get(a) || null)
+                .filter(Boolean)
+                .slice(0, 40);
+              if (snaps.length) gridRec.dataObjectAttributeValues = snaps;
+            }
+          }
+        }
+
+        const types = Object.keys(uiTypeCounts);
+        if (types.length) {
+          (nodeRec as any).expandedUiTypes = types.sort((a, b) => a.localeCompare(b));
+          (nodeRec as any).expandedUiTypeCounts = uiTypeCounts;
+          (nodeRec as any).expandedGridNodeCount = gridNodes.length;
+        } else if (gridNodes.length) {
+          (nodeRec as any).expandedGridNodeCount = gridNodes.length;
+        }
+      } catch {
+        // ignore expanded grid parse errors
+      }
+    }
+
+    // Process flow graph (flow-node-N): export graph nodes + connectors for "before/next" semantics.
+    if (n.isFlowNode && typeof rn === 'number' && Number.isFinite(rn)) {
+      try {
+        const flow = loadFlowNodeData(ydoc, rn);
+        if (flow) {
+          const graphNodes = flow.nodes || [];
+          const nodeEntByFlowId = new Map<string, string>();
+          for (const fn of graphNodes) {
+            const fnid = flowGraphNodeEntityId(f.id, rn, String((fn as any).id || '').trim() || 'unknown');
+            nodeEntByFlowId.set(String((fn as any).id || ''), fnid);
+            entities.push({
+              type: 'entity',
+              id: fnid,
+              entityType: 'flowGraphNode',
+              fileId: f.id,
+              runningNumber: rn,
+              flowNodeId: (fn as any).id,
+              label: (fn as any).label,
+              flowNodeType: (fn as any).type,
+              branchId: (fn as any).branchId,
+              gotoTargetId: (fn as any).gotoTargetId,
+              loopTargetId: (fn as any).loopTargetId,
+              forkSourceId: (fn as any).forkSourceId,
+            });
+            edges.push({ type: 'edge', id: edgeId('node_has_flow_graph_node', nid, fnid), edgeType: 'node_has_flow_graph_node', src: nid, dst: fnid });
+          }
+          const labels = flow.edges || {};
+          for (const k of Object.keys(labels)) {
+            const [fromId, toId] = String(k).split('__');
+            if (!fromId || !toId) continue;
+            const srcEnt = nodeEntByFlowId.get(fromId);
+            const dstEnt = nodeEntByFlowId.get(toId);
+            if (!srcEnt || !dstEnt) continue;
+            const meta = (labels as any)[k] || {};
+            edges.push({
+              type: 'edge',
+              id: edgeId('flow_connector', srcEnt, dstEnt),
+              edgeType: 'flow_connector',
+              src: srcEnt,
+              dst: dstEnt,
+              label: typeof meta?.label === 'string' ? meta.label : '',
+              color: typeof meta?.color === 'string' ? meta.color : '',
+            });
+          }
+        }
+      } catch {
+        // ignore flow graph parse errors
+      }
+    }
 
     const textParts = [String(n.content || '').trim(), typeof (n as any).annotation === 'string' ? String((n as any).annotation).trim() : ''].filter(Boolean);
     const text = textParts.join('\n');
@@ -615,6 +796,17 @@ function exportDiagramSemanticKg(opts: {
         edges.push({ type: 'edge', id: edgeId('node_touches_data_object_attr', nid, aid), edgeType: 'node_touches_data_object_attr', src: nid, dst: aid });
       }
     }
+    if (doid && attrIds.length) {
+      const byAttr = attrByObjectId.get(doid) || null;
+      if (byAttr) {
+        const snaps = attrIds
+          .filter((a: string) => a !== '__objectName__')
+          .map((a: string) => byAttr.get(a) || null)
+          .filter(Boolean)
+          .slice(0, 40);
+        if (snaps.length) (nodeRec as any).dataObjectAttributeValues = snaps;
+      }
+    }
 
     (n.children || []).forEach((c: any) => {
       const cExpid = expids.get(c.lineIndex) ?? null;
@@ -622,6 +814,24 @@ function exportDiagramSemanticKg(opts: {
       edges.push({ type: 'edge', id: edgeId('node_parent', nid, cid), edgeType: 'node_parent', src: nid, dst: cid });
       walk(c);
     });
+
+    // Sequencing edges: preserve sibling order (useful for "before/next", especially under #flow# nodes).
+    try {
+      const children = Array.isArray(n.children) ? n.children : [];
+      for (let i = 0; i + 1 < children.length; i += 1) {
+        const a = children[i];
+        const b = children[i + 1];
+        if (!a || !b) continue;
+        const aId = diagramNodeEntityId(f.id, a.lineIndex, expids.get(a.lineIndex) ?? null);
+        const bId = diagramNodeEntityId(f.id, b.lineIndex, expids.get(b.lineIndex) ?? null);
+        edges.push({ type: 'edge', id: edgeId('node_next_sibling', aId, bId), edgeType: 'node_next_sibling', src: aId, dst: bId });
+        if (n.isFlowNode && a.isFlowNode && b.isFlowNode) {
+          edges.push({ type: 'edge', id: edgeId('flow_tree_next', aId, bId), edgeType: 'flow_tree_next', src: aId, dst: bId });
+        }
+      }
+    } catch {
+      // ignore sibling ordering errors
+    }
     if (n.isHub && Array.isArray(n.variants)) {
       (n.variants || []).forEach((v: any) => walk(v));
     }

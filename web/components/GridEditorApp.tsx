@@ -418,6 +418,7 @@ export function GridEditorApp() {
       doc={gridDoc}
       yDoc={yDoc}
       onChange={handleGridChange}
+      fileId={activeFile.id}
       statusLabel={statusLabel}
       diagramFiles={diagramFiles}
       linkedDiagramFileId={linkedDiagramFileId}

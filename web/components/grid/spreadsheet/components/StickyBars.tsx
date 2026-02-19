@@ -17,6 +17,7 @@ export function StickyBars({
   onCreateTable,
   canCreateTable,
   onUnmergeRegion,
+  onImportCsv,
   onOpenMarkdownHelp,
   onOpenTableVisibility,
   onSaveActiveTableAsTemplate,
@@ -38,6 +39,7 @@ export function StickyBars({
   onCreateTable: () => void;
   canCreateTable: boolean;
   onUnmergeRegion: () => void;
+  onImportCsv?: () => void;
   onOpenMarkdownHelp?: () => void;
   onOpenTableVisibility?: (anchorEl: HTMLElement) => void;
   onSaveActiveTableAsTemplate?: () => void;
@@ -150,6 +152,11 @@ export function StickyBars({
         {activeRegionId ? (
           <button type="button" className="mac-btn h-7" onClick={onUnmergeRegion} title="Unmerge active region">
             Unmerge
+          </button>
+        ) : null}
+        {onImportCsv ? (
+          <button type="button" className="mac-btn h-7" onClick={onImportCsv} title="Import a CSV file as a new table starting at the selected cell">
+            Import CSV…
           </button>
         ) : null}
 

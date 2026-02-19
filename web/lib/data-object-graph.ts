@@ -113,6 +113,30 @@ function inferExpandedGridEdge(opts: {
   const uiType = gridNode.uiType || 'content';
   if (uiType === 'navOut') return null;
 
+  // Prefer explicit semantics when present; this keeps UI guidance/checklists truthful.
+  // - relationKind:"relation" is the primary signal that the user intends this to show as a linked object
+  // - relationKind:"none" means purely UI (no domain linkage)
+  if (gridNode.relationKind === 'none') return null;
+  if (gridNode.relationKind === 'relation') {
+    return {
+      fromId: parentId,
+      toId: childId,
+      kind: 'relation',
+      cardinality: (gridNode.relationCardinality || 'manyToMany') as ExpandedGridRelationCardinality,
+      source: { type: 'expanded-grid', runningNumber, gridNodeKey: (gridNode.key || gridNode.id) as string, uiType },
+    };
+  }
+  if (gridNode.relationKind === 'attribute') {
+    return {
+      fromId: parentId,
+      toId: childId,
+      kind: 'attribute',
+      cardinality: 'one',
+      source: { type: 'expanded-grid', runningNumber, gridNodeKey: (gridNode.key || gridNode.id) as string, uiType },
+    };
+  }
+
+  // Fallback: infer from uiType (legacy behavior)
   if (uiType === 'list') {
     return {
       fromId: parentId,

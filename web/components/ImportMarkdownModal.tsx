@@ -5,17 +5,22 @@ import * as Y from 'yjs';
 import { Clipboard, X, AlertTriangle } from 'lucide-react';
 import { validateNexusMarkdownImport } from '@/lib/markdown-import-validator';
 import { normalizeMarkdownNewlines } from '@/lib/markdown-normalize';
+import { downloadTextFile } from '@/lib/client-download';
+import { CollapsibleCopyPanel } from '@/components/import/CollapsibleCopyPanel';
 import {
   POST_GEN_CHECKLIST_ALL,
   POST_GEN_CHECKLIST_COMPLETENESS,
   POST_GEN_CHECKLIST_CONDITIONAL,
   POST_GEN_CHECKLIST_DATA_OBJECTS,
+  POST_GEN_CHECKLIST_EXPANDED_NODES,
   POST_GEN_CHECKLIST_IA,
   POST_GEN_CHECKLIST_PROCESS_FLOWS,
+  POST_GEN_CHECKLIST_SYSTEM_FLOW,
   POST_GEN_CHECKLIST_SWIMLANE,
   POST_GEN_CHECKLIST_TAGS,
   POST_GEN_CHECKLIST_TECHNICAL,
 } from '@/lib/ai-checklists/post-generation-index';
+import { EXPANDED_NODE_PLANNING_PROMPT } from '@/lib/ai-guides/expanded-node-planning';
 
 const AI_PROMPT = `You are generating a SINGLE markdown document for the NexusMap app.
 
@@ -87,7 +92,7 @@ Every node line must have a clear intent. Use the RIGHT editor/diagram for the R
     - goto/loop/redirect steps (e.g. "Retry payment" / "Return to upload step")
 - Session/timeframe scope (MUST):
   - A single non-swimlane #flow# process must represent ONE coherent session/timeframe (one sitting / one work session).
-  - If the journey crosses time (days/weeks), async waiting, or handoffs across roles/systems, you MUST split it using Flowtab swimlanes (journey/handoffs), lifecycle hubs (Status/Phase dimensions), and/or separate session-scoped #flow# roots linked by lifecycle states.
+  - If the journey crosses time (days/weeks), async waiting, or handoffs across roles/system, you MUST split it using Flowtab swimlanes (journey/handoffs), lifecycle hubs (Status/Phase dimensions), and/or separate session-scoped #flow# roots linked by lifecycle states.
 
 3) Flow tab journey nodes (#flowtab# root + its children):
 - Purpose: HIGH-level journey map. Each node is a major step/handoff/phase, not micro-UI details.
@@ -95,10 +100,10 @@ Every node line must have a clear intent. Use the RIGHT editor/diagram for the R
 
 4) Swimlane (flow tab) lanes + stages:
 - Semantics: lane/stage changes indicate a change of “party” or “session”.
-  Examples: switching systems, switching user roles, waiting states, async processing, or a required condition before continuing.
+  Examples: switching system, switching actor roles, waiting states, async processing, or a required condition before continuing.
 - Use swimlanes to make handoffs and waiting/conditions visible at a glance.
   - Actor lane coverage (MUST):
-    - If the journey involves multiple actors/users/systems/partners, EACH must have its own swimlane lane (one lane per actor/system).
+    - If the journey involves multiple actors/system/partners, EACH must have its own swimlane lane (one lane per actor/system).
     - Do NOT combine different actors into one lane (it hides handoffs and makes the journey non-auditable).
 
 5) Expanded nodes (<!-- expid:N --> + expanded-grid-N):
@@ -124,7 +129,7 @@ Avoid ambiguous hubs:
 - If you need a default variant, make it explicit: (variant=default) or (status=any).
 
 Variant selection:
-- Users choose condition key/values in the UI; the app selects the matching variant.
+- Actors choose condition key/values in the UI; the app selects the matching variant.
 - If nothing is selected, the first variant acts as default.
 
 GOOD:
@@ -236,9 +241,9 @@ CRITICAL LIMITATION:
   You asked AI to generate EVERYTHING, so the AI MUST compute correct node ids and keep markdown stable.
 
 Swimlane intent reminder:
-- Lanes/stages should reflect party/session boundaries (different systems, different users/roles, waiting/async, condition gates).
+- Lanes/stages should reflect party/session boundaries (different system, different actors/roles, waiting/async, condition gates).
   If nothing changes, do NOT move nodes just to “fill the grid”.
-- If the journey involves multiple actors/users/systems/partners, EACH must have its own lane (one lane per actor/system). Do NOT combine actors in one lane.
+- If the journey involves multiple actors/system/partners, EACH must have its own lane (one lane per actor/system). Do NOT combine actors in one lane.
 - Non-linearity reminder (MUST):
   - Do NOT force the Flow tab journey to look like a guaranteed smooth linear path.
   - If the underlying process has meaningful alternates/outcomes, represent them as branches at a high level:
@@ -303,6 +308,41 @@ How System Flow layout is persisted (NON-NODE markdown sectioning):
   { ... JSON ... }
   \`\`\`
 - CRITICAL: keep boxes/zones/links inside the fenced block so it is NOT interpreted as normal nodes.
+
+Modeling workflow (2 passes) (MUST; matches how teams actually work)
+1) Architecture / system context (first pass):
+- Start from the system architecture diagram (high-level boxes + groupings).
+- MUST include at least ONE architecture System Flow diagram in the document.
+- This architecture diagram is the merge target for multiple sequences (see below).
+- Reuse the SAME actors/portals/surfaces you already defined in IA:
+  - applicant portal / staff-admin portal / partner portal / public site
+  - shared common modules (design system, auth, notifications, file store, analytics)
+- Group the diagram using zones[] (preferred):
+  - Zone for each portal/surface
+  - Zone for shared platform modules
+  - Zone for external systems/partners
+- Keep the first pass mostly about ownership boundaries and module grouping (not message order).
+
+2) Sequence / interaction flow (second pass):
+- Rule (MUST): 1 sequence diagram = 1 System Flow root (treat it like a “swimlane document” for that scenario).
+  - Create a new #systemflow# root for EACH integration scenario (Payments auth, Identity verify, File upload pipeline, etc.).
+  - Do NOT cram multiple unrelated sequences into one systemflow; it becomes unreadable and un-auditable.
+- After the architecture is grouped, add message links between modules for the sequence diagram.
+- Represent modules as skinny tall rectangles (lifeline-like):
+  - set gridWidth small (e.g. 2–3)
+  - set gridHeight tall (e.g. 6–12)
+  - arrange them left-to-right across the grid
+- Use links[] to represent messages:
+  - order: number (1,2,3…) for sequence order
+  - text: label for the message (verb + payload), e.g. "Create PaymentIntent", "POST /verify", "Emit event"
+  - dashStyle:"dashed" for async/background work
+  - endShape:"arrow" for calls, endShape:"circle"/"square" for events/queues if helpful
+  - points[] may be used for bend points (optional; the editor can auto-route)
+
+Merging sequences onto architecture (MUST guidance):
+- Keep the architecture systemflow as the canonical module inventory + grouping (zones).
+- For each sequence systemflow, reuse the same module names (and ideally the same dataObjectId links) as the architecture diagram.
+- Optional: On the architecture diagram, add a small set of high-level links annotated with the sequence id/name (e.g. "S1 Authorize", "S2 Refund") rather than copying every step.
 
 Schema (v1):
 {
@@ -478,11 +518,10 @@ Schema:
   "nextTagId": 1,
   "groups": [
     { "id": "tg-ungrouped", "name": "ungrouped", "order": 0 },
-    { "id": "tg-users", "name": "users", "order": 1 },
-    { "id": "tg-systems", "name": "systems", "order": 2 },
-    { "id": "tg-uiType", "name": "ui type", "order": 3 },
-    { "id": "tg-actors", "name": "actors", "order": 4 },
-    { "id": "tg-uiSurface", "name": "ui surface", "order": 5 }
+    { "id": "tg-systems", "name": "system", "order": 1 },
+    { "id": "tg-uiType", "name": "ui type", "order": 2 },
+    { "id": "tg-actors", "name": "actors", "order": 3 },
+    { "id": "tg-uiSurface", "name": "ui surface", "order": 4 }
   ],
   "tags": [
     { "id": "tag-ui-form", "groupId": "tg-uiType", "name": "form" },
@@ -841,11 +880,55 @@ MUST DO (strict rules)
   - expanded-metadata-N
   - expanded-grid-N
 - Expanded grids should encode UI components and bind to data objects via dataObjectId where relevant.
+- If you cannot reliably generate all expanded grids yet:
+  - Put the expanded-node list aside first in a separate “parking lot” file (screen list + primary objects + relations),
+  - Then finish expanded grids in a second pass using the Expanded Nodes checklist (coverage + link realization).
 
 6) Data objects must be connected to the tree AND to screens:
 - Add <!-- do:do-X --> anchors on key feature/page nodes to show which entity they operate on.
 - Bind entities inside expanded-grid inner nodes using dataObjectId (screens can bind multiple entities).
 - Do NOT leave orphan data objects (objects with no references).
+
+6.5) Addendum — Data Objects UI Realization (MUST; prevents “modeled but invisible” objects)
+Domain model is the source of truth (MUST):
+- MUST define every entity in the block as an entry under data-objects.objects[].
+- MUST define relationships using objects[].data.relations[] objects with:
+  - name: relation name (string)
+  - to: target data object id (e.g. "do-4")
+  - cardinality: "one" | "oneToMany" | "manyToMany" | ...
+- SHOULD model key relationships bidirectionally (preferred for analysis), e.g.:
+  - AdmissionsApplication (do-2) -> payments (do-4)
+  - Payment (do-4) -> application (do-2)
+
+IA anchoring makes objects “eligible” in UI (MUST):
+Some UI views/pickers only include objects that appear in IA. To avoid “invisible” objects:
+- MUST include at least one IA anchor for every do-*:
+  - Add <!-- do:do-X --> on the most relevant IA node line (screen/feature/flow/section).
+- MUST anchor “secondary” objects too (common miss), e.g. verification/session/audit/interface payloads.
+- Recommended placement:
+  - Transaction objects: anchor on the process flow root and the primary IA feature/screen node.
+  - Supporting objects: anchor on the screen/feature where users interact with it (Login for sessions, Upload for documents, Payment page for payments).
+
+UI “Linked objects” is often driven by Expanded Screens (MUST for important relations):
+Even if data-objects.relations is correct, the UI may only display “linked objects” when relationships are realized in expanded screens.
+- MUST ensure each important transaction object has at least one expanded screen that:
+  - sets expanded-metadata-N.dataObjectId to the primary object for that screen
+  - includes expanded-grid-N cells referencing related objects using:
+Required grid cell pattern (for link realization):
+  - dataObjectId: related object id (e.g. "do-4")
+  - relationKind: "relation"
+  - relationCardinality: "one" or "oneToMany" (as appropriate)
+Minimum coverage rule (MUST):
+- For each transaction object (per main-canvas flow root), there MUST be at least one expanded screen where:
+  - primary = that transaction object, AND
+  - ≥ 2 grid cells use relationKind:"relation" pointing to supporting objects.
+
+Primary-object sanity rules (MUST; prevents UI self-links):
+- MUST set expanded-metadata-N.dataObjectId to match the conceptual focus:
+  - Account dashboard / landing → ApplicantAccount (do-1)
+  - Application wizard / application summary → AdmissionsApplication (do-2)
+  - Payment screen → Payment (do-4)
+- SHOULD NOT make a dashboard primary = a transaction object if the dashboard also lists that same object (self-link artifacts).
 
 7) Maintain registry + node-id integrity (fragility):
 - Node ids are node-<lineIndex> (0-based). If you insert/remove lines above referenced nodes, you MUST reindex ALL dependent registries and references:
@@ -1237,7 +1320,7 @@ const POST_GENERATION_VERIFICATION_CHECKLIST = `Post-Generation Verification Che
   → gridX, gridY, gridWidth, gridHeight all present
   → No overlapping grid positions
 
-7) Hub Systems (if applicable)
+7) Hub System (if applicable)
 ☐ Conditional hub notes:
   → Each hub has <!-- hubnote:N --> anchor
   → conditional-hub-notes registry has entry
@@ -2041,45 +2124,6 @@ type Props = {
   onDidReplace?: () => void;
 };
 
-function CollapsibleCopyPanel(props: {
-  title: string;
-  description: string;
-  copyLabel: string;
-  textToCopy: string;
-  childrenText: string;
-  copy: (text: string) => Promise<void>;
-}) {
-  const { title, description, copyLabel, textToCopy, childrenText, copy } = props;
-  return (
-    <details className="rounded-lg border border-slate-200 bg-slate-50">
-      <summary className="list-none cursor-pointer p-3 flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="text-[11px] font-bold uppercase tracking-wide text-slate-600">{title}</div>
-          <div className="mt-1 text-[12px] text-slate-600">{description}</div>
-        </div>
-        <button
-          type="button"
-          onClick={(e) => {
-            // Keep copy usable even when collapsed; avoid toggling <details>.
-            e.preventDefault();
-            e.stopPropagation();
-            void copy(textToCopy);
-          }}
-          className="shrink-0 px-3 py-1.5 rounded-md bg-white border border-slate-200 text-[12px] font-semibold text-slate-800 hover:bg-slate-100 flex items-center gap-1.5"
-        >
-          <Clipboard size={14} />
-          {copyLabel}
-        </button>
-      </summary>
-      <div className="px-3 pb-3">
-        <pre className="whitespace-pre-wrap text-[11px] leading-4 text-slate-700 font-mono max-h-[260px] overflow-auto rounded-md bg-white border border-slate-200 p-3">
-          {childrenText}
-        </pre>
-      </div>
-    </details>
-  );
-}
-
 export function ImportMarkdownModal({ doc, isOpen, onClose, onDidReplace }: Props) {
   const [markdown, setMarkdown] = useState('');
   const [issues, setIssues] = useState<ReturnType<typeof validateNexusMarkdownImport> | null>(null);
@@ -2151,19 +2195,6 @@ export function ImportMarkdownModal({ doc, isOpen, onClose, onDidReplace }: Prop
     return currentText.trim() !== markdown.trim();
   }, [issues, hasExistingContent, currentText, markdown]);
 
-  const downloadTextFile = (filename: string, content: string) => {
-    const safe = filename.replace(/[^\w.\-()+ ]/g, '_').trim() || 'download.txt';
-    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = safe;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1500);
-  };
-
   const onDownloadAllGuides = async () => {
     if (isDownloading) return;
     setIsDownloading(true);
@@ -2171,11 +2202,14 @@ export function ImportMarkdownModal({ doc, isOpen, onClose, onDidReplace }: Prop
     try {
       const files: Array<{ name: string; content: string }> = [
         { name: 'nexusmap-ai-guidance-prompt.md', content: FULL_AI_PROMPT },
+        { name: 'expanded-node-parking-lot-template.md', content: EXPANDED_NODE_PLANNING_PROMPT },
         { name: 'post-generation-checklist-all.md', content: POST_GEN_CHECKLIST_ALL },
         { name: 'post-generation-checklist-technical.md', content: POST_GEN_CHECKLIST_TECHNICAL },
         { name: 'post-generation-checklist-ia.md', content: POST_GEN_CHECKLIST_IA },
+        { name: 'post-generation-checklist-expanded-nodes.md', content: POST_GEN_CHECKLIST_EXPANDED_NODES },
         { name: 'post-generation-checklist-tags.md', content: POST_GEN_CHECKLIST_TAGS },
         { name: 'post-generation-checklist-main-canvas-process-flows.md', content: POST_GEN_CHECKLIST_PROCESS_FLOWS },
+        { name: 'post-generation-checklist-system-flow.md', content: POST_GEN_CHECKLIST_SYSTEM_FLOW },
         { name: 'post-generation-checklist-conditional.md', content: POST_GEN_CHECKLIST_CONDITIONAL },
         { name: 'post-generation-checklist-data-objects.md', content: POST_GEN_CHECKLIST_DATA_OBJECTS },
         { name: 'post-generation-checklist-swimlane-flowtab.md', content: POST_GEN_CHECKLIST_SWIMLANE },
@@ -2224,6 +2258,16 @@ export function ImportMarkdownModal({ doc, isOpen, onClose, onDidReplace }: Prop
             copy={copy}
           />
 
+          <CollapsibleCopyPanel
+            title="Expanded-node parking lot template (optional staging; separate file)"
+            description="If expanded-grid generation is too heavy, put the expanded-node list aside here first (screens + primary objects + relations), then come back and finish using the expanded-nodes checklist."
+            copyLabel="Copy"
+            textToCopy={EXPANDED_NODE_PLANNING_PROMPT}
+            childrenText={EXPANDED_NODE_PLANNING_PROMPT}
+            copy={copy}
+          />
+
+
           <div className="flex items-center gap-2">
             <button type="button" className="mac-btn" onClick={onDownloadAllGuides} disabled={isDownloading}>
               {isDownloading ? 'Downloading…' : 'Download guidelines + checklists'}
@@ -2236,7 +2280,7 @@ export function ImportMarkdownModal({ doc, isOpen, onClose, onDidReplace }: Prop
 
           <CollapsibleCopyPanel
             title="Post-generation checklist — 0) Copy ALL (combined)"
-            description="Optional: copy everything as one blob. Recommended order: Technical → IA → Tags → Process Flows → Conditional → Data Objects → Swimlane → Completeness."
+            description="Optional: copy everything as one blob. Recommended order: Technical → IA → Expanded Nodes → Tags → Process Flows → System Flow → Conditional → Data Objects → Swimlane → Completeness."
             copyLabel="Copy all"
             textToCopy={POST_GEN_CHECKLIST_ALL}
             childrenText={POST_GEN_CHECKLIST_ALL}
@@ -2262,6 +2306,15 @@ export function ImportMarkdownModal({ doc, isOpen, onClose, onDidReplace }: Prop
           />
 
           <CollapsibleCopyPanel
+            title="Post-generation checklist — 2.1) Expanded nodes (screens)"
+            description="Checks expanded screen coverage, primary-object binding, and relation realization via expanded grids."
+            copyLabel="Copy"
+            textToCopy={POST_GEN_CHECKLIST_EXPANDED_NODES}
+            childrenText={POST_GEN_CHECKLIST_EXPANDED_NODES}
+            copy={copy}
+          />
+
+          <CollapsibleCopyPanel
             title="Post-generation checklist — 2.25) Tags"
             description="Checks tag-store integrity, actor/ui-surface tagging rules, and pinned-tag metadata (global + per-flow)."
             copyLabel="Copy"
@@ -2276,6 +2329,15 @@ export function ImportMarkdownModal({ doc, isOpen, onClose, onDidReplace }: Prop
             copyLabel="Copy"
             textToCopy={POST_GEN_CHECKLIST_PROCESS_FLOWS}
             childrenText={POST_GEN_CHECKLIST_PROCESS_FLOWS}
+            copy={copy}
+          />
+
+          <CollapsibleCopyPanel
+            title="Post-generation checklist — System Flow (integration diagrams)"
+            description="Checks #systemflow roots and systemflow blocks: boxes/zones/links validity, architecture grouping, and sequence ordering."
+            copyLabel="Copy"
+            textToCopy={POST_GEN_CHECKLIST_SYSTEM_FLOW}
+            childrenText={POST_GEN_CHECKLIST_SYSTEM_FLOW}
             copy={copy}
           />
 
@@ -2314,6 +2376,7 @@ export function ImportMarkdownModal({ doc, isOpen, onClose, onDidReplace }: Prop
             childrenText={POST_GEN_CHECKLIST_COMPLETENESS}
             copy={copy}
           />
+
 
           <CollapsibleCopyPanel
             title="Repo-local Python verifier script (optional)"

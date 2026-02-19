@@ -97,8 +97,8 @@ export default function AccountClient() {
                       }}
                       title="Default layout direction for new files"
                     >
-                      <option value="horizontal">Horizontal (grow right)</option>
-                      <option value="vertical">Vertical (grow down)</option>
+                      <option value="horizontal">Left → Right</option>
+                      <option value="vertical">Top → Down</option>
                     </select>
                   </div>
                   <div className="text-[11px] opacity-70">

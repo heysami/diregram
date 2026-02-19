@@ -9,6 +9,7 @@ import { useHtmlThemeOverride } from '@/hooks/use-html-theme-override';
 import type { VisionDoc } from '@/lib/visionjson';
 import { VisionCanvas } from '@/components/vision/v2/VisionCanvas';
 import { MarkdownPopup } from '@/components/vision/v2/shell/MarkdownPopup';
+import { VisionImportModal } from '@/components/vision/v2/shell/VisionImportModal';
 import { TldrawHeaderActions } from '@/components/vision/v2/shell/TldrawHeaderActions';
 import { useCardCount } from '@/components/vision/v2/hooks/useCardCount';
 import { CommentsPanel } from '@/components/CommentsPanel';
@@ -64,6 +65,7 @@ export function VisionEditor({
 
   const [canvasEditor, setCanvasEditor] = useState<Editor | null>(null);
   const [markdownOpen, setMarkdownOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const [insertCardTemplateOpen, setInsertCardTemplateOpen] = useState(false);
   useCardCount(doc); // keep memoized for future use (e.g. status line); doesn't render now.
 
@@ -153,6 +155,14 @@ export function VisionEditor({
             onClick={() => setInsertCardTemplateOpen(true)}
           >
             Card template…
+          </button>
+          <button
+            type="button"
+            className="h-8 px-2 border bg-white text-sm"
+            onClick={() => setImportOpen(true)}
+            title="Import/replace Vision markdown"
+          >
+            Import
           </button>
           <button
             type="button"
@@ -283,6 +293,8 @@ export function VisionEditor({
         supabaseMode={supabaseMode}
         userId={userId}
       />
+
+      <VisionImportModal doc={yDoc} isOpen={importOpen} onClose={() => setImportOpen(false)} />
     </main>
   );
 }

@@ -36,7 +36,8 @@ import type { DocKind } from '@/lib/doc-kinds';
 import { NewFromTemplateModal } from '@/components/templates/NewFromTemplateModal';
 import { ProjectActionMenus } from '@/components/workspace/ProjectActionMenus';
 import { downloadProjectBundleZip, exportProjectBundleZip } from '@/lib/export-bundle';
-import { downloadKgVectors, exportKgAndVectorsForProject } from '@/lib/kg-vector-export';
+import { exportKgAndVectorsForProject } from '@/lib/kg-vector-export';
+import { SemanticKgViewerModal } from '@/components/kg/SemanticKgViewerModal';
 
 function normalizeKind(raw: unknown): DocKind {
   return raw === 'note' || raw === 'grid' || raw === 'vision' || raw === 'diagram' || raw === 'template' || raw === 'test' ? raw : 'diagram';
@@ -81,6 +82,8 @@ export function WorkspaceBrowser() {
   const [newFromTemplateOpen, setNewFromTemplateOpen] = useState(false);
   const [projectTab, setProjectTab] = useState<'files' | 'templates'>('files');
   const [templateScope, setTemplateScope] = useState<'project' | 'account'>('project');
+  const [kgViewerOpen, setKgViewerOpen] = useState(false);
+  const [kgExportResult, setKgExportResult] = useState<Awaited<ReturnType<typeof exportKgAndVectorsForProject>> | null>(null);
 
   useEffect(() => {
     // Avoid synchronous setState in effect body (lint + perf):
@@ -391,11 +394,8 @@ export function WorkspaceBrowser() {
                     supabase: null,
                     projectFolderId: activeFolder.id,
                   });
-                  downloadKgVectors({
-                    graphJsonl: res.graphJsonl,
-                    embeddingsJsonl: res.embeddingsJsonl,
-                    basename: `nexusmap-${activeFolder.id}`,
-                  });
+                  setKgExportResult(res);
+                  setKgViewerOpen(true);
                   showToast('Exported');
                 }}
                 onEditProject={() => {
@@ -435,6 +435,13 @@ export function WorkspaceBrowser() {
                 return next;
               });
             }}
+          />
+
+          <SemanticKgViewerModal
+            open={kgViewerOpen}
+            onClose={() => setKgViewerOpen(false)}
+            exportResult={kgExportResult}
+            basename={`nexusmap-${activeFolder.id}`}
           />
 
           <div className="grid gap-2">
@@ -487,7 +494,10 @@ export function WorkspaceBrowser() {
                                 e.preventDefault();
                                 e.stopPropagation();
                                 if (!canEditThisFile) return;
-                                setStore((prev) => deleteLocalFile(prev, f.id));
+                                setStore((prev) => {
+                                  const next = deleteLocalFile(prev, f.id);
+                                  return next;
+                                });
                                 showToast('Deleted');
                               }}
                             >
@@ -621,7 +631,10 @@ export function WorkspaceBrowser() {
                                 e.preventDefault();
                                 e.stopPropagation();
                                 if (!canEditFile(f, folder, userEmail)) return;
-                                setStore((prev) => deleteLocalFile(prev, f.id));
+                                setStore((prev) => {
+                                  const next = deleteLocalFile(prev, f.id);
+                                  return next;
+                                });
                                 showToast('Deleted');
                               }}
                             >

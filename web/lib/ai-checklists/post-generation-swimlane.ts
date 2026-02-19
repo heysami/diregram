@@ -6,7 +6,7 @@ AVOID:
   - Micro-steps in Flowtab that belong inside #flow# nodes / flow-node-N graphs.
 
 ☐ Swimlane meaning:
-  → Lane/stage changes reflect party/session boundaries (different users/roles, different systems, waiting/async, condition gates)
+  → Lane/stage changes reflect party/session boundaries (different actors/roles, different system, waiting/async, condition gates)
   → AVOID lane/stage churn just to “fill the grid”
   → Reminder: lane/stage changes must have a WHY (handoff / async wait / boundary)
 
@@ -14,7 +14,7 @@ AVOID:
   → MUST NOT encode actors in node titles (no "System:" / "Staff:" / "Applicant:" / "Partner:" prefixes)
   → Every #flow# node line MUST declare EXACTLY ONE actor tag (tg-actors): actor-applicant/actor-staff/actor-system/actor-partner
   → Swimlane lanes MUST represent actor boundaries:
-    - If the journey involves multiple actors/users/systems/partners, EACH must have its own lane (one lane per actor/system). Do NOT combine actors in one lane.
+    - If the journey involves multiple actors/system/partners, EACH must have its own lane (one lane per actor/system). Do NOT combine actors in one lane.
     - If a lane label clearly implies an actor (e.g. "Admissions staff", "System"), placed nodes SHOULD have the matching actor tag
     - If a mismatch is intentional, add an annotation explaining it (handoff vs execution actor, shared responsibility, etc.)
 

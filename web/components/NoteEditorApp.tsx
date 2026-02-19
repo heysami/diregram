@@ -355,6 +355,7 @@ export function NoteEditorApp() {
     <NoteEditor
       yDoc={yDoc}
       provider={provider}
+      fileId={activeFile.id}
       title={activeFile.name}
       statusLabel={statusLabel}
       onBack={() => router.push('/workspace')}

@@ -13,8 +13,12 @@ export type SwimlaneBandMetrics = {
   headerH: number;
   laneTops: number[];
   laneHeights: number[];
+  laneLefts: number[];
+  laneWidths: number[];
   stageLefts: number[];
   stageWidths: number[];
+  stageTops: number[];
+  stageHeights: number[];
   stageInsetX: number;
   laneInsetY: number;
 };
@@ -67,8 +71,9 @@ export function computeSwimlaneLayoutOverride(params: {
   swimlane: SwimlaneLayoutSpec;
   nodeWidth: number;
   diamondSize: number;
+  transpose?: boolean;
 }): { layout: Record<string, NodeLayout>; bands: SwimlaneBandMetrics } {
-  const { baseLayout, visualTree, swimlane, nodeWidth, diamondSize } = params;
+  const { baseLayout, visualTree, swimlane, nodeWidth, diamondSize, transpose = false } = params;
 
   const STAGE_MIN_W = nodeWidth + 100;
   const LANE_MIN_H = Math.max(diamondSize, 260) + 80;
@@ -145,6 +150,16 @@ export function computeSwimlaneLayoutOverride(params: {
     return Math.max(LANE_MIN_H, b.maxY - b.minY + LANE_PAD + LANE_INSET_Y * 2);
   });
 
+  // Additional metrics used when swimlanes are transposed (lanes become columns, stages become rows).
+  const laneWidths = laneBounds.map((b) => {
+    if (b.minX === Infinity) return STAGE_MIN_W;
+    return Math.max(STAGE_MIN_W, b.maxX - b.minX + STAGE_PAD + STAGE_INSET_X * 2);
+  });
+  const stageHeights = stageBounds.map((b) => {
+    if (b.minY === Infinity) return LANE_MIN_H;
+    return Math.max(LANE_MIN_H, b.maxY - b.minY + LANE_PAD + LANE_INSET_Y * 2);
+  });
+
   const stageLefts: number[] = [];
   let accX = 0;
   for (let i = 0; i < stageCount; i++) {
@@ -159,6 +174,20 @@ export function computeSwimlaneLayoutOverride(params: {
     accY += laneHeights[i];
   }
 
+  const laneLefts: number[] = [];
+  accX = 0;
+  for (let i = 0; i < laneCount; i++) {
+    laneLefts[i] = accX;
+    accX += laneWidths[i];
+  }
+
+  const stageTops: number[] = [];
+  accY = 0;
+  for (let i = 0; i < stageCount; i++) {
+    stageTops[i] = accY;
+    accY += stageHeights[i];
+  }
+
   // Apply prefix-sum offsets + insets, normalizing each stage/lane to start at its own min.
   const nextLayout: Record<string, NodeLayout> = { ...baseLayout };
   const apply = (n: NexusNode) => {
@@ -168,17 +197,20 @@ export function computeSwimlaneLayoutOverride(params: {
       const stageIdx = getStageIdx(n.id);
       const sb = stageBounds[stageIdx];
       const lb = laneBounds[laneIdx];
-      const localX = sb.minX === Infinity ? l.x : l.x - sb.minX;
-      // Important: don't let negative minY in a lane push the entire lane content downward.
-      // Deep diamond chains can pull some nodes slightly above y=0 in the base autolayout,
-      // which makes `lb.minY` negative and causes an accumulating "drift down" as more
-      // diamonds are added. Clamping keeps lanes stable.
+
+      const localXStage = sb.minX === Infinity ? l.x : l.x - sb.minX;
+      const localXLane = lb.minX === Infinity ? l.x : l.x - lb.minX;
+
+      // Important: don't let negative minY push an entire band downward.
       const laneY0 = lb.minY === Infinity ? 0 : Math.max(0, lb.minY);
-      const localY = lb.minY === Infinity ? l.y : l.y - laneY0;
+      const stageY0 = sb.minY === Infinity ? 0 : Math.max(0, sb.minY);
+      const localYLane = lb.minY === Infinity ? l.y : l.y - laneY0;
+      const localYStage = sb.minY === Infinity ? l.y : l.y - stageY0;
+
       nextLayout[n.id] = {
         ...l,
-        x: localX + stageLefts[stageIdx] + STAGE_INSET_X,
-        y: localY + laneTops[laneIdx] + LANE_INSET_Y,
+        x: (transpose ? localXLane + laneLefts[laneIdx] : localXStage + stageLefts[stageIdx]) + STAGE_INSET_X,
+        y: (transpose ? localYStage + stageTops[stageIdx] : localYLane + laneTops[laneIdx]) + LANE_INSET_Y,
       };
     }
   };
@@ -191,8 +223,12 @@ export function computeSwimlaneLayoutOverride(params: {
       headerH: HEADER_H,
       laneTops,
       laneHeights,
+      laneLefts,
+      laneWidths,
       stageLefts,
       stageWidths,
+      stageTops,
+      stageHeights,
       stageInsetX: STAGE_INSET_X,
       laneInsetY: LANE_INSET_Y,
     },

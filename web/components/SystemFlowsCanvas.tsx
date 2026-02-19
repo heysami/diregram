@@ -2,8 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import * as Y from 'yjs';
-import { Pencil, Plus } from 'lucide-react';
-import { parseNexusMarkdown } from '@/lib/nexus-parser';
+import { Pencil, Plus, Trash2 } from 'lucide-react';
 import type { NexusNode } from '@/types/nexus';
 import type { PresenceController } from '@/lib/presence';
 import { SystemFlowEditor } from '@/components/SystemFlowEditor';
@@ -13,9 +12,12 @@ import { upsertTemplateHeader, type NexusTemplateHeader } from '@/lib/nexus-temp
 import { InsertFromTemplateModal } from '@/components/templates/InsertFromTemplateModal';
 import { SaveTemplateModal } from '@/components/templates/SaveTemplateModal';
 import { loadSystemFlowStateFromDoc, saveSystemFlowStateToDoc, type SystemFlowState } from '@/lib/system-flow-storage';
+import { collectSystemFlowRootsFromMarkdown, deleteSystemFlowFromDoc, nextSystemFlowSfid } from '@/lib/nexus-systemflow-ops';
+import { renameLineByTokenOrIndex } from '@/lib/nexus-markdown-edit';
 
 export function SystemFlowsCanvas({
   doc,
+  fileId: _fileId,
   presence,
   activeTool,
   showComments,
@@ -30,6 +32,8 @@ export function SystemFlowsCanvas({
   globalTemplatesEnabled,
 }: {
   doc: Y.Doc;
+  /** Current file id (reserved for clipboard constraints; not used by system flow yet). */
+  fileId: string | null;
   presence?: PresenceController | null;
   activeTool: ToolType;
   showComments: boolean;
@@ -77,25 +81,7 @@ export function SystemFlowsCanvas({
   useEffect(() => {
     const yText = doc.getText('nexus');
     const update = () => {
-      const parsed = parseNexusMarkdown(yText.toString());
-      const roots: NexusNode[] = [];
-      const visited = new Set<string>();
-      const visit = (n: NexusNode) => {
-        if (!n || !n.id) return;
-        if (visited.has(n.id)) return;
-        visited.add(n.id);
-
-        if ((n.metadata as any)?.systemFlow) roots.push(n);
-
-        n.children.forEach(visit);
-        if (n.isHub && n.variants) {
-          n.variants.forEach((v) => {
-            visit(v);
-            v.children?.forEach?.(visit);
-          });
-        }
-      };
-      parsed.forEach(visit);
+      const roots = collectSystemFlowRootsFromMarkdown(yText.toString());
       setSystemFlowRoots(roots);
       if (!selectedSfid && roots.length) {
         const sfid = (roots[0].metadata as any)?.sfid || roots[0].id;
@@ -117,42 +103,25 @@ export function SystemFlowsCanvas({
       if (!selectedSfid) return;
       const nextName = nextNameRaw.trim();
       if (!nextName) return;
-      const yText = doc.getText('nexus');
-      const current = yText.toString();
-      const lines = current.split('\n');
       const token = `<!-- sfid:${selectedSfid} -->`;
-      let idx = lines.findIndex((l) => l.includes(token));
-      if (idx === -1 && selectedRoot) idx = selectedRoot.lineIndex;
-      if (idx < 0 || idx >= lines.length) return;
-
-      const line = lines[idx];
-      const indent = line.match(/^(\s*)/)?.[1] || '';
-      const afterIndent = line.slice(indent.length);
-      const a = afterIndent.indexOf(' #');
-      const b = afterIndent.indexOf(' <!--');
-      const cut = Math.min(...[a, b].filter((n) => n >= 0).concat([afterIndent.length]));
-      const suffix = afterIndent.slice(cut);
-      const nextLine = `${indent}${nextName}${suffix}`;
-      if (nextLine === line) return;
-
-      doc.transact(() => {
-        lines[idx] = nextLine;
-        yText.delete(0, yText.length);
-        yText.insert(0, lines.join('\n'));
+      renameLineByTokenOrIndex({
+        doc,
+        token,
+        fallbackIndex: selectedRoot ? selectedRoot.lineIndex : -1,
+        nextTitleRaw: nextName,
       });
     },
     [doc, selectedRoot, selectedSfid],
   );
 
-  const nextSystemFlowSfid = () => {
-    let max = 0;
-    systemFlowRoots.forEach((r) => {
-      const sfid = (r.metadata as any)?.sfid;
-      const m = typeof sfid === 'string' ? sfid.match(/^systemflow-(\d+)$/) : null;
-      if (m) max = Math.max(max, Number(m[1]));
-    });
-    return `systemflow-${max + 1}`;
-  };
+  const deleteSelectedSystemFlow = useCallback(() => {
+    if (!selectedSfid || !selectedRoot) return;
+    const ok = window.confirm('Delete this system flow? This removes the whole system flow and its saved diagram state.');
+    if (!ok) return;
+    deleteSystemFlowFromDoc({ doc, sfid: selectedSfid, root: selectedRoot });
+
+    setSelectedSfid(null);
+  }, [doc, selectedRoot, selectedSfid]);
 
   const saveSelectedSystemFlowAsTemplate = useCallback(async () => {
     if (!selectedSfid || !selectedRoot) return;
@@ -177,7 +146,7 @@ export function SystemFlowsCanvas({
   const insertSystemFlowFromTemplate = useCallback(
     async (rendered: string) => {
       const tpl = parseSystemFlowTemplate(rendered);
-      const sfid = nextSystemFlowSfid();
+      const sfid = nextSystemFlowSfid(systemFlowRoots);
       const name = String(tpl.name || `System Flow ${sfid.split('-')[1]}`);
       const yText = doc.getText('nexus');
       const text = yText.toString();
@@ -193,11 +162,11 @@ export function SystemFlowsCanvas({
       saveSystemFlowStateToDoc(doc, sfid, tpl.state);
       setSelectedSfid(sfid);
     },
-    [doc, nextSystemFlowSfid, parseSystemFlowTemplate],
+    [doc, parseSystemFlowTemplate, systemFlowRoots],
   );
 
   const createNewSystemFlow = () => {
-    const sfid = nextSystemFlowSfid();
+    const sfid = nextSystemFlowSfid(systemFlowRoots);
     const name = `System Flow ${sfid.split('-')[1]}`;
     const yText = doc.getText('nexus');
     const text = yText.toString();
@@ -285,6 +254,15 @@ export function SystemFlowsCanvas({
             <div className="mac-titlebar">
               <div className="mac-title">{selectedRoot.content}</div>
               <div className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-2">
+                <button
+                  type="button"
+                  className="mac-btn"
+                  title="Delete this system flow"
+                  onClick={deleteSelectedSystemFlow}
+                >
+                  <Trash2 size={12} />
+                  Delete
+                </button>
                 {isRenaming ? (
                   <input
                     className="mac-field w-[260px]"

@@ -146,6 +146,7 @@ drop policy if exists "Users can insert their own files" on public.files;
 drop policy if exists "Users can update their own files" on public.files;
 drop policy if exists "Users can view owned, file-shared, or folder-shared files" on public.files;
 drop policy if exists "Users can update owned or shared(edit) files" on public.files;
+drop policy if exists "Users can delete owned or shared(edit) files" on public.files;
 
 create policy "Users can view owned, file-shared, or folder-shared files" on public.files
   for select
@@ -176,6 +177,18 @@ create policy "Users can update owned or shared(edit) files" on public.files
     )
   )
   with check (
+    auth.uid() = owner_id
+    or public.access_can_edit(access)
+    or exists (
+      select 1 from public.folders f
+      where f.id = files.folder_id
+        and (auth.uid() = f.owner_id or public.access_can_edit(f.access))
+    )
+  );
+
+create policy "Users can delete owned or shared(edit) files" on public.files
+  for delete
+  using (
     auth.uid() = owner_id
     or public.access_can_edit(access)
     or exists (

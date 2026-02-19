@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import * as Y from 'yjs';
-import { Pencil, Plus, X } from 'lucide-react';
+import { Pencil, Plus, Trash2, X } from 'lucide-react';
 import type { ToolType } from '@/components/Toolbar';
 import { NexusCanvas } from '@/components/NexusCanvas';
 import type { PresenceController } from '@/lib/presence';
-import { parseNexusMarkdown } from '@/lib/nexus-parser';
 import type { NexusNode } from '@/types/nexus';
 import { useNexusStructure } from '@/hooks/use-nexus-structure';
 import {
@@ -39,6 +38,14 @@ import { upsertTemplateHeader, type NexusTemplateHeader } from '@/lib/nexus-temp
 import { InsertFromTemplateModal, type WorkspaceFileLite as TemplateWorkspaceFileLite } from '@/components/templates/InsertFromTemplateModal';
 import { SaveTemplateModal } from '@/components/templates/SaveTemplateModal';
 import { buildTemplateFlowMetaForSubtree } from '@/lib/template-flow-meta';
+import {
+  collectFlowTabRootsFromMarkdown,
+  dedupeFlowTabRootsByFid,
+  deleteFlowTabFlowFromDoc,
+  nextFlowTabFid,
+} from '@/lib/nexus-flowtab-ops';
+import { renameLineByTokenOrIndex } from '@/lib/nexus-markdown-edit';
+import { parseNexusMarkdown } from '@/lib/nexus-parser';
 
 type FlowTabTemplateV1 = {
   version: 1;
@@ -82,6 +89,8 @@ function parseFlowTabTemplate(rendered: string): FlowTabTemplateV1 {
 
 type Props = {
   doc: Y.Doc;
+  /** Current file id; used to prevent internal pastes across different files. */
+  fileId: string | null;
   // Pass-through state from Home so Flow tab uses the exact same process-node engine.
   activeTool: ToolType;
   onToolUse: () => void;
@@ -120,6 +129,7 @@ type Props = {
 
 export function FlowsCanvas({
   doc,
+  fileId,
   activeTool,
   onToolUse,
   layoutDirection = 'horizontal',
@@ -203,35 +213,18 @@ export function FlowsCanvas({
   useEffect(() => {
     const yText = doc.getText('nexus');
     const update = () => {
-      const parsed = parseNexusMarkdown(yText.toString());
-      const flows: NexusNode[] = [];
-      const visited = new Set<string>();
-      const visit = (n: NexusNode) => {
-        if (!n || !n.id) return;
-        if (visited.has(n.id)) return;
-        visited.add(n.id);
+      const roots = collectFlowTabRootsFromMarkdown(yText.toString());
+      const uniqueFlows = dedupeFlowTabRootsByFid(roots);
 
-        if ((n.metadata as any)?.flowTab) flows.push(n);
-
-        // Traverse standard children
-        n.children.forEach(visit);
-
-        // Traverse variants (some parsers keep variants outside children)
-        if (n.isHub && n.variants) {
-          n.variants.forEach((v) => {
-            visit(v);
-            // Defensive: variants often store their subtree in children.
-            v.children?.forEach?.(visit);
-          });
-        }
-      };
-      parsed.forEach(visit);
-      setFlowRoots(flows);
+      setFlowRoots(uniqueFlows);
       setFlowRefs(loadFlowTabProcessReferences(doc));
-      if (!selectedFid && flows.length) {
-        const fid = (flows[0].metadata as any)?.fid || flows[0].id;
+      if (!selectedFid && uniqueFlows.length) {
+        const fid = (uniqueFlows[0].metadata as any)?.fid || uniqueFlows[0].id;
         setSelectedFid(fid);
         setRightPreview({ kind: 'swimlane', fid });
+      }
+      if (selectedFid && !uniqueFlows.some((r) => (((r.metadata as any)?.fid || r.id) as string) === selectedFid)) {
+        setSelectedFid(uniqueFlows[0] ? (((uniqueFlows[0].metadata as any)?.fid || uniqueFlows[0].id) as string) : null);
       }
       if (selectedFid) {
         const loaded = loadFlowTabSwimlane(doc, selectedFid);
@@ -285,32 +278,27 @@ export function FlowsCanvas({
       if (!selectedFid) return;
       const nextName = nextNameRaw.trim();
       if (!nextName) return;
-      const yText = doc.getText('nexus');
-      const current = yText.toString();
-      const lines = current.split('\n');
       const fidToken = `<!-- fid:${selectedFid} -->`;
-      let idx = lines.findIndex((l) => l.includes(fidToken));
-      if (idx === -1 && selectedRoot) idx = selectedRoot.lineIndex;
-      if (idx < 0 || idx >= lines.length) return;
-
-      const line = lines[idx];
-      const indent = (line.match(/^(\s*)/)?.[1] || '');
-      const afterIndent = line.slice(indent.length);
-      const a = afterIndent.indexOf(' #');
-      const b = afterIndent.indexOf(' <!--');
-      const cut = Math.min(...[a, b].filter((n) => n >= 0).concat([afterIndent.length]));
-      const suffix = afterIndent.slice(cut);
-      const nextLine = `${indent}${nextName}${suffix}`;
-      if (nextLine === line) return;
-
-      doc.transact(() => {
-        lines[idx] = nextLine;
-        yText.delete(0, yText.length);
-        yText.insert(0, lines.join('\n'));
+      renameLineByTokenOrIndex({
+        doc,
+        token: fidToken,
+        fallbackIndex: selectedRoot ? selectedRoot.lineIndex : -1,
+        nextTitleRaw: nextName,
       });
     },
     [doc, selectedFid, selectedRoot],
   );
+
+  const deleteSelectedFlow = useCallback(() => {
+    if (!selectedFid || !selectedRoot) return;
+    const ok = window.confirm('Delete this flow and all its steps? This cannot be undone.');
+    if (!ok) return;
+    deleteFlowTabFlowFromDoc({ doc, fid: selectedFid, root: selectedRoot });
+
+    setSelectedFid(null);
+    setSwimlane(null);
+    setShowInsertTargetUI(false);
+  }, [doc, selectedFid, selectedRoot]);
 
   // Ensure process-flow mode is ON for the selected flow root (so it matches main canvas process node flow).
   useEffect(() => {
@@ -324,18 +312,8 @@ export function FlowsCanvas({
 
   const rootFocusId = selectedRoot?.id || undefined;
 
-  const nextFlowFid = () => {
-    let max = 0;
-    flowRoots.forEach((r) => {
-      const fid = (r.metadata as any)?.fid;
-      const m = typeof fid === 'string' ? fid.match(/^flowtab-(\d+)$/) : null;
-      if (m) max = Math.max(max, Number(m[1]));
-    });
-    return `flowtab-${max + 1}`;
-  };
-
   const createNewFlow = () => {
-    const fid = nextFlowFid();
+    const fid = nextFlowTabFid(flowRoots);
     const name = `Flow ${fid.split('-')[1]}`;
     const yText = doc.getText('nexus');
     const text = yText.toString();
@@ -455,7 +433,7 @@ export function FlowsCanvas({
   const insertFlowFromTemplate = useCallback(
     async (rendered: string) => {
       const tpl = parseFlowTabTemplate(rendered);
-      const newFid = nextFlowFid();
+      const newFid = nextFlowTabFid(flowRoots);
       const rawBlock = String(tpl.rootMarkdown || '').replace(/\r\n?/g, '\n').trimEnd();
       if (!rawBlock.trim()) throw new Error('Template is empty.');
       const lines = rawBlock.split('\n');
@@ -524,7 +502,7 @@ export function FlowsCanvas({
       onSelectNode(null);
       onSelectNodeIds([]);
     },
-    [doc, nextFlowFid, onSelectNode, onSelectNodeIds],
+    [doc, flowRoots, onSelectNode, onSelectNodeIds],
   );
 
   const effectiveLaneId = useCallback(
@@ -1068,7 +1046,7 @@ export function FlowsCanvas({
                 const pinnedNames = pinned.map((id) => tagNameById.get(id) || id);
                 return (
                 <button
-                  key={fid}
+                  key={`${fid}:${r.id}`}
                   type="button"
                   onClick={() => {
                     setSelectedFid(fid);
@@ -1302,6 +1280,10 @@ export function FlowsCanvas({
                   <Pencil size={12} />
                   Rename
                 </button>
+                <button type="button" className="mac-btn" title="Delete this entire flow" onClick={deleteSelectedFlow}>
+                  <Trash2 size={12} />
+                  Delete
+                </button>
               </div>
               </div>
             </div>
@@ -1310,6 +1292,7 @@ export function FlowsCanvas({
               {swimlane ? (
                 <NexusCanvas
                   doc={doc}
+                  fileId={fileId}
                   activeTool={activeTool}
                   onToolUse={onToolUse}
                   layoutDirection={layoutDirection}
@@ -1458,6 +1441,8 @@ export function FlowsCanvas({
                 </div>
               )}
             </div>
+
+            
 
             {/* Compact top-right inspector for lane/stage assignment */}
             {swimlane && selectedNode ? (
@@ -1791,6 +1776,7 @@ export function FlowsCanvas({
             <div className="flex-1 relative">
               <NexusCanvas
                 doc={doc}
+                fileId={fileId}
                 activeTool={activeTool}
                 onToolUse={onToolUse}
                 layoutDirection={layoutDirection}
@@ -1836,6 +1822,7 @@ export function FlowsCanvas({
               {descFlowDoc && descFlowRootId ? (
                 <NexusCanvas
                   doc={descFlowDoc}
+                  fileId={fileId}
                   activeTool="select"
                   onToolUse={() => {}}
                   layoutDirection={layoutDirection}

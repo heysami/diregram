@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { GripVertical } from 'lucide-react';
 import type { GridCardV1, GridDoc, GridPersonV1, GridRegionV1, GridSheetV1, GridTableV1 } from '@/lib/gridjson';
 import { listRecognizedMacros, replaceMacroOccurrence } from '@/lib/grid-cell-macros';
@@ -37,7 +37,7 @@ import { useTableFilterPopover } from '@/components/grid/spreadsheet/hooks/useTa
 import { computeAllTableFilterViews } from '@/lib/grid/table-filter-view';
 import { computeAllTableHiddenColumnViews } from '@/lib/grid/table-hidden-columns';
 import { isEnterEditShortcut } from '@/components/grid/spreadsheet/editShortcuts';
-import { buildCopyTsv, isCopyShortcut, isPasteShortcut, applyPasteTsvToCells } from '@/components/grid/spreadsheet/gridClipboard';
+import { useTopToast } from '@/hooks/use-top-toast';
 import { selectedCellStyle, stickyInnerCellStyle } from '@/components/grid/spreadsheet/selectionStyles';
 import { maybeAutoExpandColumnWidth } from '@/components/grid/spreadsheet/autoColumnWidth';
 import { maybeAutoExpandRowHeight } from '@/components/grid/spreadsheet/autoRowHeight';
@@ -52,6 +52,14 @@ import { upsertTemplateHeader, type NexusTemplateHeader } from '@/lib/nexus-temp
 import { InsertFromTemplateModal, type WorkspaceFileLite as TemplateWorkspaceFileLite } from '@/components/templates/InsertFromTemplateModal';
 import { SaveTemplateModal } from '@/components/templates/SaveTemplateModal';
 import { parseGridTableTemplatePayload, type GridTableTemplateV1 } from '@/lib/template-grid';
+import { useGridClipboard } from '@/components/grid/spreadsheet/hooks/useGridClipboard';
+import { parseCsv } from '@/lib/grid/csv';
+import {
+  applyInternalGridRangePaste,
+  clearGridRange,
+  nextTableId,
+  type GridRangeClipboardPayloadV1,
+} from '@/lib/grid/clipboard/gridRangeClipboard';
 
 type CellPos = { r: number; c: number };
 
@@ -108,6 +116,7 @@ function computeRegionAnchors(opts: { regions: GridRegionV1[]; rowIndexById: Map
 
 export function SpreadsheetView({
   doc,
+  fileId = null,
   sheet,
   activeTool,
   onOpenComments,
@@ -132,6 +141,8 @@ export function SpreadsheetView({
   showStickyBars = true,
 }: {
   doc: GridDoc;
+  /** Current file id; used to prevent internal pastes across different files. */
+  fileId?: string | null;
   sheet: GridSheetV1;
   activeTool?: 'select' | 'comment';
   onOpenComments?: (info: { targetKey: string; targetLabel?: string; scrollToThreadId?: string }) => void;
@@ -162,12 +173,15 @@ export function SpreadsheetView({
   const tables = sheet.grid.tables || [];
   const cards = sheet.cards || [];
 
+  const topToast = useTopToast({ durationMs: 2500 });
+
   const [insertFromTemplateOpen, setInsertFromTemplateOpen] = useState(false);
   const [saveTemplateOpen, setSaveTemplateOpen] = useState(false);
   const [pendingTemplatePayload, setPendingTemplatePayload] = useState<string | null>(null);
   const [pendingTemplateHeaderBase, setPendingTemplateHeaderBase] = useState<Omit<NexusTemplateHeader, 'name'> | null>(null);
   const [pendingTemplateDefaultName, setPendingTemplateDefaultName] = useState<string>('Template');
   const pendingScrollToTableIdRef = useRef<string | null>(null);
+  const csvInputRef = useRef<HTMLInputElement | null>(null);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const sheetRef = useRef<GridSheetV1>(sheet);
@@ -225,6 +239,125 @@ export function SpreadsheetView({
     tableDragRef.current = tableDrag;
   }, [tableDrag]);
   const [tableControlsHover, setTableControlsHover] = useState<null | { tableId: string; showCols: boolean; showRows: boolean }>(null);
+
+  const openCsvImportPicker = useCallback(() => {
+    csvInputRef.current?.click();
+  }, []);
+
+  const onCsvPicked = useCallback(
+    async (e: ChangeEvent<HTMLInputElement>) => {
+      const el = e.currentTarget;
+      const file = el.files?.[0] || null;
+      // Allow picking the same file again.
+      el.value = '';
+      if (!file) return;
+
+      let raw = '';
+      try {
+        raw = await file.text();
+      } catch {
+        topToast.show(`Couldn't read CSV file.`);
+        return;
+      }
+
+      const parsed = parseCsv(raw);
+      const h0 = parsed.length;
+      const w0 = Math.max(0, ...parsed.map((r) => r.length));
+      if (!h0 || !w0) {
+        topToast.show('CSV is empty.');
+        return;
+      }
+
+      const MAX_ROWS = 2000;
+      const MAX_COLS = 200;
+      const h = Math.max(1, Math.min(MAX_ROWS, h0));
+      const w = Math.max(1, Math.min(MAX_COLS, w0));
+      const matrix: string[][] = parsed.slice(0, h).map((r) => {
+        const out = r.slice(0, w).map((x) => String(x ?? ''));
+        while (out.length < w) out.push('');
+        return out;
+      });
+
+      const start = (() => {
+        const rowId = rows[selected.r]?.id || '';
+        const colId = cols[selected.c]?.id || '';
+        const t = rowId && colId ? tables.find((tb) => (tb.rowIds || []).includes(rowId) && (tb.colIds || []).includes(colId)) || null : null;
+        if (!t) return { r: Math.max(0, selected.r), c: Math.max(0, selected.c) };
+        const rowIdxs = (t.rowIds || []).map((id) => rowIndexById.get(id)).filter((x): x is number => x !== undefined);
+        const colIdxs = (t.colIds || []).map((id) => colIndexById.get(id)).filter((x): x is number => x !== undefined);
+        const r1 = rowIdxs.length ? Math.max(...rowIdxs) : selected.r;
+        const c0 = colIdxs.length ? Math.min(...colIdxs) : selected.c;
+        return { r: Math.min(rows.length, r1 + 2), c: Math.max(0, c0) };
+      })();
+
+      let createdId = '';
+      mutateSheet((s0) => {
+        let next = s0;
+        const needRows = Math.max(0, start.r + h - (next.grid.rows || []).length);
+        const needCols = Math.max(0, start.c + w - (next.grid.columns || []).length);
+        for (let i = 0; i < needRows; i++) next = addGridRow(next);
+        for (let i = 0; i < needCols; i++) next = addGridColumn(next);
+
+        const rowsNow = next.grid.rows || [];
+        const colsNow = next.grid.columns || [];
+        const getCoordKeyLocal = (rIdx: number, cIdx: number) => `${rowsNow[rIdx]?.id}:${colsNow[cIdx]?.id}`;
+        const rowIndexByIdLocal = new Map(rowsNow.map((r, idx) => [r.id, idx]));
+        const colIndexByIdLocal = new Map(colsNow.map((c, idx) => [c.id, idx]));
+
+        const rect = { r0: start.r, c0: start.c, r1: start.r + h - 1, c1: start.c + w - 1 };
+        const cleared = clearGridRange({
+          sheet: next,
+          rect,
+          rows: rowsNow,
+          cols: colsNow,
+          getCoordKey: getCoordKeyLocal,
+          rowIndexById: rowIndexByIdLocal,
+          colIndexById: colIndexByIdLocal,
+        });
+        createdId = nextTableId(cleared.grid.tables || []);
+
+        const payload: GridRangeClipboardPayloadV1 = {
+          version: 1,
+          w,
+          h,
+          cells: matrix,
+          regions: [],
+          cards: [],
+          tables: [
+            {
+              dr: 0,
+              dc: 0,
+              w,
+              h,
+              headerRows: Math.min(1, h),
+              headerCols: 0,
+              footerRows: 0,
+            },
+          ],
+        };
+
+        return applyInternalGridRangePaste({
+          sheet: next,
+          payload,
+          start,
+          rows: rowsNow,
+          cols: colsNow,
+          getCoordKey: getCoordKeyLocal,
+          rowIndexById: rowIndexByIdLocal,
+          colIndexById: colIndexByIdLocal,
+        });
+      });
+
+      if (createdId) {
+        pendingScrollToTableIdRef.current = createdId;
+        setActiveTableId(createdId);
+      }
+
+      if (h0 > h || w0 > w) topToast.show(`Imported CSV (${h}×${w}) (trimmed).`);
+      else topToast.show(`Imported CSV (${h}×${w}).`);
+    },
+    [cols, mutateSheet, rowIndexById, colIndexById, rows, selected, tables, topToast],
+  );
 
   const peopleDirectory = useMemo<GridPersonV1[]>(() => doc.peopleDirectory || [], [doc.peopleDirectory]);
 
@@ -1330,7 +1463,7 @@ export function SpreadsheetView({
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
-    const onKeyDown = async (e: KeyboardEvent) => {
+    const onKeyDown = (e: KeyboardEvent) => {
       const isCmd = e.metaKey || e.ctrlKey;
       // When any popover is open, don't let sheet shortcuts/typing hijack keystrokes.
       if (macroPopover || tableFilterPopover || tableVisibilityPopover) return;
@@ -1495,37 +1628,6 @@ export function SpreadsheetView({
         }
       }
 
-      // Copy / Paste (TSV)
-      if (isCopyShortcut(e)) {
-        e.preventDefault();
-        const rect = selectionRect || { r0: selected.r, r1: selected.r, c0: selected.c, c1: selected.c };
-        const out = buildCopyTsv({ rect, getValue: (r, c) => getDisplayValue(r, c).value });
-        try {
-          await navigator.clipboard.writeText(out);
-        } catch {
-          // ignore
-        }
-        return;
-      }
-      if (isPasteShortcut(e)) {
-        e.preventDefault();
-        let text = '';
-        try {
-          text = await navigator.clipboard.readText();
-        } catch {
-          return;
-        }
-        if (!text) return;
-        const nextCells = applyPasteTsvToCells({
-          text,
-          start: selected,
-          rowsLen: rows.length,
-          colsLen: cols.length,
-          getCoordKey,
-          baseCells: cells,
-        });
-        mutateSheet((s) => ({ ...s, grid: { ...s.grid, cells: nextCells } }));
-      }
     };
     el.addEventListener('keydown', onKeyDown);
     return () => el.removeEventListener('keydown', onKeyDown);
@@ -1547,6 +1649,24 @@ export function SpreadsheetView({
     macroPopover,
     tableFilterPopover,
   ]);
+
+  useGridClipboard({
+    containerRef,
+    fileId,
+    selected,
+    selectionRect,
+    rows,
+    cols,
+    regions,
+    tables,
+    cards,
+    rowIndexById,
+    colIndexById,
+    getCoordKey,
+    getDisplayValue,
+    mutateSheet,
+    topToast,
+  });
 
   // Drag / resize cards snapped to cell grid.
   useEffect(() => {
@@ -1963,6 +2083,7 @@ export function SpreadsheetView({
 
   return (
     <div className="absolute inset-0 overflow-hidden bg-white flex flex-col">
+      <input ref={csvInputRef} type="file" accept=".csv,text/csv" className="hidden" onChange={onCsvPicked} />
       {showStickyBars ? (
         <StickyBars
           activeTable={activeTable}
@@ -1981,6 +2102,7 @@ export function SpreadsheetView({
           onCreateTable={createTableFromSelection}
           canCreateTable={Boolean(selectionRect)}
           onUnmergeRegion={unmergeActiveRegion}
+          onImportCsv={openCsvImportPicker}
           onOpenMarkdownHelp={() => setShowMarkdownHelp(true)}
           onSaveActiveTableAsTemplate={
             onSaveTemplateFile && (activeTable || selectionRect)
@@ -2203,6 +2325,15 @@ export function SpreadsheetView({
               />
             );
           })()}
+        </div>
+      ) : null}
+
+      {/* Top toast for blocked clipboard actions */}
+      {topToast.message ? (
+        <div className="pointer-events-none fixed top-4 left-1/2 -translate-x-1/2 z-[2000]">
+          <div className="rounded-md border border-red-200 bg-white/95 px-3 py-2 text-xs font-medium text-red-700 shadow-sm">
+            {topToast.message}
+          </div>
         </div>
       ) : null}
 

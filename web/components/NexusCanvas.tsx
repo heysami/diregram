@@ -22,6 +22,7 @@ import { ConditionMatrixOverlay } from '@/components/ConditionMatrixOverlay';
 import { ExpandedNodeView } from '@/components/ExpandedNodeView';
 import { getBlockedCmdUnindentReason } from '@/lib/structure-move-guard';
 import { useTopToast } from '@/hooks/use-top-toast';
+import { useDiagramClipboard } from '@/components/diagram/hooks/useDiagramClipboard';
 import { FlowNodeType } from '@/components/DimensionFlowEditor';
 import { ArrowLeftRight, Clock, GitBranch, X, Link2, Repeat } from 'lucide-react';
 import { AlertTriangle } from 'lucide-react';
@@ -76,6 +77,8 @@ import type { LayoutDirection } from '@/lib/layout-direction';
 
 interface Props {
   doc: Y.Doc;
+  /** Current file id; used to prevent internal pastes across different files. */
+  fileId?: string | null;
   activeTool?: ToolType;
   onToolUse?: () => void;
   /** Layout direction for this file (children grow right vs down). */
@@ -204,7 +207,7 @@ interface PendingAction {
 }
 
 export function NexusCanvas({ 
-    doc, activeTool, onToolUse, mainLevel = 1,
+    doc, fileId = null, activeTool, onToolUse, mainLevel = 1,
     layoutDirection = 'horizontal',
     tagView,
     pinnedTagIds = [],
@@ -257,6 +260,7 @@ export function NexusCanvas({
   const viewportRef = useRef<HTMLDivElement>(null);
   const initializedRef = useRef(false);
   const lastViewportResetTickRef = useRef<number | undefined>(viewportResetTick);
+
   const pendingViewportFitRef = useRef(false);
   const fitToContentRef = useRef<(opts?: { resetZoom?: boolean; fitZoom?: boolean }) => void>(() => {});
 
@@ -1408,6 +1412,7 @@ export function NexusCanvas({
           },
           nodeWidth: NODE_WIDTH,
           diamondSize: DIAMOND_SIZE,
+          transpose: layoutDirection === 'vertical',
         });
         newLayout = computed.layout;
         const isSameBands = (a: SwimlaneBandMetrics | null, b: SwimlaneBandMetrics): boolean => {
@@ -1425,8 +1430,12 @@ export function NexusCanvas({
           return (
             eqArr(a.laneTops, b.laneTops) &&
             eqArr(a.laneHeights, b.laneHeights) &&
+            eqArr(a.laneLefts, b.laneLefts) &&
+            eqArr(a.laneWidths, b.laneWidths) &&
             eqArr(a.stageLefts, b.stageLefts) &&
-            eqArr(a.stageWidths, b.stageWidths)
+            eqArr(a.stageWidths, b.stageWidths) &&
+            eqArr(a.stageTops, b.stageTops) &&
+            eqArr(a.stageHeights, b.stageHeights)
           );
         };
         setSwimlaneBands((prev) => (isSameBands(prev, computed.bands) ? prev : computed.bands));
@@ -1727,6 +1736,35 @@ export function NexusCanvas({
     setSelectAllOnFocus(selectAll);
   };
 
+  const centerNodeInSafeViewport = useCallback(
+    (nodeId: string) => {
+      const l = layout[nodeId] || animatedLayout[nodeId];
+      const safe = getSafeViewport();
+      if (!l || !safe) return;
+      const cx = l.x + l.width / 2;
+      const cy = l.y + l.height / 2;
+      setOffset({
+        x: safe.centerX - cx * scale,
+        y: safe.centerY - cy * scale,
+      });
+      // Don't let any pending fit override manual centering.
+      pendingViewportFitRef.current = false;
+      initializedRef.current = true;
+    },
+    [animatedLayout, getSafeViewport, layout, scale],
+  );
+
+  const requestCenterOnFinalLayout = useCallback((nodeId: string) => {
+    pendingCenterNodeIdRef.current = nodeId;
+    pendingViewportFitRef.current = false;
+    initializedRef.current = true;
+  }, []);
+
+  const { followKeyboardNavigation, requestFollowAfterPendingSelect, onPendingSelectResolved } = useFollowSelectionViewport({
+    centerNow: centerNodeInSafeViewport,
+    requestCenterOnFinalLayout,
+  });
+
   // Pending Actions
   useEffect(() => {
       if (pendingAction !== null) {
@@ -1806,35 +1844,6 @@ export function NexusCanvas({
     initializedRef.current = true;
     pendingCenterNodeIdRef.current = null;
   }, [animatedLayout, layout, scale, getSafeViewport]);
-
-  const centerNodeInSafeViewport = useCallback(
-    (nodeId: string) => {
-      const l = layout[nodeId] || animatedLayout[nodeId];
-      const safe = getSafeViewport();
-      if (!l || !safe) return;
-      const cx = l.x + l.width / 2;
-      const cy = l.y + l.height / 2;
-      setOffset({
-        x: safe.centerX - cx * scale,
-        y: safe.centerY - cy * scale,
-      });
-      // Don't let any pending fit override manual centering.
-      pendingViewportFitRef.current = false;
-      initializedRef.current = true;
-    },
-    [animatedLayout, getSafeViewport, layout, scale],
-  );
-
-  const requestCenterOnFinalLayout = useCallback((nodeId: string) => {
-    pendingCenterNodeIdRef.current = nodeId;
-    pendingViewportFitRef.current = false;
-    initializedRef.current = true;
-  }, []);
-
-  const { followKeyboardNavigation, requestFollowAfterPendingSelect, onPendingSelectResolved } = useFollowSelectionViewport({
-    centerNow: centerNodeInSafeViewport,
-    requestCenterOnFinalLayout,
-  });
 
   // External connector label editor request (Flow tab uses this to enforce detail labels on lane/stage transitions).
   const lastConnectorEditKeyRef = useRef<string | null>(null);
@@ -2561,6 +2570,78 @@ export function NexusCanvas({
       }
   };
 
+  const insertSnippetAsNewRoot = useCallback(
+    (snippetMarkdown: string): number | null => {
+      const rawLines = String(snippetMarkdown || '')
+        .replace(/\r\n?/g, '\n')
+        .split('\n')
+        .map((l) => l.replace(/\s+$/g, ''));
+      while (rawLines.length && rawLines[0].trim() === '') rawLines.shift();
+      while (rawLines.length && rawLines[rawLines.length - 1].trim() === '') rawLines.pop();
+      if (rawLines.length === 0) return null;
+
+      const normalizeSnippetIndentLocal = (lines: string[]): string[] => {
+        const nonEmpty = lines.filter((l) => l.trim() !== '');
+        if (nonEmpty.length === 0) return [];
+        const minIndent = nonEmpty.reduce((min, l) => {
+          const m = l.match(/^(\s*)/);
+          const n = m ? m[1].length : 0;
+          return Math.min(min, n);
+        }, Infinity);
+        if (!Number.isFinite(minIndent) || minIndent <= 0) return lines.slice();
+        const prefix = ' '.repeat(minIndent);
+        return lines.map((l) => {
+          if (l.trim() === '') return '';
+          return l.startsWith(prefix) ? l.slice(minIndent) : l.replace(/^\s+/, '');
+        });
+      };
+
+      const snippetLines = normalizeSnippetIndentLocal(rawLines);
+
+      const yText = doc.getText('nexus');
+      const baseLines = yText.toString().replace(/\r\n?/g, '\n').split('\n');
+      let sepIdx = baseLines.findIndex((l) => l.trim() === '---');
+      if (sepIdx < 0) sepIdx = baseLines.length;
+
+      // Ensure a blank line before the inserted root block when inserting into non-empty content.
+      let insertAt = sepIdx;
+      if (insertAt > 0) {
+        const prev = baseLines[insertAt - 1] ?? '';
+        if (prev.trim() !== '') {
+          baseLines.splice(insertAt, 0, '');
+          insertAt += 1;
+        }
+      }
+
+      baseLines.splice(insertAt, 0, ...snippetLines, '');
+      doc.transact(() => {
+        yText.delete(0, yText.length);
+        yText.insert(0, baseLines.join('\n'));
+      });
+      return insertAt;
+    },
+    [doc],
+  );
+
+  const resolveSelectedNodeForClipboard = useCallback((): NexusNode | null => {
+    const effectiveSelectedId = selectedNodeId || rootFocusId || null;
+    if (!effectiveSelectedId) return null;
+    return rawNodeMap.get(effectiveSelectedId) || null;
+  }, [rawNodeMap, rootFocusId, selectedNodeId]);
+
+  const { onCopy: handleCopy, onCut: handleCut, onPaste: handlePaste } = useDiagramClipboard({
+    fileId,
+    getSelectedNode: resolveSelectedNodeForClipboard,
+    selectedNodeId,
+    rootFocusId,
+    rawNodeMap,
+    structure,
+    insertSnippetAsNewRoot,
+    setPendingAction: (action) => setPendingAction(action as PendingAction | null),
+    onSelectNode,
+    topToast,
+  });
+
   const cursorStyle =
     activeTool === 'node'
       ? 'cursor-crosshair'
@@ -2715,6 +2796,9 @@ export function NexusCanvas({
       }}
       onDragOver={(e) => handleDragOver(e)} 
       onKeyDown={handleContainerKeyDown}
+      onCopy={handleCopy}
+      onCut={handleCut}
+      onPaste={handlePaste}
       onWheel={handleWheel}
       tabIndex={0} 
     >
@@ -2772,10 +2856,10 @@ export function NexusCanvas({
       >
         {/* Swimlane overlay (Flow tab): lanes/stages headers + bands */}
         {swimlaneLayout && (
-          <div className="pointer-events-none">
+          <div>
             {(() => {
               const ROW_MIN_H = DIAMOND_SIZE;
-              const laneW = 6000;
+              const transposed = layoutDirection === 'vertical';
               const stageCount = Math.max(
                 1,
                 swimlaneBands?.stageWidths.length ?? swimlaneLayout.stages.length,
@@ -2811,123 +2895,368 @@ export function NexusCanvas({
                 }
                 return stageCount * STAGE_STRIDE;
               })();
-              const getStageBoundaryX = (idx: number) => {
-                if (idx === stageCount) return stageEndX;
-                return swimlaneBands?.stageLefts[idx] ?? idx * STAGE_STRIDE;
+
+              // When transposed: lanes are columns (X) and stages are rows (Y).
+              const laneEndX = (() => {
+                if (swimlaneBands && laneCount > 0) {
+                  const lastIdx = laneCount - 1;
+                  return (swimlaneBands.laneLefts[lastIdx] ?? 0) + (swimlaneBands.laneWidths[lastIdx] ?? STAGE_STRIDE);
+                }
+                return laneCount * STAGE_STRIDE;
+              })();
+              const stageEndY = (() => {
+                if (swimlaneBands && stageCount > 0) {
+                  const lastIdx = stageCount - 1;
+                  return (swimlaneBands.stageTops[lastIdx] ?? 0) + (swimlaneBands.stageHeights[lastIdx] ?? LANE_STRIDE);
+                }
+                return stageCount * LANE_STRIDE;
+              })();
+
+              const colCount = transposed ? laneCount : stageCount;
+              const rowCount = transposed ? stageCount : laneCount;
+              const gridEndX = transposed ? laneEndX : stageEndX;
+              const gridEndY = transposed ? stageEndY : laneEndY;
+              const laneW = Math.max(6000, gridEndX);
+
+              const getColBoundaryX = (idx: number) => {
+                if (idx === colCount) return gridEndX;
+                return transposed
+                  ? swimlaneBands?.laneLefts[idx] ?? idx * STAGE_STRIDE
+                  : swimlaneBands?.stageLefts[idx] ?? idx * STAGE_STRIDE;
               };
-              const getLaneBoundaryY = (idx: number) => {
-                if (idx === laneCount) return laneEndY;
-                return swimlaneBands?.laneTops[idx] ?? idx * LANE_STRIDE;
+              const getRowBoundaryY = (idx: number) => {
+                if (idx === rowCount) return gridEndY;
+                return transposed
+                  ? swimlaneBands?.stageTops[idx] ?? idx * LANE_STRIDE
+                  : swimlaneBands?.laneTops[idx] ?? idx * LANE_STRIDE;
               };
 
               return (
                 <>
                   {/* Grid lines (flat, no background fills) */}
-                  {Array.from({ length: stageCount + 1 }).map((_, idx) => (
+                  {Array.from({ length: colCount + 1 }).map((_, idx) => (
                     <div
-                      key={`stage-grid-${idx}`}
-                      className="absolute bg-black"
+                      key={`swimlane-col-grid-${idx}`}
+                      className="absolute bg-black pointer-events-none"
                       style={{
-                        left: getStageBoundaryX(idx),
+                        left: getColBoundaryX(idx),
                         top: 0,
                         width: 2,
-                        height: Math.max(laneEndY, 600),
+                        height: Math.max(gridEndY, 600),
                       }}
                     />
                   ))}
-                  {Array.from({ length: laneCount + 1 }).map((_, idx) => (
+                  {Array.from({ length: rowCount + 1 }).map((_, idx) => (
                     <div
-                      key={`lane-grid-${idx}`}
-                      className="absolute bg-black"
+                      key={`swimlane-row-grid-${idx}`}
+                      className="absolute bg-black pointer-events-none"
                       style={{
                         left: -LANE_GUTTER_W,
-                        top: getLaneBoundaryY(idx),
+                        top: getRowBoundaryY(idx),
                         height: 2,
-                        width: Math.max(laneW + LANE_GUTTER_W + 80, stageEndX + LANE_GUTTER_W + 80),
+                        width: Math.max(laneW + LANE_GUTTER_W + 80, gridEndX + LANE_GUTTER_W + 80),
                       }}
                     />
                   ))}
 
-                  {/* Lane bands */}
-                  {swimlaneLayout.lanes.map((lane, idx) => (
-                    <div
-                      key={lane.id}
-                      className="group absolute"
-                      style={{
-                        left: -LANE_GUTTER_W,
-                        top: swimlaneBands?.laneTops[idx] ?? idx * LANE_STRIDE,
-                        width: laneW + LANE_GUTTER_W + 80,
-                        height: swimlaneBands?.laneHeights[idx] ?? LANE_STRIDE,
-                      }}
-                      onClick={(e) => {
-                        // Allow clicking the lane band background to select insertion lane.
-                        e.stopPropagation();
-                        swimlaneActions?.onSetInsertTarget?.({
-                          laneId: lane.id,
-                          stage: swimlaneLayout.insertTarget?.stage ?? 0,
-                        });
-                      }}
-                    >
-                      {/* Lane label pill (interactive) */}
-                      {(() => {
-                        const isActiveLane =
-                          !!swimlaneLayout.showInsertTargetUI &&
-                          swimlaneLayout.insertTarget?.laneId === lane.id;
+                  {!transposed ? (
+                    <>
+                      {/* Lane bands (rows) */}
+                      {swimlaneLayout.lanes.map((lane, idx) => (
+                        <div
+                          key={lane.id}
+                          className="group absolute pointer-events-auto"
+                          style={{
+                            left: -LANE_GUTTER_W,
+                            top: swimlaneBands?.laneTops[idx] ?? idx * LANE_STRIDE,
+                            width: laneW + LANE_GUTTER_W + 80,
+                            height: swimlaneBands?.laneHeights[idx] ?? LANE_STRIDE,
+                          }}
+                          onClick={(e) => {
+                            // Allow clicking the lane band background to select insertion lane.
+                            e.stopPropagation();
+                            swimlaneActions?.onSetInsertTarget?.({
+                              laneId: lane.id,
+                              stage: swimlaneLayout.insertTarget?.stage ?? 0,
+                            });
+                          }}
+                        >
+                          {/* Lane label pill (interactive) */}
+                          {(() => {
+                            const isActiveLane =
+                              !!swimlaneLayout.showInsertTargetUI &&
+                              swimlaneLayout.insertTarget?.laneId === lane.id;
+                            const canDelete = !!swimlaneActions?.canDeleteLaneIds?.has(lane.id);
+                            return (
+                              <>
+                                <div
+                                  className={`pointer-events-auto absolute left-10 top-2 inline-flex items-center gap-2 px-2 py-1 text-[10px] font-semibold ${
+                                    isActiveLane
+                                      ? 'mac-double-outline mac-shadow-hard mac-fill--hatch text-black'
+                                      : 'opacity-70'
+                                  }`}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    swimlaneActions?.onSetInsertTarget?.({
+                                      laneId: lane.id,
+                                      stage: swimlaneLayout.insertTarget?.stage ?? 0,
+                                    });
+                                  }}
+                                  onDoubleClick={(e) => {
+                                    e.stopPropagation();
+                                    setSwimlaneRename({
+                                      kind: 'lane',
+                                      laneId: lane.id,
+                                      value: lane.label,
+                                      left: -LANE_GUTTER_W + 8,
+                                      top: (swimlaneBands?.laneTops[idx] ?? idx * LANE_STRIDE) + 8,
+                                      width: 220,
+                                    });
+                                  }}
+                                  title="Click to set insertion lane; double-click to rename"
+                                >
+                                  <span>{lane.label}</span>
+                                  <button
+                                    type="button"
+                                    className={`h-5 w-5 border transition-opacity ${
+                                      isActiveLane ? 'opacity-100' : 'opacity-0 pointer-events-none'
+                                    } ${isActiveLane && !canDelete ? 'opacity-40 cursor-not-allowed' : ''}`}
+                                    title={canDelete ? 'Delete lane' : 'Cannot delete lane (has nodes or last lane)'}
+                                    disabled={!canDelete}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      if (!canDelete) return;
+                                      swimlaneActions?.onDeleteLane?.(lane.id);
+                                    }}
+                                  >
+                                    ×
+                                  </button>
+                                </div>
+
+                                {/* Lane controls: plus buttons at inferred insert locations (top-left / bottom-left) */}
+                                <div
+                                  className={`pointer-events-auto absolute left-2 top-2 flex items-center gap-1 transition-opacity ${
+                                    isActiveLane
+                                      ? 'opacity-100'
+                                      : 'opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto'
+                                  }`}
+                                >
+                                  <button
+                                    type="button"
+                                    className="h-6 w-6 border"
+                                    title="Insert lane above"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      swimlaneActions?.onInsertLane?.(idx);
+                                    }}
+                                  >
+                                    +
+                                  </button>
+                                </div>
+                                <div
+                                  className={`pointer-events-auto absolute left-2 bottom-1 flex items-center gap-1 transition-opacity ${
+                                    isActiveLane
+                                      ? 'opacity-100'
+                                      : 'opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto'
+                                  }`}
+                                >
+                                  <button
+                                    type="button"
+                                    className="h-6 w-6 border"
+                                    title="Insert lane below"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      swimlaneActions?.onInsertLane?.(idx + 1);
+                                    }}
+                                  >
+                                    +
+                                  </button>
+                                </div>
+                              </>
+                            );
+                          })()}
+                        </div>
+                      ))}
+
+                      {/* Stage headers (columns) */}
+                      {Array.from({ length: stageCount }).map((_, idx) => {
+                        const stage =
+                          swimlaneLayout.stages[idx] || { id: `stage-${idx + 1}`, label: `Stage ${idx + 1}` };
+                        const left = swimlaneBands?.stageLefts[idx] ?? idx * STAGE_STRIDE;
+                        const isActiveStage =
+                          !!swimlaneLayout.showInsertTargetUI && swimlaneLayout.insertTarget?.stage === idx;
+                        const canDelete = !!swimlaneActions?.canDeleteStageIdxs?.has(idx);
                         return (
-                          <>
+                          <div
+                            key={stage.id}
+                            className={`group pointer-events-auto absolute z-30 text-[10px] font-semibold ${
+                              isActiveStage ? 'text-slate-900' : 'text-slate-500'
+                            }`}
+                            style={{
+                              left,
+                              top: -HEADER_H,
+                              width: Math.max(NODE_WIDTH, (swimlaneBands?.stageWidths[idx] ?? STAGE_STRIDE) - 8),
+                            }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              swimlaneActions?.onSetInsertTarget?.({
+                                laneId: swimlaneLayout.insertTarget?.laneId || defaultLaneId,
+                                stage: idx,
+                              });
+                            }}
+                            onDoubleClick={(e) => {
+                              e.stopPropagation();
+                              setSwimlaneRename({
+                                kind: 'stage',
+                                stageIndex: idx,
+                                value: stage.label,
+                                left,
+                                top: -HEADER_H - 4,
+                                width: 220,
+                              });
+                            }}
+                            title="Click to set insertion stage; double-click to rename"
+                          >
+                            <div className="relative inline-flex items-center gap-2 px-2 py-0.5" style={{ minHeight: HEADER_H - 4 }}>
+                              {/* Insert-before (left edge) */}
+                              <button
+                                type="button"
+                                className={`absolute -left-3 top-1/2 -translate-y-1/2 h-6 w-6 border transition-opacity ${
+                                  isActiveStage
+                                    ? 'opacity-100'
+                                    : 'opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto'
+                                }`}
+                                title="Insert stage before"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  swimlaneActions?.onInsertStage?.(idx);
+                                }}
+                              >
+                                +
+                              </button>
+
+                              <span
+                                className={`inline-flex items-center gap-2 ${
+                                  isActiveStage ? 'mac-double-outline mac-shadow-hard mac-fill--hatch text-black' : 'opacity-70'
+                                }`}
+                              >
+                                <span>{stage.label}</span>
+                                <button
+                                  type="button"
+                                    className={`h-5 w-5 border transition-opacity ${
+                                      isActiveStage ? 'opacity-100' : 'opacity-0 pointer-events-none'
+                                    } ${isActiveStage && !canDelete ? 'opacity-40 cursor-not-allowed' : ''}`}
+                                  title={canDelete ? 'Delete stage' : 'Cannot delete stage (has nodes or last stage)'}
+                                    disabled={!canDelete}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (!canDelete) return;
+                                    swimlaneActions?.onDeleteStage?.(idx);
+                                  }}
+                                >
+                                  ×
+                                </button>
+                              </span>
+
+                              {/* Insert-after (right edge) */}
+                              <button
+                                type="button"
+                                className={`absolute -right-3 top-1/2 -translate-y-1/2 h-6 w-6 border transition-opacity ${
+                                  isActiveStage
+                                    ? 'opacity-100'
+                                    : 'opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto'
+                                }`}
+                                title="Insert stage after"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  swimlaneActions?.onInsertStage?.(idx + 1);
+                                }}
+                              >
+                                +
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </>
+                  ) : (
+                    <>
+                      {/* Stage bands (rows) */}
+                      {Array.from({ length: stageCount }).map((_, idx) => {
+                        const stage =
+                          swimlaneLayout.stages[idx] || { id: `stage-${idx + 1}`, label: `Stage ${idx + 1}` };
+                        const top = swimlaneBands?.stageTops[idx] ?? idx * LANE_STRIDE;
+                        const h = swimlaneBands?.stageHeights[idx] ?? LANE_STRIDE;
+                        const isActiveStage =
+                          !!swimlaneLayout.showInsertTargetUI && swimlaneLayout.insertTarget?.stage === idx;
+                        const canDelete = !!swimlaneActions?.canDeleteStageIdxs?.has(idx);
+                        return (
+                          <div
+                            key={stage.id}
+                            className="group absolute pointer-events-auto"
+                            style={{
+                              left: -LANE_GUTTER_W,
+                              top,
+                              width: laneW + LANE_GUTTER_W + 80,
+                              height: h,
+                            }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              swimlaneActions?.onSetInsertTarget?.({
+                                laneId: swimlaneLayout.insertTarget?.laneId || defaultLaneId,
+                                stage: idx,
+                              });
+                            }}
+                          >
+                            {/* Stage label pill (interactive) */}
                             <div
                               className={`pointer-events-auto absolute left-10 top-2 inline-flex items-center gap-2 px-2 py-1 text-[10px] font-semibold ${
-                                isActiveLane ? 'mac-double-outline mac-shadow-hard mac-fill--hatch text-black' : 'opacity-70'
+                                isActiveStage
+                                  ? 'mac-double-outline mac-shadow-hard mac-fill--hatch text-black'
+                                  : 'opacity-70'
                               }`}
                               onClick={(e) => {
                                 e.stopPropagation();
                                 swimlaneActions?.onSetInsertTarget?.({
-                                  laneId: lane.id,
-                                  stage: swimlaneLayout.insertTarget?.stage ?? 0,
+                                  laneId: swimlaneLayout.insertTarget?.laneId || defaultLaneId,
+                                  stage: idx,
                                 });
                               }}
                               onDoubleClick={(e) => {
                                 e.stopPropagation();
                                 setSwimlaneRename({
-                                  kind: 'lane',
-                                  laneId: lane.id,
-                                  value: lane.label,
+                                  kind: 'stage',
+                                  stageIndex: idx,
+                                  value: stage.label,
                                   left: -LANE_GUTTER_W + 8,
-                                  top: (swimlaneBands?.laneTops[idx] ?? idx * LANE_STRIDE) + 8,
+                                  top: top + 8,
                                   width: 220,
                                 });
                               }}
-                              title="Click to set insertion lane; double-click to rename"
+                              title="Click to set insertion stage; double-click to rename"
                             >
-                              <span>{lane.label}</span>
-                              {isActiveLane ? (
-                                <button
-                                  type="button"
-                                  className={`h-5 w-5 border ${
-                                    swimlaneActions?.canDeleteLaneIds?.has(lane.id)
-                                      ? ''
-                                      : 'opacity-40 cursor-not-allowed'
-                                  }`}
-                                  title={
-                                    swimlaneActions?.canDeleteLaneIds?.has(lane.id)
-                                      ? 'Delete lane'
-                                      : 'Cannot delete lane (has nodes or last lane)'
-                                  }
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    if (!swimlaneActions?.canDeleteLaneIds?.has(lane.id)) return;
-                                    swimlaneActions?.onDeleteLane?.(lane.id);
-                                  }}
-                                >
-                                  ×
-                                </button>
-                              ) : null}
+                              <span>{stage.label}</span>
+                              <button
+                                type="button"
+                                className={`h-5 w-5 border transition-opacity ${
+                                  isActiveStage ? 'opacity-100' : 'opacity-0 pointer-events-none'
+                                } ${isActiveStage && !canDelete ? 'opacity-40 cursor-not-allowed' : ''}`}
+                                title={canDelete ? 'Delete stage' : 'Cannot delete stage (has nodes or last stage)'}
+                                disabled={!canDelete}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (!canDelete) return;
+                                  swimlaneActions?.onDeleteStage?.(idx);
+                                }}
+                              >
+                                ×
+                              </button>
                             </div>
 
-                            {/* Lane controls: plus buttons at inferred insert locations (top-left / bottom-left) */}
+                            {/* Stage controls: plus buttons at inferred insert locations (top-left / bottom-left) */}
                             <div
                               className={`pointer-events-auto absolute left-2 top-2 flex items-center gap-1 transition-opacity ${
-                                isActiveLane
+                                isActiveStage
                                   ? 'opacity-100'
                                   : 'opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto'
                               }`}
@@ -2935,10 +3264,10 @@ export function NexusCanvas({
                               <button
                                 type="button"
                                 className="h-6 w-6 border"
-                                title="Insert lane above"
+                                title="Insert stage above"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  swimlaneActions?.onInsertLane?.(idx);
+                                  swimlaneActions?.onInsertStage?.(idx);
                                 }}
                               >
                                 +
@@ -2946,7 +3275,7 @@ export function NexusCanvas({
                             </div>
                             <div
                               className={`pointer-events-auto absolute left-2 bottom-1 flex items-center gap-1 transition-opacity ${
-                                isActiveLane
+                                isActiveStage
                                   ? 'opacity-100'
                                   : 'opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto'
                               }`}
@@ -2954,7 +3283,103 @@ export function NexusCanvas({
                               <button
                                 type="button"
                                 className="h-6 w-6 border"
-                                title="Insert lane below"
+                                title="Insert stage below"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  swimlaneActions?.onInsertStage?.(idx + 1);
+                                }}
+                              >
+                                +
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+
+                      {/* Lane headers (columns) */}
+                      {swimlaneLayout.lanes.map((lane, idx) => {
+                        const left = swimlaneBands?.laneLefts[idx] ?? idx * STAGE_STRIDE;
+                        const w = Math.max(NODE_WIDTH, (swimlaneBands?.laneWidths[idx] ?? STAGE_STRIDE) - 8);
+                        const isActiveLane =
+                          !!swimlaneLayout.showInsertTargetUI && swimlaneLayout.insertTarget?.laneId === lane.id;
+                        const canDelete = !!swimlaneActions?.canDeleteLaneIds?.has(lane.id);
+                        return (
+                          <div
+                            key={lane.id}
+                            className={`group pointer-events-auto absolute z-30 text-[10px] font-semibold ${
+                              isActiveLane ? 'text-slate-900' : 'text-slate-500'
+                            }`}
+                            style={{ left, top: -HEADER_H, width: w }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              swimlaneActions?.onSetInsertTarget?.({
+                                laneId: lane.id,
+                                stage: swimlaneLayout.insertTarget?.stage ?? 0,
+                              });
+                            }}
+                            onDoubleClick={(e) => {
+                              e.stopPropagation();
+                              setSwimlaneRename({
+                                kind: 'lane',
+                                laneId: lane.id,
+                                value: lane.label,
+                                left,
+                                top: -HEADER_H - 4,
+                                width: 220,
+                              });
+                            }}
+                            title="Click to set insertion lane; double-click to rename"
+                          >
+                            <div className="relative inline-flex items-center gap-2 px-2 py-0.5" style={{ minHeight: HEADER_H - 4 }}>
+                              {/* Insert-before (left edge) */}
+                              <button
+                                type="button"
+                                className={`absolute -left-3 top-1/2 -translate-y-1/2 h-6 w-6 border transition-opacity ${
+                                  isActiveLane
+                                    ? 'opacity-100'
+                                    : 'opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto'
+                                }`}
+                                title="Insert lane before"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  swimlaneActions?.onInsertLane?.(idx);
+                                }}
+                              >
+                                +
+                              </button>
+
+                              <span
+                                className={`inline-flex items-center gap-2 ${
+                                  isActiveLane ? 'mac-double-outline mac-shadow-hard mac-fill--hatch text-black' : 'opacity-70'
+                                }`}
+                              >
+                                <span>{lane.label}</span>
+                                <button
+                                  type="button"
+                                  className={`h-5 w-5 border transition-opacity ${
+                                    isActiveLane ? 'opacity-100' : 'opacity-0 pointer-events-none'
+                                  } ${isActiveLane && !canDelete ? 'opacity-40 cursor-not-allowed' : ''}`}
+                                  title={canDelete ? 'Delete lane' : 'Cannot delete lane (has nodes or last lane)'}
+                                  disabled={!canDelete}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (!canDelete) return;
+                                    swimlaneActions?.onDeleteLane?.(lane.id);
+                                  }}
+                                >
+                                  ×
+                                </button>
+                              </span>
+
+                              {/* Insert-after (right edge) */}
+                              <button
+                                type="button"
+                                className={`absolute -right-3 top-1/2 -translate-y-1/2 h-6 w-6 border transition-opacity ${
+                                  isActiveLane
+                                    ? 'opacity-100'
+                                    : 'opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto'
+                                }`}
+                                title="Insert lane after"
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   swimlaneActions?.onInsertLane?.(idx + 1);
@@ -2963,121 +3388,11 @@ export function NexusCanvas({
                                 +
                               </button>
                             </div>
-                          </>
+                          </div>
                         );
-                      })()}
-                    </div>
-                  ))}
-
-                  {/* Stage headers */}
-                  {Array.from({ length: stageCount }).map((_, idx) => {
-                    const stage = swimlaneLayout.stages[idx] || { id: `stage-${idx + 1}`, label: `Stage ${idx + 1}` };
-                    const left = swimlaneBands?.stageLefts[idx] ?? idx * STAGE_STRIDE;
-                    const isActiveStage =
-                      !!swimlaneLayout.showInsertTargetUI &&
-                      swimlaneLayout.insertTarget?.stage === idx;
-                    return (
-                      <div
-                        key={stage.id}
-                        className={`group pointer-events-auto absolute z-30 text-[10px] font-semibold ${
-                          isActiveStage ? 'text-slate-900' : 'text-slate-500'
-                        }`}
-                        style={{
-                          left,
-                          top: -HEADER_H,
-                          width: Math.max(NODE_WIDTH, (swimlaneBands?.stageWidths[idx] ?? STAGE_STRIDE) - 8),
-                        }}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          swimlaneActions?.onSetInsertTarget?.({
-                            laneId: swimlaneLayout.insertTarget?.laneId || defaultLaneId,
-                            stage: idx,
-                          });
-                        }}
-                        onDoubleClick={(e) => {
-                          e.stopPropagation();
-                          setSwimlaneRename({
-                            kind: 'stage',
-                            stageIndex: idx,
-                            value: stage.label,
-                            left,
-                            top: -HEADER_H - 4,
-                            width: 220,
-                          });
-                        }}
-                        title="Click to set insertion stage; double-click to rename"
-                      >
-                        <div
-                          className="relative inline-flex items-center gap-2 px-2 py-0.5"
-                          style={{ minHeight: HEADER_H - 4 }}
-                        >
-                          {/* Insert-before (left edge) */}
-                          <button
-                            type="button"
-                            className={`absolute -left-3 top-1/2 -translate-y-1/2 h-6 w-6 border transition-opacity ${
-                              isActiveStage
-                                ? 'opacity-100'
-                                : 'opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto'
-                            }`}
-                            title="Insert stage before"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              swimlaneActions?.onInsertStage?.(idx);
-                            }}
-                          >
-                            +
-                          </button>
-
-                          <span
-                            className={`inline-flex items-center gap-2 ${
-                              isActiveStage ? 'mac-double-outline mac-shadow-hard mac-fill--hatch text-black' : 'opacity-70'
-                            }`}
-                          >
-                            <span>{stage.label}</span>
-                            {isActiveStage ? (
-                              <button
-                                type="button"
-                                className={`h-5 w-5 border ${
-                                  swimlaneActions?.canDeleteStageIdxs?.has(idx)
-                                    ? ''
-                                    : 'opacity-40 cursor-not-allowed'
-                                }`}
-                                title={
-                                  swimlaneActions?.canDeleteStageIdxs?.has(idx)
-                                    ? 'Delete stage'
-                                    : 'Cannot delete stage (has nodes or last stage)'
-                                }
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  if (!swimlaneActions?.canDeleteStageIdxs?.has(idx)) return;
-                                  swimlaneActions?.onDeleteStage?.(idx);
-                                }}
-                              >
-                                ×
-                              </button>
-                            ) : null}
-                          </span>
-
-                          {/* Insert-after (right edge) */}
-                          <button
-                            type="button"
-                            className={`absolute -right-3 top-1/2 -translate-y-1/2 h-6 w-6 border transition-opacity ${
-                              isActiveStage
-                                ? 'opacity-100'
-                                : 'opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto'
-                            }`}
-                            title="Insert stage after"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              swimlaneActions?.onInsertStage?.(idx + 1);
-                            }}
-                          >
-                            +
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
+                      })}
+                    </>
+                  )}
 
                   {/* Inline rename editor (prompt() is not supported in this runtime) */}
                   {swimlaneRename ? (
@@ -3466,6 +3781,17 @@ export function NexusCanvas({
                 <polygon points="0 0, 8 4, 0 8" fill="#000000" stroke="#000000" strokeWidth="1" />
               </marker>
               <marker
+                id="arrowhead-orange"
+                markerWidth="8"
+                markerHeight="8"
+                refX="7"
+                refY="4"
+                orient="auto"
+                markerUnits="userSpaceOnUse"
+              >
+                <polygon points="0 0, 8 4, 0 8" fill="#f97316" stroke="#f97316" strokeWidth="1" />
+              </marker>
+              <marker
                 id="arrowhead-gray"
                 markerWidth="8"
                 markerHeight="8"
@@ -3667,20 +3993,31 @@ export function NexusCanvas({
                   !!gotoTargets[node.id] &&
                   selectedNodeId !== node.id &&
                   isShowFlowOnForNode(node.id);
+
+                const isConnectorHighlighted =
+                  selectedNodeId === node.id ||
+                  selectedNodeId === node.parentId ||
+                  selectedNodeIdsSet.has(node.id) ||
+                  selectedNodeIdsSet.has(node.parentId);
+                const connectorStroke = isConnectorHighlighted ? '#f97316' : '#000000';
                 
                 return (
                     <g key={`${node.parentId}-${node.id}`}>
                         <path 
                             d={pathD}
-                            stroke="#000000"
-                            strokeWidth={selectedNodeId === node.id || dropTargetId === node.id ? '2' : '1.5'}
+                            stroke={connectorStroke}
+                            strokeWidth={
+                              isConnectorHighlighted || selectedNodeId === node.id || dropTargetId === node.id ? '2.5' : '1.5'
+                            }
                             fill="none"
                             markerEnd={
-                              isProcessConnector && !hideArrowForCollapsedGoto ? "url(#arrowhead-light)" : undefined
+                              isProcessConnector && !hideArrowForCollapsedGoto
+                                ? (isConnectorHighlighted ? "url(#arrowhead-orange)" : "url(#arrowhead-light)")
+                                : undefined
                             }
                             className={transitionClasses}
                             style={{ pointerEvents: (isProcessConnector && isProcessFlowModeEnabled) ? 'stroke' : 'none', cursor: (isProcessConnector && isProcessFlowModeEnabled) ? 'pointer' : 'default' }}
-                            opacity={dimConnector ? 0.3 : 1}
+                            opacity={dimConnector && !isConnectorHighlighted ? 0.3 : 1}
                             onDoubleClick={(e) => {
                               if (isProcessConnector && isProcessFlowModeEnabled && node.parentId) {
                                 e.stopPropagation();
@@ -3699,7 +4036,9 @@ export function NexusCanvas({
                               ry={0}
                               width={80}
                               height={20}
-                              fill="#000000"
+                              fill={isConnectorHighlighted ? '#ffedd5' : '#000000'}
+                              stroke={isConnectorHighlighted ? '#f97316' : 'none'}
+                              strokeWidth={isConnectorHighlighted ? 1.5 : 0}
                               style={{ cursor: 'pointer' }}
                               pointerEvents="all"
                               onDoubleClick={(e) => {
@@ -3715,7 +4054,7 @@ export function NexusCanvas({
                               x={midX}
                               y={midY + 3}
                               textAnchor="middle"
-                              fill="#ffffff"
+                              fill={isConnectorHighlighted ? '#f97316' : '#ffffff'}
                               fontSize={10}
                               pointerEvents="none"
                             >

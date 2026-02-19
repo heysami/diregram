@@ -23,6 +23,7 @@ export function GridEditor({
   doc,
   yDoc,
   onChange,
+  fileId,
   statusLabel,
   diagramFiles,
   linkedDiagramFileId,
@@ -50,6 +51,8 @@ export function GridEditor({
   doc: GridDoc;
   yDoc?: Y.Doc | null;
   onChange: (next: GridDoc) => void;
+  /** Current file id; used to prevent internal pastes across different files. */
+  fileId: string;
   statusLabel?: string;
   diagramFiles?: Array<{ id: string; name: string; roomName: string; kind: string; canEdit: boolean }>;
   linkedDiagramFileId?: string | null;
@@ -350,6 +353,7 @@ export function GridEditor({
             <div className="relative flex-1 overflow-hidden">
               <SpreadsheetView
                 doc={doc}
+                fileId={fileId}
                 sheet={activeSheet}
                 activeTool={activeTool}
                 commentTargetKeys={commentTargetKeysForActiveSheet}

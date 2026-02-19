@@ -19,8 +19,9 @@ import { installGlobalTemplateToLibrary } from '@/lib/install-global-template';
 import { TemplateMoveControls } from '@/components/templates/TemplateMoveControls';
 import { ensureTemplateLibraryFolderId, moveTemplateFileToFolder, type TemplateLibraryScope } from '@/lib/template-library';
 import { downloadProjectBundleZip, exportProjectBundleZip } from '@/lib/export-bundle';
-import { downloadKgVectors, exportKgAndVectorsForProject } from '@/lib/kg-vector-export';
+import { exportKgAndVectorsForProject } from '@/lib/kg-vector-export';
 import { ProjectActionMenus } from '@/components/workspace/ProjectActionMenus';
+import { SemanticKgViewerModal } from '@/components/kg/SemanticKgViewerModal';
 
 type DbFolder = {
   id: string;
@@ -129,6 +130,8 @@ export function WorkspaceBrowserSupabase() {
   const [templatesFolderId, setTemplatesFolderId] = useState<string | null>(null);
   const [templateFiles, setTemplateFiles] = useState<DbFile[]>([]);
   const [globalTemplateFiles, setGlobalTemplateFiles] = useState<Array<{ id: string; name: string; kind: 'template' }>>([]);
+  const [kgViewerOpen, setKgViewerOpen] = useState(false);
+  const [kgExportResult, setKgExportResult] = useState<Awaited<ReturnType<typeof exportKgAndVectorsForProject>> | null>(null);
 
   const showToast = (msg: string) => {
     setToast(msg);
@@ -674,12 +677,17 @@ export function WorkspaceBrowserSupabase() {
                                   .from('files')
                                   .delete()
                                   .eq('id', f.id)
-                                  .then(({ error: delErr }) => {
-                                    if (delErr) showToast(delErr.message);
-                                    else {
-                                      setFiles((prev) => prev.filter((x) => x.id !== f.id));
-                                      showToast('Deleted');
+                                  .select('id')
+                                  .then(({ data, error: delErr }) => {
+                                    if (delErr) return showToast(delErr.message);
+                                    const deletedCount = Array.isArray(data) ? data.length : data ? 1 : 0;
+                                    if (deletedCount <= 0) {
+                                      showToast('Could not delete (insufficient permission).');
+                                      return;
                                     }
+                                    setFiles((prev) => prev.filter((x) => x.id !== f.id));
+                                    setTemplateFiles((prev) => prev.filter((x) => x.id !== f.id));
+                                    showToast('Deleted');
                                   });
                               }}
                             >
@@ -779,11 +787,8 @@ export function WorkspaceBrowserSupabase() {
                     supabase,
                     projectFolderId: activeFolder.id,
                   });
-                  downloadKgVectors({
-                    graphJsonl: res.graphJsonl,
-                    embeddingsJsonl: res.embeddingsJsonl,
-                    basename: `nexusmap-${activeFolder.id}`,
-                  });
+                  setKgExportResult(res);
+                  setKgViewerOpen(true);
                   showToast('Exported');
                 }}
                 onEditProject={() => setEditProject({ id: activeFolder.id, name: activeFolder.name, people: activeFolder.access?.people || [] })}
@@ -813,6 +818,13 @@ export function WorkspaceBrowserSupabase() {
               const k = normalizeKind(kind);
               await createFromTemplate(activeFolder.id, { name, kind: k, content });
             }}
+          />
+
+          <SemanticKgViewerModal
+            open={kgViewerOpen}
+            onClose={() => setKgViewerOpen(false)}
+            exportResult={kgExportResult}
+            basename={`nexusmap-${activeFolder.id}`}
           />
 
           <div className="grid gap-2">
@@ -938,12 +950,17 @@ export function WorkspaceBrowserSupabase() {
                               .from('files')
                               .delete()
                               .eq('id', f.id)
-                              .then(({ error: delErr }) => {
-                                if (delErr) showToast(delErr.message);
-                                else {
-                                  setFiles((prev) => prev.filter((x) => x.id !== f.id));
-                                  showToast('Deleted');
+                              .select('id')
+                              .then(({ data, error: delErr }) => {
+                                if (delErr) return showToast(delErr.message);
+                                const deletedCount = Array.isArray(data) ? data.length : data ? 1 : 0;
+                                if (deletedCount <= 0) {
+                                  showToast('Could not delete (insufficient permission).');
+                                  return;
                                 }
+                                setFiles((prev) => prev.filter((x) => x.id !== f.id));
+                                setTemplateFiles((prev) => prev.filter((x) => x.id !== f.id));
+                                showToast('Deleted');
                               });
                           }}
                         >

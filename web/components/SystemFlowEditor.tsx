@@ -295,6 +295,12 @@ export function SystemFlowEditor({
   );
 
   const deleteSelection = useCallback(() => {
+    if (selectedZoneId) {
+      const zones = state.zones.filter((z) => z.id !== selectedZoneId);
+      persist({ ...state, zones });
+      setSelectedZoneId(null);
+      return;
+    }
     if (selectedLinkId) {
       const links = state.links.filter((l) => l.id !== selectedLinkId);
       persist({ ...state, links });
@@ -309,7 +315,7 @@ export function SystemFlowEditor({
     persist({ ...state, boxes, links, zones });
     setSelectedBoxKeys([]);
     setSelectedLinkId(null);
-  }, [persist, selectedBoxKeys, selectedLinkId, state]);
+  }, [persist, selectedBoxKeys, selectedLinkId, selectedZoneId, state]);
 
   const commitBoxUpdate = useCallback(
     (key: string, patch: Partial<SystemFlowBoxPersisted>) => {
@@ -734,6 +740,8 @@ export function SystemFlowEditor({
     return paths;
   }, [boxToRectPx, byKey, state.links]);
 
+  const hasSelection = !!selectedZoneId || !!selectedLinkId || selectedBoxKeys.length > 0;
+
   return (
     <div className="absolute inset-0 flex flex-col">
       <div className="mac-toolstrip justify-between">
@@ -818,6 +826,8 @@ export function SystemFlowEditor({
                   e.stopPropagation();
                 }}
               >
+                {/* Delete is intentionally NOT placed on-canvas; it lives next to Rename and in the bottom toolbar. */}
+
                 {/* Multiplayer cursors (render in container space; scale transform applies automatically) */}
                 {presence?.peers?.length ? (
                   <div className="pointer-events-none absolute inset-0 z-50">

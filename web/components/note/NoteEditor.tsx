@@ -22,6 +22,7 @@ import { InsertFromTemplateModal, type WorkspaceFileLite as TemplateWorkspaceFil
 import { SaveTemplateModal } from '@/components/templates/SaveTemplateModal';
 import { useWorkspaceFiles } from '@/components/note/embed-config/useWorkspaceFiles';
 import { NoteLinkModal } from '@/components/note/embed-config/NoteLinkModal';
+import { useNoteInternalClipboardGuard } from '@/components/note/hooks/useNoteInternalClipboardGuard';
 
 type HeadingEntry = { level: number; text: string; pos: number; targetKey: string; slug: string; occurrence: number };
 
@@ -52,6 +53,7 @@ function safeCssEscape(s: string): string {
 export function NoteEditor({
   yDoc,
   provider,
+  fileId,
   title,
   statusLabel,
   onBack,
@@ -69,6 +71,8 @@ export function NoteEditor({
 }: {
   yDoc: Y.Doc;
   provider: HocuspocusProvider | null;
+  /** Current file id; used to prevent internal pastes across different files. */
+  fileId: string;
   title: string;
   statusLabel: string;
   onBack: () => void;
@@ -164,6 +168,13 @@ export function NoteEditor({
       editor.off('create', onCreate);
     };
   }, [editor]);
+
+  useNoteInternalClipboardGuard({
+    editor,
+    editorViewReadyTick,
+    fileId,
+    onBlockedPaste: showTemplateToast,
+  });
 
   const editorWrapRef = useRef<HTMLDivElement>(null);
   const { dragHandle, onHandleMouseDown, onHandleDragStart, onHandleDragEnd } = useNoteDragHandle({

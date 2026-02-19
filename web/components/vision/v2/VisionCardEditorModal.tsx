@@ -201,6 +201,7 @@ export function VisionCardEditorModal({
 
       <div className="flex-1 overflow-hidden">
         <TldrawTileEditor
+          fileId={fileId}
           initialSnapshot={initialSnapshot}
           sessionStorageKey={`vision:tldraw:card:session:${fileId}:${cardId}`}
           thumbOutPx={256}

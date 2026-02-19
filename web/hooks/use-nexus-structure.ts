@@ -445,6 +445,18 @@ export function useNexusStructure(doc: Y.Doc, roots: NexusNode[]) {
     return normalized.join('\n').trimEnd() + '\n';
   };
 
+  const deleteSubtreeMarkdown = (node: NexusNode, nodeMap: Map<string, NexusNode>, activeVariantId?: string | null) => {
+    const targetNode = resolveHubTarget(node, nodeMap, activeVariantId);
+    const yText = doc.getText('nexus');
+    const lines = yText.toString().split('\n');
+    const start = targetNode.lineIndex;
+    const end = findBlockEndByIndent(lines, start);
+    if (start < 0 || end < start || start >= lines.length) return null;
+    lines.splice(start, end - start + 1);
+    updateYText(lines.join('\n'));
+    return { lineIndex: Math.max(0, Math.min(start, lines.length - 1)), type: 'select' as const };
+  };
+
   const insertSubtreeMarkdownAsChild = (
     node: NexusNode,
     nodeMap: Map<string, NexusNode>,
@@ -518,5 +530,6 @@ export function useNexusStructure(doc: Y.Doc, roots: NexusNode[]) {
     extractSubtreeMarkdown,
     insertSubtreeMarkdownAsChild,
     insertSubtreeMarkdownAsSiblingAfter,
+    deleteSubtreeMarkdown,
   };
 }

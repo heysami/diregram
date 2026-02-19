@@ -1260,6 +1260,7 @@ export function VisionTileEditor({
                   ) : (
                     <div className="w-full h-full">
                       <TldrawTileEditor
+                        fileId={fileId}
                         initialSnapshot={(cell.tldraw as any) || null}
                         sessionStorageKey={`vision:tldraw:session:${fileId}:${cellKey}`}
                         onChange={({ snapshot, thumbPngDataUrl }) => {

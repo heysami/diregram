@@ -25,11 +25,10 @@ export interface NexusTagStore {
 
 const DEFAULT_GROUPS: NexusTagGroup[] = [
   { id: 'tg-ungrouped', name: 'ungrouped', order: 0 },
-  { id: 'tg-users', name: 'users', order: 1 },
-  { id: 'tg-systems', name: 'systems', order: 2 },
-  { id: 'tg-uiType', name: 'ui type', order: 3 },
-  { id: 'tg-actors', name: 'actors', order: 4 },
-  { id: 'tg-uiSurface', name: 'ui surface', order: 5 },
+  { id: 'tg-systems', name: 'system', order: 1 },
+  { id: 'tg-uiType', name: 'ui type', order: 2 },
+  { id: 'tg-actors', name: 'actors', order: 3 },
+  { id: 'tg-uiSurface', name: 'ui surface', order: 4 },
 ];
 
 const DEFAULT_STORE: NexusTagStore = {
@@ -72,6 +71,29 @@ function ensureDefaultGroups(store: NexusTagStore): NexusTagStore {
   return { ...store, groups };
 }
 
+function migrateLegacyGroups(store: NexusTagStore): NexusTagStore {
+  // Legacy: `tg-users` used to exist; merge it into machine-checkable `tg-actors`.
+  const hasUsersGroup = store.groups.some((g) => g.id === 'tg-users');
+  if (!hasUsersGroup) return store;
+  return {
+    ...store,
+    groups: store.groups.filter((g) => g.id !== 'tg-users'),
+    tags: store.tags.map((t) => (t.groupId === 'tg-users' ? { ...t, groupId: 'tg-actors' } : t)),
+  };
+}
+
+function normalizeLegacyGroupNames(store: NexusTagStore): NexusTagStore {
+  // Copy-only renames (keep ids stable).
+  return {
+    ...store,
+    groups: store.groups.map((g) => {
+      if (g.id === 'tg-systems') return { ...g, name: 'system' };
+      if (g.id === 'tg-actors') return { ...g, name: 'actors' };
+      return g;
+    }),
+  };
+}
+
 function ensureDefaultTags(store: NexusTagStore): NexusTagStore {
   const tagById = new Map(store.tags.map((t) => [t.id, t]));
   const tags: NexusTag[] = [...store.tags];
@@ -102,7 +124,9 @@ export function loadTagStore(doc: Y.Doc): NexusTagStore {
   const yText = doc.getText('nexus');
   const current = yText.toString();
   const match = current.match(BLOCK_RE);
-  if (!match) return normalizeGroupOrder(ensureDefaultTags(ensureDefaultGroups({ ...DEFAULT_STORE })));
+  if (!match) {
+    return normalizeGroupOrder(normalizeLegacyGroupNames(ensureDefaultTags(ensureDefaultGroups({ ...DEFAULT_STORE }))));
+  }
 
   try {
     const parsed = JSON.parse(match[1]);
@@ -131,12 +155,14 @@ export function loadTagStore(doc: Y.Doc): NexusTagStore {
       .filter((x): x is NexusTag => x !== null);
 
     return normalizeGroupOrder(
-      sortGroupsByOrderForLoad(
-        ensureDefaultTags(ensureDefaultGroups({ nextGroupId, nextTagId, groups, tags })),
+      normalizeLegacyGroupNames(
+        sortGroupsByOrderForLoad(
+          ensureDefaultTags(ensureDefaultGroups(migrateLegacyGroups({ nextGroupId, nextTagId, groups, tags }))),
+        ),
       ),
     );
   } catch {
-    return normalizeGroupOrder(ensureDefaultTags(ensureDefaultGroups({ ...DEFAULT_STORE })));
+    return normalizeGroupOrder(normalizeLegacyGroupNames(ensureDefaultTags(ensureDefaultGroups({ ...DEFAULT_STORE }))));
   }
 }
 
@@ -144,7 +170,9 @@ export function saveTagStore(doc: Y.Doc, store: NexusTagStore): void {
   const yText = doc.getText('nexus');
   const current = yText.toString();
 
-  const normalizedStore = normalizeGroupOrder(ensureDefaultTags(ensureDefaultGroups(store)));
+  const normalizedStore = normalizeGroupOrder(
+    normalizeLegacyGroupNames(ensureDefaultTags(ensureDefaultGroups(migrateLegacyGroups(store)))),
+  );
   const block = `\`\`\`tag-store\n${JSON.stringify(normalizedStore, null, 2)}\n\`\`\``;
 
   let next = current;

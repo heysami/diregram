@@ -1,17 +1,21 @@
 import { POST_GEN_CHECKLIST_TECHNICAL } from './post-generation-technical';
 import { POST_GEN_CHECKLIST_IA } from './post-generation-ia';
+import { POST_GEN_CHECKLIST_EXPANDED_NODES } from './post-generation-expanded-nodes';
 import { POST_GEN_CHECKLIST_DATA_OBJECTS } from './post-generation-data-objects';
 import { POST_GEN_CHECKLIST_CONDITIONAL } from './post-generation-conditional';
 import { POST_GEN_CHECKLIST_SWIMLANE } from './post-generation-swimlane';
 import { POST_GEN_CHECKLIST_COMPLETENESS } from './post-generation-completeness';
 import { POST_GEN_CHECKLIST_PROCESS_FLOWS } from './post-generation-process-flows';
 import { POST_GEN_CHECKLIST_TAGS } from './post-generation-tags';
+import { POST_GEN_CHECKLIST_SYSTEM_FLOW } from './post-generation-system-flow';
 
 export {
   POST_GEN_CHECKLIST_TECHNICAL,
   POST_GEN_CHECKLIST_IA,
+  POST_GEN_CHECKLIST_EXPANDED_NODES,
   POST_GEN_CHECKLIST_TAGS,
   POST_GEN_CHECKLIST_PROCESS_FLOWS,
+  POST_GEN_CHECKLIST_SYSTEM_FLOW,
   POST_GEN_CHECKLIST_CONDITIONAL,
   POST_GEN_CHECKLIST_DATA_OBJECTS,
   POST_GEN_CHECKLIST_SWIMLANE,
@@ -21,8 +25,10 @@ export {
 export const POST_GEN_CHECKLIST_ALL = [
   POST_GEN_CHECKLIST_TECHNICAL,
   POST_GEN_CHECKLIST_IA,
+  POST_GEN_CHECKLIST_EXPANDED_NODES,
   POST_GEN_CHECKLIST_TAGS,
   POST_GEN_CHECKLIST_PROCESS_FLOWS,
+  POST_GEN_CHECKLIST_SYSTEM_FLOW,
   POST_GEN_CHECKLIST_CONDITIONAL,
   POST_GEN_CHECKLIST_DATA_OBJECTS,
   POST_GEN_CHECKLIST_SWIMLANE,

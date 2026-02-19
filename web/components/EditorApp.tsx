@@ -65,6 +65,77 @@ type ActiveFileMeta = {
   initialContent?: string;
 };
 
+type PendingLayoutDirectionV1 = { dir: LayoutDirection; ts: number };
+
+function pendingLayoutDirectionStorageKey(fileId: string) {
+  return `nexusmap.pendingLayoutDirection.v1:${fileId}`;
+}
+
+function loadPendingLayoutDirection(fileId: string): PendingLayoutDirectionV1 | null {
+  try {
+    const raw = localStorage.getItem(pendingLayoutDirectionStorageKey(fileId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { dir?: unknown; ts?: unknown };
+    const dir = normalizeLayoutDirection(parsed?.dir);
+    const ts = typeof parsed?.ts === 'number' ? parsed.ts : Date.now();
+    return { dir, ts };
+  } catch {
+    return null;
+  }
+}
+
+function savePendingLayoutDirection(fileId: string, dir: LayoutDirection) {
+  try {
+    const payload: PendingLayoutDirectionV1 = { dir, ts: Date.now() };
+    localStorage.setItem(pendingLayoutDirectionStorageKey(fileId), JSON.stringify(payload));
+  } catch {
+    // ignore
+  }
+}
+
+function clearPendingLayoutDirection(fileId: string) {
+  try {
+    localStorage.removeItem(pendingLayoutDirectionStorageKey(fileId));
+  } catch {
+    // ignore
+  }
+}
+
+const DEFAULT_TAG_VIEW: TagViewState = {
+  activeGroupId: 'tg-ungrouped',
+  visibleTagIds: [],
+  highlightedTagIds: [],
+};
+
+function tagViewStorageKey(fileId: string) {
+  return `nexusmap.tagView.v1:${fileId}`;
+}
+
+function loadTagViewForFile(fileId: string): TagViewState | null {
+  try {
+    const raw = localStorage.getItem(tagViewStorageKey(fileId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<TagViewState> | null;
+    if (!parsed || typeof parsed !== 'object') return null;
+    const activeGroupId = typeof parsed.activeGroupId === 'string' ? parsed.activeGroupId : DEFAULT_TAG_VIEW.activeGroupId;
+    const visibleTagIds = Array.isArray(parsed.visibleTagIds) ? parsed.visibleTagIds.filter((x): x is string => typeof x === 'string') : [];
+    const highlightedTagIds = Array.isArray(parsed.highlightedTagIds)
+      ? parsed.highlightedTagIds.filter((x): x is string => typeof x === 'string')
+      : [];
+    return { activeGroupId, visibleTagIds, highlightedTagIds };
+  } catch {
+    return null;
+  }
+}
+
+function saveTagViewForFile(fileId: string, next: TagViewState) {
+  try {
+    localStorage.setItem(tagViewStorageKey(fileId), JSON.stringify(next));
+  } catch {
+    // ignore
+  }
+}
+
 export function EditorApp() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -312,11 +383,7 @@ export function EditorApp() {
   >(null);
   const [activeView, setActiveView] = useState<AppView>('main');
   const [centerTransformLabel, setCenterTransformLabel] = useState<string>('');
-  const [tagView, setTagView] = useState<TagViewState>({
-    activeGroupId: 'tg-ungrouped',
-    visibleTagIds: [],
-    highlightedTagIds: [],
-  });
+  const [tagView, setTagView] = useState<TagViewState>(DEFAULT_TAG_VIEW);
 
   const pinnedTags = usePinnedTags(doc);
   const pinnedTagIds = pinnedTags.tagIds || [];
@@ -344,6 +411,24 @@ export function EditorApp() {
     window.addEventListener('diregram:viewTransform', onTransform as EventListener);
     return () => window.removeEventListener('diregram:viewTransform', onTransform as EventListener);
   }, [activeView]);
+
+  // Tag view is a per-file UI preference. Without this, the state is shared across files because
+  // the editor route changes query params without unmounting the page component.
+  useEffect(() => {
+    const fileId = activeFile?.id;
+    if (!fileId) {
+      setTagView(DEFAULT_TAG_VIEW);
+      return;
+    }
+    const loaded = loadTagViewForFile(fileId);
+    setTagView(loaded || DEFAULT_TAG_VIEW);
+  }, [activeFile?.id]);
+
+  useEffect(() => {
+    const fileId = activeFile?.id;
+    if (!fileId) return;
+    saveTagViewForFile(fileId, tagView);
+  }, [activeFile?.id, tagView]);
 
   // Lifted State: Map<HubNodeId, SelectedConditions> (Record<key, value>)
   const [activeVariantState, setActiveVariantState] = useState<Record<string, Record<string, string>>>({});
@@ -482,6 +567,24 @@ export function EditorApp() {
           }
           }
         }
+
+        // Leave-safe fallback: if the user changed layout direction but navigated away before the
+        // Supabase update completed, re-apply and re-flush on next open.
+        const pending = loadPendingLayoutDirection(fileRow.id);
+        if (pending) {
+          effectiveLayoutDirection = pending.dir;
+          const serverDir = normalizeLayoutDirection(fileLayoutRaw);
+          if (pending.dir !== serverDir) {
+            supabase
+              .from('files')
+              .update({ layout_direction: pending.dir })
+              .eq('id', fileRow.id)
+              .then(() => clearPendingLayoutDirection(fileRow.id), () => {});
+          } else {
+            clearPendingLayoutDirection(fileRow.id);
+          }
+        }
+
         setLayoutDirection(effectiveLayoutDirection);
 
         const folderId = fileRow.folder_id as string | null;
@@ -543,11 +646,13 @@ export function EditorApp() {
       }
 
       // Supabase persistence (best-effort; keep UI responsive even if offline)
+      savePendingLayoutDirection(activeFile.id, next);
       try {
         const { createClient } = await import('@/lib/supabase');
         const supabase = createClient();
         if (!supabase) return;
         await supabase.from('files').update({ layout_direction: next }).eq('id', activeFile.id);
+        clearPendingLayoutDirection(activeFile.id);
       } catch {
         // ignore
       }
@@ -1335,6 +1440,7 @@ export function EditorApp() {
           ) : activeView === 'flows' ? (
             <FlowsCanvas
               doc={doc}
+              fileId={activeFile?.id || null}
               activeTool={activeTool}
               onToolUse={() => setActiveTool('select')}
               layoutDirection={layoutDirection}
@@ -1384,6 +1490,7 @@ export function EditorApp() {
           ) : activeView === 'systemFlow' ? (
             <SystemFlowsCanvas
               doc={doc}
+              fileId={activeFile?.id || null}
               presence={presence}
               activeTool={activeTool}
               showComments={showComments}
@@ -1409,6 +1516,7 @@ export function EditorApp() {
               getRunningNumber={getRunningNumber}
               getProcessRunningNumber={getProcessRunningNumber}
               doc={doc}
+              fileId={activeFile?.id || null}
               presence={presence}
               presenceView="main"
               activeTool={activeTool}

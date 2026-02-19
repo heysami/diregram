@@ -161,6 +161,18 @@ create policy "Users can update owned or shared(edit) files" on public.files
     )
   );
 
+create policy "Users can delete owned or shared(edit) files" on public.files
+  for delete
+  using (
+    auth.uid() = owner_id
+    or public.access_can_edit(access)
+    or exists (
+      select 1 from public.folders f
+      where f.id = files.folder_id
+        and (auth.uid() = f.owner_id or public.access_can_edit(f.access))
+    )
+  );
+
 -- Permissions (ACL)
 create type public.permission_level as enum ('viewer', 'editor', 'owner');
 

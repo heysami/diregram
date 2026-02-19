@@ -116,8 +116,8 @@ export function Toolbar({
                   onChange={(e) => onLayoutDirectionChange(e.target.value === 'vertical' ? 'vertical' : 'horizontal')}
                   title="Canvas layout direction (per file)"
                 >
-                  <option value="horizontal">Horizontal (grow right)</option>
-                  <option value="vertical">Vertical (grow down)</option>
+                  <option value="horizontal">Left → Right</option>
+                  <option value="vertical">Top → Down</option>
                 </select>
               </div>
             ) : null}

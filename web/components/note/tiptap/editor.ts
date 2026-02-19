@@ -22,6 +22,7 @@ import { NexusColumnsNode, NexusColumnNode } from '@/components/note/tiptap/node
 import { NexusTabsNode, NexusTabNode } from '@/components/note/tiptap/nodes/NexusTabsNode';
 import { CommentMark } from '@/components/note/tiptap/marks/commentMark';
 import { NoteCommentIndicatorExtension } from '@/components/note/tiptap/commentIndicatorExtension';
+import { replaceSelectionWithHtml, serializeProseMirrorSelection } from '@/components/note/tiptap/clipboard';
 
 export function useNoteEditor(opts: {
   yDoc: Y.Doc;
@@ -105,6 +106,50 @@ export function useNoteEditor(opts: {
             // Nexus Columns layout is enforced inline in the node view to avoid
             // conflicts with global typography/layout CSS.
           ].join(' '),
+        },
+        handleDOMEvents: {
+          copy(view, event) {
+            try {
+              const e = event as ClipboardEvent;
+              const cd = e.clipboardData;
+              if (!cd) return false;
+              const sel = serializeProseMirrorSelection(view);
+              if (!sel) return false;
+              cd.setData('text/html', sel.html);
+              cd.setData('text/plain', sel.text);
+              e.preventDefault();
+
+              return true;
+            } catch {
+              return false;
+            }
+          },
+          cut(view, event) {
+            // Let ProseMirror handle the deletion; we only ensure clipboard has rich content.
+            try {
+              const e = event as ClipboardEvent;
+              const cd = e.clipboardData;
+              if (!cd) return false;
+              const sel = serializeProseMirrorSelection(view);
+              if (!sel) return false;
+              cd.setData('text/html', sel.html);
+              cd.setData('text/plain', sel.text);
+
+              return false; // allow default cut behavior (delete selection)
+            } catch {
+              return false;
+            }
+          },
+        },
+        handlePaste(view, event) {
+          try {
+            const e = event as ClipboardEvent;
+            const html = String(e.clipboardData?.getData('text/html') || '').trim();
+            if (!html) return false;
+            return replaceSelectionWithHtml(view, html);
+          } catch {
+            return false;
+          }
         },
       },
     },

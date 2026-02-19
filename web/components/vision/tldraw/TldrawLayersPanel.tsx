@@ -5,6 +5,19 @@ import type { Editor, TLParentId, TLShape, TLShapeId } from 'tldraw';
 import { getIndexBetween, getIndexBelow, getIndexAbove, type IndexKey } from '@tldraw/utils';
 import { ChevronDown, ChevronRight, Eye, EyeOff, Lock, Unlock } from 'lucide-react';
 
+// Used only for selection UX; does not change document structure.
+function flattenDisplayOrder(nodes: LayerNode[]): TLShapeId[] {
+  const out: TLShapeId[] = [];
+  const walk = (n: LayerNode) => {
+    out.push(n.id);
+    const kids = DISPLAY_FRONT_TO_BACK ? n.children.slice().reverse() : n.children;
+    for (const c of kids) walk(c);
+  };
+  const roots = DISPLAY_FRONT_TO_BACK ? nodes.slice().reverse() : nodes;
+  for (const r of roots) walk(r);
+  return out;
+}
+
 type LayerNode = {
   id: TLShapeId;
   shape: TLShape;
@@ -96,6 +109,7 @@ export function TldrawLayersPanel({ editor, embedded }: { editor: Editor | null;
   const [dropTarget, setDropTarget] = useState<{ id: TLShapeId; place: 'before' | 'after' } | null>(null);
   const [renamingId, setRenamingId] = useState<TLShapeId | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
+  const anchorIdRef = useRef<TLShapeId | null>(null);
 
   useEffect(() => {
     if (!editor) return;
@@ -165,6 +179,8 @@ export function TldrawLayersPanel({ editor, embedded }: { editor: Editor | null;
     if (!editor) return [];
     return buildTree(editor);
   }, [editor, docRev]);
+
+  const flatIds = useMemo(() => flattenDisplayOrder(nodes), [nodes]);
 
   const toggleHidden = (shape: TLShape) => {
     if (!editor) return;
@@ -306,9 +322,42 @@ export function TldrawLayersPanel({ editor, embedded }: { editor: Editor | null;
             e.preventDefault();
             onDropOnRow(n.shape);
           }}
-          onClick={() => {
+          onClick={(e) => {
             if (!editor) return;
-            editor.setSelectedShapes([n.id]);
+            const id = n.id;
+            const curr = editor.getSelectedShapeIds();
+            const meta = (e.metaKey || e.ctrlKey) && !e.shiftKey;
+            const shift = e.shiftKey;
+
+            let next: TLShapeId[] = [id];
+            const anchor = anchorIdRef.current;
+
+            if (shift && anchor) {
+              const a = flatIds.indexOf(anchor);
+              const b = flatIds.indexOf(id);
+              if (a >= 0 && b >= 0) {
+                const lo = Math.min(a, b);
+                const hi = Math.max(a, b);
+                const range = flatIds.slice(lo, hi + 1);
+                // Shift selects a range; Cmd/Ctrl can be used to union onto existing selection.
+                if (e.metaKey || e.ctrlKey) {
+                  const set = new Set(curr.map(String));
+                  for (const rid of range) set.add(String(rid));
+                  next = Array.from(set) as any;
+                } else {
+                  next = range;
+                }
+              }
+            } else if (meta) {
+              const set = new Set(curr.map(String));
+              const key = String(id);
+              if (set.has(key)) set.delete(key);
+              else set.add(key);
+              next = Array.from(set) as any;
+            }
+
+            editor.setSelectedShapes(next);
+            anchorIdRef.current = id;
           }}
           onDoubleClick={() => beginRename(n.shape)}
           title={String(n.id)}
