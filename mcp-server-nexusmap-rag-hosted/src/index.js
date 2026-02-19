@@ -121,6 +121,8 @@ async function ragQueryScoped(share, args) {
 }
 
 const app = express();
+// Render/Railway/Fly sit behind proxies. Trust X-Forwarded-* so req.protocol is correct (https).
+app.set('trust proxy', true);
 app.use(express.json({ limit: '2mb' }));
 
 // Health check
@@ -150,7 +152,15 @@ app.get('/sse', async (req, res, next) => {
 
     // Tell client where to POST messages for this session.
     // Per MCP spec, this is sent as an "endpoint" event.
-    const baseUrl = `${req.protocol}://${req.get('host')}`;
+    const forwardedProto = String(req.headers['x-forwarded-proto'] || '')
+      .split(',')[0]
+      .trim();
+    const forwardedHost = String(req.headers['x-forwarded-host'] || '')
+      .split(',')[0]
+      .trim();
+    const proto = forwardedProto || req.protocol || 'http';
+    const host = forwardedHost || req.get('host');
+    const baseUrl = `${proto}://${host}`;
     const endpointUrl = `${baseUrl}/messages?sessionId=${encodeURIComponent(sessionId)}`;
     // Most clients expect the endpoint event's data to be a plain string URL.
     sseWriteText(res, 'endpoint', endpointUrl);
@@ -167,6 +177,12 @@ app.get('/sse', async (req, res, next) => {
   } catch (e) {
     return res.status(401).json({ error: e instanceof Error ? e.message : 'Unauthorized' });
   }
+});
+
+// Some clients optimistically try "streamable HTTP" by POSTing to the configured URL.
+// Our MCP server is SSE-based, so return a clear error (Cursor will fall back to SSE).
+app.post('/sse', async (_req, res) => {
+  return res.status(405).json({ error: 'This MCP server uses SSE. Connect with GET /sse (not POST).' });
 });
 
 app.post('/messages', async (req, res) => {
