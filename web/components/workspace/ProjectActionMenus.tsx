@@ -91,6 +91,8 @@ export function ProjectActionMenus({
   onNewNote,
   onNewVision,
   onNewTest,
+  onBuildKnowledgeBase,
+  onCopyMcpUrl,
   onExportBundle,
   onExportKg,
   onEditProject,
@@ -103,6 +105,8 @@ export function ProjectActionMenus({
   onNewNote: () => void;
   onNewVision: () => void;
   onNewTest: () => void;
+  onBuildKnowledgeBase?: () => void | Promise<void>;
+  onCopyMcpUrl?: () => void | Promise<void>;
   onExportBundle: () => void | Promise<void>;
   onExportKg: () => void | Promise<void>;
   onEditProject: () => void;
@@ -134,6 +138,22 @@ export function ProjectActionMenus({
       <DropdownMenu
         label={<>Project</>}
         items={[
+          {
+            id: 'build-kb',
+            label: 'Build knowledge base (RAG)',
+            icon: <Share2 size={14} />,
+            disabled: !onBuildKnowledgeBase,
+            title: onBuildKnowledgeBase ? 'Generate embeddings + semantic KG for this project' : 'RAG ingestion is only available in Supabase mode',
+            onClick: onBuildKnowledgeBase || (() => {}),
+          },
+          {
+            id: 'copy-mcp',
+            label: 'Copy MCP server URL',
+            icon: <Copy size={14} />,
+            disabled: !onCopyMcpUrl,
+            title: onCopyMcpUrl ? 'Create a share token and copy the hosted MCP URL' : 'MCP sharing is only available in Supabase mode',
+            onClick: onCopyMcpUrl || (() => {}),
+          },
           { id: 'export-bundle', label: 'Export bundle (.zip)', icon: <Package size={14} />, onClick: onExportBundle },
           { id: 'export-kg', label: 'Export semantic KG', icon: <Share2 size={14} />, onClick: onExportKg },
           { id: 'sep-2', label: '────────', disabled: true, onClick: () => {} },

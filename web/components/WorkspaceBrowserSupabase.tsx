@@ -133,6 +133,27 @@ export function WorkspaceBrowserSupabase() {
   const [kgViewerOpen, setKgViewerOpen] = useState(false);
   const [kgExportResult, setKgExportResult] = useState<Awaited<ReturnType<typeof exportKgAndVectorsForProject>> | null>(null);
 
+  const loadOpenAiKey = () => {
+    try {
+      return String(window.localStorage.getItem('nexusmap.openaiApiKey.v1') || '');
+    } catch {
+      return '';
+    }
+  };
+
+  const ensureOpenAiKey = async (): Promise<string> => {
+    const existing = loadOpenAiKey().trim();
+    if (existing) return existing;
+    const entered = String(window.prompt('Enter your OpenAI API key (starts with sk-). This will be saved in this browser only.', '') || '').trim();
+    if (!entered) return '';
+    try {
+      window.localStorage.setItem('nexusmap.openaiApiKey.v1', entered);
+    } catch {
+      // ignore
+    }
+    return entered;
+  };
+
   const showToast = (msg: string) => {
     setToast(msg);
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
@@ -140,6 +161,15 @@ export function WorkspaceBrowserSupabase() {
       toastTimerRef.current = null;
       setToast(null);
     }, 1600);
+  };
+
+  const copyText = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast('Copied');
+    } catch {
+      showToast('Copy failed');
+    }
   };
 
   useEffect(() => {
@@ -768,6 +798,64 @@ export function WorkspaceBrowserSupabase() {
                 onNewNote={() => createNoteFile(activeFolder.id)}
                 onNewVision={() => createVisionFile(activeFolder.id)}
                 onNewTest={() => createTestFile(activeFolder.id)}
+                onBuildKnowledgeBase={async () => {
+                  if (!supabase) return;
+                  try {
+                    const openaiApiKey = await ensureOpenAiKey();
+                    if (!openaiApiKey) {
+                      showToast('Missing OpenAI key (set it in Account)');
+                      return;
+                    }
+                    showToast('Building knowledge base…');
+                    const res = await fetch('/api/rag/ingest', {
+                      method: 'POST',
+                      headers: { 'content-type': 'application/json', 'x-openai-api-key': openaiApiKey },
+                      body: JSON.stringify({ projectFolderId: activeFolder.id }),
+                    });
+                    const json = await res.json().catch(() => ({}));
+                    if (!res.ok) {
+                      const msg = (json as any)?.error ? String((json as any).error) : 'Build failed';
+                      showToast(msg);
+                      return;
+                    }
+                    const stats = (json as any)?.stats;
+                    if (stats?.chunks != null) showToast(`KB built (${stats.chunks} chunks)`);
+                    else showToast('KB built');
+                  } catch (e) {
+                    showToast(e instanceof Error ? e.message : 'Build failed');
+                  }
+                }}
+                onCopyMcpUrl={async () => {
+                  try {
+                    showToast('Creating MCP link…');
+                    const res = await fetch('/api/rag/mcp-share', {
+                      method: 'POST',
+                      headers: { 'content-type': 'application/json' },
+                      body: JSON.stringify({ projectFolderId: activeFolder.id, label: activeFolder.name }),
+                    });
+                    const json = await res.json().catch(() => ({}));
+                    if (!res.ok) {
+                      const msg = (json as any)?.error ? String((json as any).error) : 'Failed';
+                      showToast(msg);
+                      return;
+                    }
+                    const url = String((json as any)?.mcpUrl || '').trim();
+                    const token = String((json as any)?.token || '').trim();
+                    if (url) {
+                      await copyText(url);
+                      return;
+                    }
+                    // If host URL isn't configured, at least copy the token.
+                    if (token) {
+                      await copyText(token);
+                      showToast('Copied token (set MCP server URL in env)');
+                      return;
+                    }
+                    showToast('Created, but nothing to copy');
+                  } catch (e) {
+                    showToast(e instanceof Error ? e.message : 'Failed');
+                  }
+                }}
                 onExportBundle={async () => {
                   if (!supabase) return;
                   const includeKgVectors = confirm('Include KG + embeddings outputs in the bundle?');

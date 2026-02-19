@@ -7,11 +7,38 @@ import { normalizeLayoutDirection, type LayoutDirection } from '@/lib/layout-dir
 import { fetchProfileDefaultLayoutDirection, updateProfileDefaultLayoutDirection } from '@/lib/layout-direction-supabase';
 import { DiregramMark } from '@/components/DiregramMark';
 
+const OPENAI_KEY_STORAGE = 'nexusmap.openaiApiKey.v1';
+
+function loadOpenAiKey(): string {
+  if (typeof window === 'undefined') return '';
+  try {
+    return String(window.localStorage.getItem(OPENAI_KEY_STORAGE) || '');
+  } catch {
+    return '';
+  }
+}
+
+function saveOpenAiKey(next: string) {
+  if (typeof window === 'undefined') return;
+  try {
+    if (!next) window.localStorage.removeItem(OPENAI_KEY_STORAGE);
+    else window.localStorage.setItem(OPENAI_KEY_STORAGE, next);
+  } catch {
+    // ignore
+  }
+}
+
 export default function AccountClient() {
   const router = useRouter();
   const { configured, supabase, ready, user, signOut } = useAuth();
   const [defaultLayoutDirection, setDefaultLayoutDirection] = useState<LayoutDirection>('horizontal');
   const [savingLayoutDirection, setSavingLayoutDirection] = useState(false);
+  const [openAiKey, setOpenAiKey] = useState('');
+  const [savedToast, setSavedToast] = useState<string | null>(null);
+
+  useEffect(() => {
+    setOpenAiKey(loadOpenAiKey());
+  }, []);
 
   useEffect(() => {
     if (!configured) return;
@@ -52,6 +79,7 @@ export default function AccountClient() {
             <div className="mac-title">Profile</div>
           </div>
           <div className="p-4 space-y-3 text-xs">
+            {savedToast ? <div className="mac-double-outline p-2">{savedToast}</div> : null}
             {!configured ? (
               <div>Supabase auth is not configured.</div>
             ) : !supabase ? (
@@ -73,6 +101,51 @@ export default function AccountClient() {
                   </div>
                   <div>
                     <span className="font-semibold">User ID:</span> <span className="font-mono">{user.id}</span>
+                  </div>
+                </div>
+
+                <div className="mac-double-outline p-3 space-y-2">
+                  <div className="font-semibold">AI</div>
+                  <div className="space-y-1">
+                    <div>OpenAI API key (stored only in this browser)</div>
+                    <input
+                      className="mac-field w-full"
+                      value={openAiKey}
+                      placeholder="sk-..."
+                      onChange={(e) => setOpenAiKey(e.target.value)}
+                      type="password"
+                      autoComplete="off"
+                      spellCheck={false}
+                    />
+                    <div className="flex items-center justify-end gap-2 pt-1">
+                      <button
+                        type="button"
+                        className="mac-btn"
+                        onClick={() => {
+                          setOpenAiKey('');
+                          saveOpenAiKey('');
+                          setSavedToast('Cleared');
+                          window.setTimeout(() => setSavedToast(null), 1600);
+                        }}
+                      >
+                        Clear
+                      </button>
+                      <button
+                        type="button"
+                        className="mac-btn mac-btn--primary"
+                        onClick={() => {
+                          const next = openAiKey.trim();
+                          saveOpenAiKey(next);
+                          setSavedToast(next ? 'Saved' : 'Cleared');
+                          window.setTimeout(() => setSavedToast(null), 1600);
+                        }}
+                      >
+                        Save
+                      </button>
+                    </div>
+                    <div className="text-[11px] opacity-70">
+                      This key is used for “Build knowledge base (RAG)” and RAG queries. It is not uploaded to Supabase by default.
+                    </div>
                   </div>
                 </div>
 

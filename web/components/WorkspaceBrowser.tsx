@@ -377,6 +377,7 @@ export function WorkspaceBrowser() {
                     return next;
                   });
                 }}
+                onCopyMcpUrl={undefined}
                 onExportBundle={async () => {
                   const includeKgVectors = confirm('Include KG + embeddings outputs in the bundle?');
                   const out = await exportProjectBundleZip({
