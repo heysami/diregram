@@ -24,6 +24,25 @@ You give them a URL like:
 
 They add it in Cursor MCP settings as a server URL.
 
+#### BYOK OpenAI key (no server-side OpenAI key)
+
+Users can set their OpenAI key once in Cursor as a header (recommended) instead of pasting it into every tool call:
+
+```json
+{
+  "mcpServers": {
+    "nexusmap-rag": {
+      "url": "https://mcp.yourdomain.com/sse?token=nm_mcp_...",
+      "headers": {
+        "x-openai-api-key": "sk-..."
+      }
+    }
+  }
+}
+```
+
+This key stays on the user's machine (Cursor config) and is sent to the MCP server on each request.
+
 ### How you generate the token (admin workflow)
 
 In the NexusMap web app:

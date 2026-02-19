@@ -199,6 +199,11 @@ app.post('/messages', async (req, res) => {
   const sess = sessions.get(sessionId);
   if (!sess) return res.status(404).json({ error: 'Unknown session' });
 
+  // Allow clients (e.g. Cursor) to attach a per-user OpenAI key as a header,
+  // so users don't have to paste it into every tool call.
+  const headerOpenAiKey = String(req.headers['x-openai-api-key'] || '').trim();
+  if (headerOpenAiKey) sess.openaiApiKey = headerOpenAiKey;
+
   const msg = req.body;
   const id = msg?.id ?? null;
   const method = String(msg?.method || '');

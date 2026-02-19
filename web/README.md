@@ -64,6 +64,9 @@ Setup:
 - In the app: open a project → **Project → Copy MCP server URL**
 - Give that copied URL to users (it includes an opaque token).
 
+Users will still need an embeddings credential to run RAG queries. If you don't want a server-side OpenAI key,
+have users set their own OpenAI key in their MCP client (e.g. Cursor) as a header `x-openai-api-key: sk-...`.
+
 ### Making it “real” (recommended next steps)
 
 - **Deploy `web`**: easiest is Vercel (Next.js native), or any Node hosting that can run `next start`.
