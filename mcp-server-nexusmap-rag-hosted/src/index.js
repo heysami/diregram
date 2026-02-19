@@ -72,6 +72,11 @@ function sseWrite(res, event, dataObj) {
   res.write(`data: ${JSON.stringify(dataObj)}\n\n`);
 }
 
+function sseWriteText(res, event, text) {
+  res.write(`event: ${event}\n`);
+  res.write(`data: ${String(text || '')}\n\n`);
+}
+
 async function ragQueryScoped(share, args) {
   const parsed = QueryArgs.safeParse(args);
   if (!parsed.success) throw new Error(parsed.error.message);
@@ -127,7 +132,10 @@ const sessions = new Map(); // sessionId -> { share, res }
 
 app.get('/sse', async (req, res, next) => {
   try {
-    const token = String(req.query.token || '').trim();
+    const tokenFromQuery = String(req.query.token || '').trim();
+    const auth = String(req.headers.authorization || '');
+    const tokenFromAuth = auth.toLowerCase().startsWith('bearer ') ? auth.slice('bearer '.length).trim() : '';
+    const token = tokenFromQuery || tokenFromAuth;
     if (!token) return res.status(401).json({ error: 'Missing token' });
     const share = await resolveShareFromToken(token);
 
@@ -142,7 +150,10 @@ app.get('/sse', async (req, res, next) => {
 
     // Tell client where to POST messages for this session.
     // Per MCP spec, this is sent as an "endpoint" event.
-    sseWrite(res, 'endpoint', { uri: `/messages?sessionId=${encodeURIComponent(sessionId)}` });
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
+    const endpointUrl = `${baseUrl}/messages?sessionId=${encodeURIComponent(sessionId)}`;
+    // Most clients expect the endpoint event's data to be a plain string URL.
+    sseWriteText(res, 'endpoint', endpointUrl);
 
     req.on('close', () => {
       sessions.delete(sessionId);
@@ -159,7 +170,7 @@ app.get('/sse', async (req, res, next) => {
 });
 
 app.post('/messages', async (req, res) => {
-  const sessionId = String(req.query.sessionId || '').trim();
+  const sessionId = String(req.query.sessionId || req.headers['mcp-session-id'] || '').trim();
   if (!sessionId) return res.status(400).json({ error: 'Missing sessionId' });
   const sess = sessions.get(sessionId);
   if (!sess) return res.status(404).json({ error: 'Unknown session' });
