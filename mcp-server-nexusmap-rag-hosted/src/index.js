@@ -13,6 +13,7 @@ function env(name, fallback = '') {
 
 const SUPABASE_URL = env('SUPABASE_URL', env('NEXT_PUBLIC_SUPABASE_URL'));
 const SUPABASE_SERVICE_ROLE_KEY = env('SUPABASE_SERVICE_ROLE_KEY');
+const OPENAI_API_KEY = env('OPENAI_API_KEY', '');
 
 if (!SUPABASE_URL) throw new Error('Missing SUPABASE_URL (or NEXT_PUBLIC_SUPABASE_URL)');
 if (!SUPABASE_SERVICE_ROLE_KEY) throw new Error('Missing SUPABASE_SERVICE_ROLE_KEY');
@@ -62,6 +63,7 @@ const QueryArgs = z.object({
   query: z.string().min(1),
   topK: z.number().int().min(1).max(50).optional(),
   generateAnswer: z.boolean().optional(),
+  // Optional if the MCP server itself has OPENAI_API_KEY set.
   openaiApiKey: z.string().min(1).optional(),
   embeddingModel: z.string().min(1).optional(),
   chatModel: z.string().min(1).optional(),
@@ -77,15 +79,20 @@ function sseWriteText(res, event, text) {
   res.write(`data: ${String(text || '')}\n\n`);
 }
 
-async function ragQueryScoped(share, args) {
+async function ragQueryScoped(share, args, opts) {
   const parsed = QueryArgs.safeParse(args);
   if (!parsed.success) throw new Error(parsed.error.message);
   const a = parsed.data;
   const topK = typeof a.topK === 'number' ? a.topK : 12;
   const generateAnswer = a.generateAnswer !== false;
-  const openaiApiKey = String(a.openaiApiKey || '').trim();
+  const sessionKey = String(opts?.sessionOpenaiApiKey || '').trim();
+  const openaiApiKey = String(a.openaiApiKey || '').trim() || sessionKey || OPENAI_API_KEY;
   const embeddingModel = a.embeddingModel;
   const chatModel = a.chatModel;
+
+  if (!openaiApiKey) {
+    throw new Error('OpenAI key required: pass openaiApiKey (sk-...) or call nexusmap_set_openai_key once per session.');
+  }
 
   const embedding = (await embedOpenAI({ apiKey: openaiApiKey, model: embeddingModel, input: [a.query] }))[0];
 
@@ -130,7 +137,8 @@ app.get('/', (_req, res) => res.status(200).send('ok'));
 
 // Minimal MCP-over-SSE transport (hosted).
 // Cursor can connect via URL: https://host/sse?token=...
-const sessions = new Map(); // sessionId -> { share, res }
+// NOTE: user-provided OpenAI keys are stored in-memory per session only.
+const sessions = new Map(); // sessionId -> { share, res, openaiApiKey?: string }
 
 app.get('/sse', async (req, res, next) => {
   try {
@@ -148,7 +156,7 @@ app.get('/sse', async (req, res, next) => {
     res.setHeader('connection', 'keep-alive');
     res.flushHeaders?.();
 
-    sessions.set(sessionId, { share, res });
+    sessions.set(sessionId, { share, res, openaiApiKey: '' });
 
     // Tell client where to POST messages for this session.
     // Per MCP spec, this is sent as an "endpoint" event.
@@ -221,6 +229,17 @@ app.post('/messages', async (req, res) => {
       sendResult({
         tools: [
           {
+            name: 'nexusmap_set_openai_key',
+            description: 'Store your OpenAI API key for this MCP session (in-memory only).',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                openaiApiKey: { type: 'string', description: 'OpenAI API key (sk-...)' },
+              },
+              required: ['openaiApiKey'],
+            },
+          },
+          {
             name: 'nexusmap_rag_query',
             description: 'Query the NexusMap project knowledge base (scoped by share token).',
             inputSchema: {
@@ -229,11 +248,11 @@ app.post('/messages', async (req, res) => {
                 query: { type: 'string' },
                 topK: { type: 'integer', minimum: 1, maximum: 50 },
                 generateAnswer: { type: 'boolean' },
-                openaiApiKey: { type: 'string' },
+                openaiApiKey: { type: 'string', description: 'OpenAI API key (sk-...). Optional if the MCP server has OPENAI_API_KEY set.' },
                 embeddingModel: { type: 'string' },
                 chatModel: { type: 'string' },
               },
-              required: ['query', 'openaiApiKey'],
+              required: ['query'],
             },
           },
         ],
@@ -244,10 +263,23 @@ app.post('/messages', async (req, res) => {
     if (method === 'tools/call') {
       const toolName = String(params?.name || '');
       const args = params?.arguments || {};
-      if (toolName !== 'nexusmap_rag_query') throw new Error('Unknown tool');
-      const out = await ragQueryScoped(sess.share, args);
-      sendResult({ content: [{ type: 'text', text: JSON.stringify(out, null, 2) }] });
-      return res.status(202).end();
+      if (toolName === 'nexusmap_set_openai_key') {
+        const key = String(args?.openaiApiKey || '').trim();
+        if (!key) throw new Error('Missing openaiApiKey');
+        sess.openaiApiKey = key;
+        sendResult({ ok: true });
+        return res.status(202).end();
+      }
+
+      if (toolName === 'nexusmap_rag_query') {
+        const out = await ragQueryScoped(sess.share, args, { sessionOpenaiApiKey: sess.openaiApiKey });
+        const inline = String(args?.openaiApiKey || '').trim();
+        if (inline) sess.openaiApiKey = inline;
+        sendResult({ content: [{ type: 'text', text: JSON.stringify(out, null, 2) }] });
+        return res.status(202).end();
+      }
+
+      throw new Error('Unknown tool');
     }
 
     // Notifications / unknown methods: ignore

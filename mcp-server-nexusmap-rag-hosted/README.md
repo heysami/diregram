@@ -14,6 +14,7 @@ This package is for **you to deploy once** (online). After that, users can add i
 - `SUPABASE_URL` (or `NEXT_PUBLIC_SUPABASE_URL`)
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `PORT` (optional; default 3232)
+- Optional: `OPENAI_API_KEY` (if set, users don’t need to supply `openaiApiKey` per tool call)
 
 ### How users connect (Cursor)
 
