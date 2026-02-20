@@ -67,6 +67,17 @@ Setup:
 Users will still need an embeddings credential to run RAG queries. If you don't want a server-side OpenAI key,
 have users set their own OpenAI key in their MCP client (e.g. Cursor) as a header `x-openai-api-key: sk-...`.
 
+#### Single MCP URL for your whole account (recommended)
+
+Instead of one MCP URL per project:
+
+- In the app: **Project → Copy MCP URL (account)**
+- Users add that one URL once.
+- Then they can use MCP tools:
+  - `nexusmap_list_projects`
+  - `nexusmap_set_project`
+  - `nexusmap_rag_query`
+
 ### Making it “real” (recommended next steps)
 
 - **Deploy `web`**: easiest is Vercel (Next.js native), or any Node hosting that can run `next start`.

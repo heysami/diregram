@@ -46,10 +46,10 @@ This key stays on the user's machine (Cursor config) and is sent to the MCP serv
 ### How you generate the token (admin workflow)
 
 In the NexusMap web app:
-- open a project
-- **Project → Copy MCP server URL**
+- open any project
+- **Project → Copy MCP URL (account)**
 
-This calls `/api/rag/mcp-share` and returns an opaque token that does **not** reveal the project UUID.
+This creates an **account-scoped** token. Users add it once, then choose projects via MCP tools.
 
 ### Deploy notes
 

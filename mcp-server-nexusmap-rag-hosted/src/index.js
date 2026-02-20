@@ -49,14 +49,18 @@ async function chatOpenAI({ apiKey, model, messages }) {
 async function resolveShareFromToken(token) {
   const tokenHash = sha256Hex(token);
   const { data, error } = await supabase
-    .from('rag_mcp_shares')
-    .select('owner_id,project_folder_id,revoked_at')
+    .from('rag_mcp_tokens')
+    .select('owner_id,scope,project_folder_id,revoked_at')
     .eq('token_hash', tokenHash)
     .maybeSingle();
   if (error) throw new Error(error.message);
   if (!data) throw new Error('Invalid token');
   if (data.revoked_at) throw new Error('Token revoked');
-  return { ownerId: data.owner_id, projectFolderId: data.project_folder_id };
+  const scope = String((data as any).scope || '');
+  if (scope !== 'account' && scope !== 'project') throw new Error('Invalid token scope');
+  const projectFolderId = (data as any).project_folder_id ? String((data as any).project_folder_id) : null;
+  if (scope === 'project' && !projectFolderId) throw new Error('Project token missing project');
+  return { ownerId: (data as any).owner_id, scope, projectFolderId };
 }
 
 const QueryArgs = z.object({
@@ -96,11 +100,14 @@ async function ragQueryScoped(share, args, opts) {
 
   const embedding = (await embedOpenAI({ apiKey: openaiApiKey, model: embeddingModel, input: [a.query] }))[0];
 
+  const projectId = share.projectFolderId ? share.projectFolderId : String(opts?.projectFolderId || '').trim();
+  if (!projectId) throw new Error('Missing project: use nexusmap_list_projects and nexusmap_set_project first, or use a project-scoped MCP token.');
+
   const { data, error } = await supabase.rpc('match_rag_chunks', {
     query_embedding: embedding,
     match_count: topK,
     owner: share.ownerId,
-    project: share.projectFolderId,
+    project: projectId,
   });
   if (error) throw new Error(error.message);
   const matches = Array.isArray(data) ? data : [];
@@ -127,6 +134,21 @@ async function ragQueryScoped(share, args, opts) {
   return { ok: true, answer, matches };
 }
 
+async function listProjectsForOwner(ownerId) {
+  const { data, error } = await supabase
+    .from('rag_projects')
+    .select('public_id,project_folder_id,updated_at,folders(name)')
+    .eq('owner_id', ownerId)
+    .order('updated_at', { ascending: false });
+  if (error) throw new Error(error.message);
+  const rows = Array.isArray(data) ? data : [];
+  return rows.map((r) => ({
+    publicId: String(r.public_id || ''),
+    name: String(r.folders?.name || ''),
+    updatedAt: r.updated_at || null,
+  }));
+}
+
 const app = express();
 // Render/Railway/Fly sit behind proxies. Trust X-Forwarded-* so req.protocol is correct (https).
 app.set('trust proxy', true);
@@ -138,7 +160,7 @@ app.get('/', (_req, res) => res.status(200).send('ok'));
 // Minimal MCP-over-SSE transport (hosted).
 // Cursor can connect via URL: https://host/sse?token=...
 // NOTE: user-provided OpenAI keys are stored in-memory per session only.
-const sessions = new Map(); // sessionId -> { share, res, openaiApiKey?: string }
+const sessions = new Map(); // sessionId -> { share, res, openaiApiKey?: string, activePublicProjectId?: string }
 
 app.get('/sse', async (req, res, next) => {
   try {
@@ -156,7 +178,7 @@ app.get('/sse', async (req, res, next) => {
     res.setHeader('connection', 'keep-alive');
     res.flushHeaders?.();
 
-    sessions.set(sessionId, { share, res, openaiApiKey: '' });
+    sessions.set(sessionId, { share, res, openaiApiKey: '', activePublicProjectId: '' });
 
     // Tell client where to POST messages for this session.
     // Per MCP spec, this is sent as an "endpoint" event.
@@ -245,6 +267,26 @@ app.post('/messages', async (req, res) => {
             },
           },
           {
+            name: 'nexusmap_list_projects',
+            description: 'List projects available to this MCP token (account-scoped tokens only).',
+            inputSchema: {
+              type: 'object',
+              properties: {},
+              required: [],
+            },
+          },
+          {
+            name: 'nexusmap_set_project',
+            description: 'Select which project to query (account-scoped tokens only).',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                publicProjectId: { type: 'string', description: 'Project public id (rag_...) from nexusmap_list_projects' },
+              },
+              required: ['publicProjectId'],
+            },
+          },
+          {
             name: 'nexusmap_rag_query',
             description: 'Query the NexusMap project knowledge base (scoped by share token).',
             inputSchema: {
@@ -276,8 +318,48 @@ app.post('/messages', async (req, res) => {
         return res.status(202).end();
       }
 
+      if (toolName === 'nexusmap_list_projects') {
+        if (sess.share.scope !== 'account') throw new Error('list_projects requires an account-scoped token');
+        const projects = await listProjectsForOwner(sess.share.ownerId);
+        sendResult({ content: [{ type: 'text', text: JSON.stringify({ ok: true, projects }, null, 2) }] });
+        return res.status(202).end();
+      }
+
+      if (toolName === 'nexusmap_set_project') {
+        if (sess.share.scope !== 'account') throw new Error('set_project requires an account-scoped token');
+        const pid = String(args?.publicProjectId || '').trim();
+        if (!pid) throw new Error('Missing publicProjectId');
+        // Resolve to folder id (kept server-side).
+        const { data, error } = await supabase
+          .from('rag_projects')
+          .select('project_folder_id')
+          .eq('owner_id', sess.share.ownerId)
+          .eq('public_id', pid)
+          .maybeSingle();
+        if (error) throw new Error(error.message);
+        const folderId = (data as any)?.project_folder_id ? String((data as any).project_folder_id) : '';
+        if (!folderId) throw new Error('Unknown project');
+        sess.activePublicProjectId = pid;
+        sendResult({ ok: true });
+        return res.status(202).end();
+      }
+
       if (toolName === 'nexusmap_rag_query') {
-        const out = await ragQueryScoped(sess.share, args, { sessionOpenaiApiKey: sess.openaiApiKey });
+        let projectFolderId = '';
+        if (sess.share.scope === 'account') {
+          const pid = String(sess.activePublicProjectId || '').trim();
+          if (pid) {
+            const { data, error } = await supabase
+              .from('rag_projects')
+              .select('project_folder_id')
+              .eq('owner_id', sess.share.ownerId)
+              .eq('public_id', pid)
+              .maybeSingle();
+            if (error) throw new Error(error.message);
+            projectFolderId = (data as any)?.project_folder_id ? String((data as any).project_folder_id) : '';
+          }
+        }
+        const out = await ragQueryScoped(sess.share, args, { sessionOpenaiApiKey: sess.openaiApiKey, projectFolderId });
         const inline = String(args?.openaiApiKey || '').trim();
         if (inline) sess.openaiApiKey = inline;
         sendResult({ content: [{ type: 'text', text: JSON.stringify(out, null, 2) }] });

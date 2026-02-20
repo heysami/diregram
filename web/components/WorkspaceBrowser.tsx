@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { ArrowLeft, FileText, Folder, FolderPlus, Pencil, Trash2, Plus, Mail, Copy, Network, Eye, Table, LayoutTemplate, FlaskConical } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 import { AccessPeopleEditor } from '@/components/AccessPeopleEditor';
@@ -61,6 +61,7 @@ type EditState = {
 
 export function WorkspaceBrowser() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { user } = useAuth();
   const userEmail = user?.email || null;
 
@@ -99,6 +100,24 @@ export function WorkspaceBrowser() {
     if (!storeReady) return;
     saveLocalFileStore(store);
   }, [store, storeReady]);
+
+  // Keep the active project in the URL so humans can share/open it.
+  useEffect(() => {
+    const fromUrl = String(searchParams?.get('project') || '').trim();
+    if (fromUrl && !activeFolderId) {
+      if (store.folders.some((f) => f.id === fromUrl)) setActiveFolderId(fromUrl);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [store.folders, searchParams]);
+
+  useEffect(() => {
+    const cur = String(searchParams?.get('project') || '').trim();
+    const next = activeFolderId ? String(activeFolderId) : '';
+    if (next === cur) return;
+    if (next) router.replace(`/workspace?project=${encodeURIComponent(next)}`);
+    else router.replace('/workspace');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeFolderId]);
 
   useEffect(() => {
     return () => {
@@ -377,7 +396,17 @@ export function WorkspaceBrowser() {
                     return next;
                   });
                 }}
-                onCopyMcpUrl={undefined}
+                onCopyMcpAccountUrl={undefined}
+                onCopyProjectLink={async () => {
+                  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+                  if (!origin) return;
+                  try {
+                    await navigator.clipboard.writeText(`${origin}/workspace?project=${encodeURIComponent(activeFolder.id)}`);
+                    showToast('Copied');
+                  } catch {
+                    showToast('Copy failed');
+                  }
+                }}
                 onExportBundle={async () => {
                   const includeKgVectors = confirm('Include KG + embeddings outputs in the bundle?');
                   const out = await exportProjectBundleZip({

@@ -92,7 +92,8 @@ export function ProjectActionMenus({
   onNewVision,
   onNewTest,
   onBuildKnowledgeBase,
-  onCopyMcpUrl,
+  onCopyMcpAccountUrl,
+  onCopyProjectLink,
   onExportBundle,
   onExportKg,
   onEditProject,
@@ -106,7 +107,8 @@ export function ProjectActionMenus({
   onNewVision: () => void;
   onNewTest: () => void;
   onBuildKnowledgeBase?: () => void | Promise<void>;
-  onCopyMcpUrl?: () => void | Promise<void>;
+  onCopyMcpAccountUrl?: () => void | Promise<void>;
+  onCopyProjectLink?: () => void | Promise<void>;
   onExportBundle: () => void | Promise<void>;
   onExportKg: () => void | Promise<void>;
   onEditProject: () => void;
@@ -147,12 +149,20 @@ export function ProjectActionMenus({
             onClick: onBuildKnowledgeBase || (() => {}),
           },
           {
-            id: 'copy-mcp',
-            label: 'Copy MCP server URL',
+            id: 'copy-mcp-account',
+            label: 'Copy MCP URL (account)',
             icon: <Copy size={14} />,
-            disabled: !onCopyMcpUrl,
-            title: onCopyMcpUrl ? 'Create a share token and copy the hosted MCP URL' : 'MCP sharing is only available in Supabase mode',
-            onClick: onCopyMcpUrl || (() => {}),
+            disabled: !onCopyMcpAccountUrl,
+            title: onCopyMcpAccountUrl ? 'Copy a single MCP URL that can access multiple projects (selection happens in tools)' : 'MCP sharing is only available in Supabase mode',
+            onClick: onCopyMcpAccountUrl || (() => {}),
+          },
+          {
+            id: 'copy-project-link',
+            label: 'Copy project link',
+            icon: <Copy size={14} />,
+            disabled: !onCopyProjectLink,
+            title: onCopyProjectLink ? 'Copy a link that opens this project in the Workspace' : undefined,
+            onClick: onCopyProjectLink || (() => {}),
           },
           { id: 'export-bundle', label: 'Export bundle (.zip)', icon: <Package size={14} />, onClick: onExportBundle },
           { id: 'export-kg', label: 'Export semantic KG', icon: <Share2 size={14} />, onClick: onExportKg },

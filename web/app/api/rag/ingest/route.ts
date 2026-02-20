@@ -5,6 +5,7 @@ import { getUserSupabaseClient } from '@/lib/server/supabase-user';
 import { hasValidRagApiKey } from '@/lib/server/rag-auth';
 import { parseJsonl } from '@/lib/server/jsonl';
 import { embedTextsOpenAI } from '@/lib/server/openai-embeddings';
+import { randomBytes } from 'node:crypto';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -23,6 +24,10 @@ function chunkArray<T>(arr: T[], size: number): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
   return out;
+}
+
+function randomPublicId() {
+  return `rag_${randomBytes(10).toString('base64url')}`;
 }
 
 export async function POST(request: Request) {
@@ -82,6 +87,25 @@ export async function POST(request: Request) {
   await admin.from('kg_entities').delete().eq('owner_id', ownerId).eq('project_folder_id', projectFolderId);
   await admin.from('kg_edges').delete().eq('owner_id', ownerId).eq('project_folder_id', projectFolderId);
 
+  // Ensure this project has a stable public_id for account-level MCP selection.
+  const existingProject = await admin
+    .from('rag_projects')
+    .select('public_id')
+    .eq('owner_id', ownerId)
+    .eq('project_folder_id', projectFolderId)
+    .maybeSingle();
+  const existingPublicId = (existingProject.data as any)?.public_id ? String((existingProject.data as any).public_id) : '';
+  const publicId = existingPublicId || randomPublicId();
+  await admin.from('rag_projects').upsert(
+    {
+      owner_id: ownerId,
+      project_folder_id: projectFolderId,
+      public_id: publicId,
+      updated_at: new Date().toISOString(),
+    } as any,
+    { onConflict: 'owner_id,project_folder_id' },
+  );
+
   // Persist KG (raw NDJSON record payloads).
   for (const batch of chunkArray(entityRecords, 500)) {
     const rows = batch.map((r) => ({
@@ -139,6 +163,7 @@ export async function POST(request: Request) {
     ok: true,
     projectFolderId,
     ownerId,
+    publicProjectId: publicId,
     stats: {
       files: exp.stats.files,
       entities: entityRecords.length,

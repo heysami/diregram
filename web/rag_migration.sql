@@ -95,6 +95,36 @@ create table if not exists public.rag_mcp_shares (
 create index if not exists rag_mcp_shares_owner_project_idx
   on public.rag_mcp_shares (owner_id, project_folder_id);
 
+-- 3c) Public project IDs for MCP selection (avoid leaking internal UUIDs).
+create table if not exists public.rag_projects (
+  owner_id uuid references public.profiles(id) on delete cascade not null,
+  project_folder_id uuid references public.folders(id) on delete cascade not null,
+  public_id text not null,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now(),
+  primary key (owner_id, project_folder_id),
+  unique (public_id)
+);
+
+create index if not exists rag_projects_owner_public_idx
+  on public.rag_projects (owner_id, public_id);
+
+-- 3d) MCP tokens (account-scoped or project-scoped).
+create table if not exists public.rag_mcp_tokens (
+  id uuid primary key default gen_random_uuid(),
+  owner_id uuid references public.profiles(id) on delete cascade not null,
+  scope text not null, -- 'account' | 'project'
+  project_folder_id uuid references public.folders(id) on delete cascade,
+  label text default '',
+  token_hash text not null,
+  created_at timestamptz default now(),
+  revoked_at timestamptz,
+  unique (token_hash)
+);
+
+create index if not exists rag_mcp_tokens_owner_idx
+  on public.rag_mcp_tokens (owner_id, scope);
+
 -- 4) Vector search helper (invoker security; RLS still applies on rag_chunks).
 create or replace function public.match_rag_chunks(
   query_embedding vector(1536),
@@ -134,6 +164,8 @@ alter table public.rag_chunks enable row level security;
 alter table public.kg_entities enable row level security;
 alter table public.kg_edges enable row level security;
 alter table public.rag_mcp_shares enable row level security;
+alter table public.rag_projects enable row level security;
+alter table public.rag_mcp_tokens enable row level security;
 
 drop policy if exists "rag_chunks_select_via_file_access" on public.rag_chunks;
 create policy "rag_chunks_select_via_file_access" on public.rag_chunks
@@ -173,6 +205,18 @@ create policy "kg_edges_select_owner" on public.kg_edges
 -- MCP shares: only owners can view/manage tokens from the app UI.
 drop policy if exists "rag_mcp_shares_owner_only" on public.rag_mcp_shares;
 create policy "rag_mcp_shares_owner_only" on public.rag_mcp_shares
+  for all
+  using (auth.uid() = owner_id)
+  with check (auth.uid() = owner_id);
+
+drop policy if exists "rag_projects_owner_only" on public.rag_projects;
+create policy "rag_projects_owner_only" on public.rag_projects
+  for all
+  using (auth.uid() = owner_id)
+  with check (auth.uid() = owner_id);
+
+drop policy if exists "rag_mcp_tokens_owner_only" on public.rag_mcp_tokens;
+create policy "rag_mcp_tokens_owner_only" on public.rag_mcp_tokens
   for all
   using (auth.uid() = owner_id)
   with check (auth.uid() = owner_id);

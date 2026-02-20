@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import { ArrowLeft, Copy, Download, FileText, Folder, FolderPlus, Mail, Pencil, Plus, Trash2, Network, Eye, Table, LayoutTemplate, FlaskConical, Package, Share2 } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 import { AccessPeopleEditor } from '@/components/AccessPeopleEditor';
@@ -108,6 +109,7 @@ type EditFileState = { id: string; name: string; people: AccessPerson[] };
 
 export function WorkspaceBrowserSupabase() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { configured, supabase, ready, user } = useAuth();
   const userId = user?.id || null;
   const userEmail = user?.email || null;
@@ -223,6 +225,25 @@ export function WorkspaceBrowserSupabase() {
     reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [configured, ready, supabase, userId]);
+
+  // Keep the active project in the URL so humans can share/open it.
+  useEffect(() => {
+    const fromUrl = String(searchParams?.get('project') || '').trim();
+    if (fromUrl && !activeFolderId) {
+      // Only auto-open if it exists in the loaded list.
+      if (folders.some((f) => f.id === fromUrl)) setActiveFolderId(fromUrl);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [folders, searchParams]);
+
+  useEffect(() => {
+    const cur = String(searchParams?.get('project') || '').trim();
+    const next = activeFolderId ? String(activeFolderId) : '';
+    if (next === cur) return;
+    if (next) router.replace(`/workspace?project=${encodeURIComponent(next)}`);
+    else router.replace('/workspace');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeFolderId]);
 
   const folderById = useMemo(() => new Map(folders.map((f) => [f.id, f])), [folders]);
 
@@ -825,17 +846,25 @@ export function WorkspaceBrowserSupabase() {
                     showToast(e instanceof Error ? e.message : 'Build failed');
                   }
                 }}
-                onCopyMcpUrl={async () => {
+                onCopyMcpAccountUrl={async () => {
                   try {
-                    showToast('Creating MCP link…');
-                    const res = await fetch('/api/rag/mcp-share', {
-                      method: 'POST',
-                      headers: { 'content-type': 'application/json' },
-                      body: JSON.stringify({ projectFolderId: activeFolder.id, label: activeFolder.name }),
-                    });
-                    const json = await res.json().catch(() => ({}));
+                    showToast('Creating MCP account link…');
+                    const res = await fetch('/api/rag/mcp-account', { method: 'POST' });
+                    const raw = await res.text().catch(() => '');
+                    const json = (() => {
+                      try {
+                        return raw ? JSON.parse(raw) : {};
+                      } catch {
+                        return {};
+                      }
+                    })();
                     if (!res.ok) {
-                      const msg = (json as any)?.error ? String((json as any).error) : 'Failed';
+                      const msg =
+                        (json as any)?.error
+                          ? String((json as any).error)
+                          : raw.trim()
+                            ? raw.trim().slice(0, 400)
+                            : `Failed (HTTP ${res.status})`;
                       showToast(msg);
                       return;
                     }
@@ -845,7 +874,6 @@ export function WorkspaceBrowserSupabase() {
                       await copyText(url);
                       return;
                     }
-                    // If host URL isn't configured, at least copy the token.
                     if (token) {
                       await copyText(token);
                       showToast('Copied token (set MCP server URL in env)');
@@ -855,6 +883,11 @@ export function WorkspaceBrowserSupabase() {
                   } catch (e) {
                     showToast(e instanceof Error ? e.message : 'Failed');
                   }
+                }}
+                onCopyProjectLink={async () => {
+                  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+                  if (!origin) return;
+                  await copyText(`${origin}/workspace?project=${encodeURIComponent(activeFolder.id)}`);
                 }}
                 onExportBundle={async () => {
                   if (!supabase) return;
