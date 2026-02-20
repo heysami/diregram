@@ -335,7 +335,8 @@ app.post('/messages', async (req, res) => {
         const key = String(args?.openaiApiKey || '').trim();
         if (!key) throw new Error('Missing openaiApiKey');
         sess.openaiApiKey = key;
-        sendResult({ ok: true });
+        // MCP tool results should be returned via `content` (Cursor expects this shape).
+        sendResult({ content: [{ type: 'text', text: JSON.stringify({ ok: true }, null, 2) }] });
         return res.status(202).end();
       }
 
@@ -361,7 +362,8 @@ app.post('/messages', async (req, res) => {
         const folderId = data?.project_folder_id ? String(data.project_folder_id) : '';
         if (!folderId) throw new Error('Unknown project');
         sess.activePublicProjectId = pid;
-        sendResult({ ok: true });
+        // Return content per MCP tool-result shape.
+        sendResult({ content: [{ type: 'text', text: JSON.stringify({ ok: true, publicProjectId: pid }, null, 2) }] });
         return res.status(202).end();
       }
 
