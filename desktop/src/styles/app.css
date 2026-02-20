@@ -1,12 +1,22 @@
 :root {
-  color-scheme: light dark;
-  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  color-scheme: light;
+  --mac-black: #000000;
+  --mac-white: #ffffff;
+  --mac-desktop: #ffffff;
+  --mac-surface: #ffffff;
+  --mac-control: #ffffff;
+  --mac-border: #000000;
+  --mac-inset: #6b6b6b;
+  --mac-accent: #000000;
+  --mac-font: Chicago, Geneva, 'Lucida Grande', 'Helvetica Neue', Helvetica, Arial, system-ui, sans-serif;
+  --mac-mono: Monaco, 'SFMono-Regular', ui-monospace, Menlo, Consolas, 'Courier New', monospace;
+  font-family: var(--mac-font);
 }
 
 body {
   margin: 0;
-  background: #0b0d10;
-  color: #e7eaf0;
+  background: var(--mac-desktop);
+  color: var(--mac-black);
 }
 
 .appShell {
@@ -14,57 +24,90 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px;
+  padding: 18px;
+}
+
+.macDesktop {
+  background-color: var(--mac-desktop);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M6 3v6M3 6h6' stroke='%23000' stroke-opacity='0.12' stroke-width='1' stroke-linecap='square' shape-rendering='crispEdges'/%3E%3C/svg%3E");
+  background-repeat: repeat;
+  background-position: 0 0;
 }
 
 .card {
   width: 100%;
-  max-width: 840px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.06);
-  backdrop-filter: blur(12px);
-  padding: 18px 18px 14px;
+  max-width: 860px;
+  background: var(--mac-surface);
+  border: 2px solid var(--mac-border);
+  box-shadow: 4px 4px 0 var(--mac-black);
+  padding: 14px 14px 12px;
+}
+
+.titleRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.brandMark {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  align-items: center;
+  justify-content: center;
 }
 
 .row {
   display: flex;
-  gap: 12px;
+  gap: 10px;
   flex-wrap: wrap;
   align-items: center;
 }
 
 .btn {
-  appearance: none;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  border-radius: 10px;
-  padding: 10px 12px;
-  background: rgba(255, 255, 255, 0.08);
-  color: inherit;
+  background: var(--mac-control);
+  color: var(--mac-black);
+  border: 1px solid var(--mac-border);
+  box-shadow: inset 1px 1px 0 var(--mac-white), inset -1px -1px 0 var(--mac-inset);
+  padding: 4px 10px;
+  font-size: 12px;
+  line-height: 1.1;
   cursor: pointer;
+  user-select: none;
+}
+
+.btn:active {
+  box-shadow: inset -1px -1px 0 var(--mac-white), inset 1px 1px 0 var(--mac-inset);
 }
 
 .btnPrimary {
-  background: #5b7cfa;
-  border-color: rgba(91, 124, 250, 0.6);
-  color: #071023;
-  font-weight: 600;
+  background: var(--mac-accent);
+  color: var(--mac-white);
+  box-shadow: none;
 }
 
 .muted {
-  opacity: 0.78;
+  color: rgba(0, 0, 0, 0.72);
+  font-size: 12px;
 }
 
 .mono {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+  font-family: var(--mac-mono);
+  font-size: 12px;
 }
 
-input {
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  border-radius: 10px;
-  padding: 10px 12px;
-  background: rgba(0, 0, 0, 0.2);
-  color: inherit;
-  min-width: 320px;
+input,
+select {
+  border: 1px solid var(--mac-border);
+  background: var(--mac-white);
+  color: var(--mac-black);
+  padding: 4px 8px;
+  font-size: 12px;
+  line-height: 1.1;
+  min-width: 260px;
+}
+
+input[type='password'] {
+  letter-spacing: 0.6px;
 }
 

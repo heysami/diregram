@@ -11,6 +11,7 @@ use sync::{
   sync_pull_start,
   sync_pull_stop,
   sync_read_events,
+  rag_export_once,
   vault_ensure_dir,
   vault_write_text_file,
   sync_watch_start,
@@ -104,6 +105,7 @@ pub fn run() {
       sync_pull_start,
       sync_pull_stop,
       sync_read_events,
+      rag_export_once,
       vault_ensure_dir,
       vault_write_text_file,
       rag_ingest_jwt

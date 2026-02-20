@@ -6,6 +6,11 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { createSupabaseClient, getSession } from './lib/supabase';
 import { buildAiGuideBundle } from './lib/aiGuideContent';
 import { buildEnv } from './lib/env';
+import { DiregramMark } from './components/DiregramMark';
+import { ConnectPanel } from './components/ConnectPanel';
+import { SignedOutPanel } from './components/SignedOutPanel';
+import { OpenAiKeySection } from './components/OpenAiKeySection';
+import { EventsList } from './components/EventsList';
 import {
   clearAppConfig,
   fetchPublicConfigFromNexusMap,
@@ -16,9 +21,13 @@ import {
 import { loadRuntimeState, saveRuntimeState } from './lib/runtimeState';
 import { clearOpenAiKey, loadOpenAiKey, saveOpenAiKey } from './lib/openaiKey';
 import { enable as enableAutostart, disable as disableAutostart, isEnabled as isAutostartEnabled } from '@tauri-apps/plugin-autostart';
+import { fetchAccountProjects, type Project } from './features/projects/projectsClient';
+import { writeAiBundleToVault } from './features/ai/aiBundleWriter';
+import { reindexRagForProjects } from './features/rag/ragClient';
+import { loadAllProjectEvents, startSyncAllProjects, stopSyncAllProjects } from './features/sync/syncClient';
+import { projectLocalPath } from './lib/localPaths';
 
 type AppStep = 'signedOut' | 'signedIn';
-type Project = { id: string; name: string };
 
 export function App() {
   const syncRootFolderName = 'NexusMap';
@@ -45,22 +54,6 @@ export function App() {
   const [launchAtLogin, setLaunchAtLogin] = useState<boolean>(false);
   const [openAiKey, setOpenAiKey] = useState<string>('');
   const [openAiKeyDraft, setOpenAiKeyDraft] = useState<string>('');
-
-  const joinPath = (a: string, b: string) => {
-    const aa = a.replace(/[\\/]+$/, '');
-    const bb = b.replace(/^[\\/]+/, '');
-    return `${aa}/${bb}`;
-  };
-
-  const safeFolderName = (name: string) => {
-    const base = name.trim() || 'Untitled';
-    return base
-      .replace(/[\\/]/g, '-')
-      .replace(/[:*?"<>|]/g, '')
-      .replace(/\s+/g, ' ')
-      .slice(0, 80)
-      .trim();
-  };
 
   useEffect(() => {
     let unsub: (() => void) | null = null;
@@ -208,28 +201,16 @@ export function App() {
   };
 
   const refreshProjects = async (sb: SupabaseClient): Promise<Project[]> => {
-    const session = await getSession(sb);
-    if (!session?.user) {
-      setStatus('Not signed in (session missing).');
+    try {
+      setStatus('Loading projects…');
+      const rows = await fetchAccountProjects(sb);
+      setProjects(rows);
+      setStatus('');
+      return rows;
+    } catch (e: any) {
+      setStatus(`Failed to load projects: ${e?.message ?? String(e)}`);
       return [];
     }
-
-    setStatus('Loading projects…');
-    const { data, error } = await sb
-      .from('folders')
-      .select('id,name')
-      .is('parent_id', null)
-      .order('created_at', { ascending: false });
-
-    if (error) {
-      setStatus(`Failed to load projects: ${error.message}`);
-      return [];
-    }
-
-    const rows = (data ?? []) as Project[];
-    setProjects(rows);
-    setStatus('');
-    return rows;
   };
 
   const sendEmailCode = async () => {
@@ -386,14 +367,6 @@ export function App() {
     };
   };
 
-  const projectLocal = (p: Project, rootVault: string) => {
-    const name = safeFolderName(p.name);
-    const suffix = p.id.slice(0, 8);
-    const rel = `${syncRootFolderName}/${name}__${suffix}`;
-    const abs = joinPath(rootVault, rel);
-    return { rel, abs };
-  };
-
   const startSyncAllForVault = async (
     rootVault: string,
     opts?: { startWatching?: boolean; startPulling?: boolean; pullOnce?: boolean },
@@ -403,12 +376,6 @@ export function App() {
     const pullOnce = opts?.pullOnce ?? true;
 
     if (!rootVault) return;
-    const authPack = await getAuth();
-    if (!authPack) {
-      setStatus('Not signed in (session missing).');
-      return;
-    }
-
     setStatus('Loading projects…');
     const rows = supabase ? await refreshProjects(supabase) : projects;
     if (!rows.length) {
@@ -418,38 +385,23 @@ export function App() {
 
     setStatus(`Preparing vault (${rows.length} projects)…`);
     try {
-      await invoke('vault_ensure_dir', { vaultPath: rootVault, relativePath: syncRootFolderName });
-    } catch {
-      // ignore; root vault may already have it
-    }
-
-    // First pull everything, then start background loops.
-    if (pullOnce) {
-      for (const p of rows) {
-        const loc = projectLocal(p, rootVault);
-        // eslint-disable-next-line no-await-in-loop
-        await invoke('vault_ensure_dir', { vaultPath: rootVault, relativePath: loc.rel });
-        // eslint-disable-next-line no-await-in-loop
-        await invoke('sync_pull_once', { vaultPath: loc.abs, projectFolderId: p.id, auth: authPack.auth });
-      }
-    }
-
-    if (startWatching) {
-      for (const p of rows) {
-        const loc = projectLocal(p, rootVault);
-        // eslint-disable-next-line no-await-in-loop
-        await invoke('sync_watch_start', { vaultPath: loc.abs, projectFolderId: p.id, auth: authPack.auth });
-      }
-      setWatching(true);
-    }
-
-    if (startPulling) {
-      for (const p of rows) {
-        const loc = projectLocal(p, rootVault);
-        // eslint-disable-next-line no-await-in-loop
-        await invoke('sync_pull_start', { vaultPath: loc.abs, projectFolderId: p.id, auth: authPack.auth, intervalMs: 5000 });
-      }
-      setPulling(true);
+      if (!supabase || !config) throw new Error('Missing config');
+      await startSyncAllProjects({
+        invoke,
+        supabase,
+        config,
+        projects: rows,
+        rootVault,
+        syncRootFolderName,
+        pullOnce,
+        startWatching,
+        startPulling,
+      });
+      setWatching(Boolean(startWatching));
+      setPulling(Boolean(startPulling));
+    } catch (e: any) {
+      setStatus(`Sync failed: ${e?.message ?? String(e)}`);
+      return;
     }
 
     setStatus('');
@@ -469,12 +421,7 @@ export function App() {
   const stopSyncAll = async () => {
     setStatus('Stopping sync…');
     try {
-      await invoke('sync_watch_stop');
-    } catch {
-      // ignore
-    }
-    try {
-      await invoke('sync_pull_stop');
+      await stopSyncAllProjects(invoke);
     } catch {
       // ignore
     }
@@ -491,36 +438,18 @@ export function App() {
 
   const triggerRagIngestAll = async () => {
     if (!supabase || !config) return;
-    const session = await getSession(supabase);
-    if (!session?.user) return;
     if (!projects.length) return;
-    if (!openAiKey.trim()) {
-      setStatus('RAG ingest needs an OpenAI API key (set it below).');
-      return;
-    }
-    const normalizeBase = (raw: string) => {
-      const s = String(raw || '').trim().replace(/\/$/, '');
-      if (!s) return '';
-      if (/^https?:\/\//i.test(s)) return s;
-      return `https://${s}`;
-    };
-    const base = normalizeBase(config.nexusmapApiBaseUrl);
-    setStatus(`Triggering RAG ingest… (${base || 'unknown base'})`);
     try {
-      const okProjects: string[] = [];
-      for (const p of projects) {
-        // Use Rust backend for network reliability (WebView fetch can fail).
-        // eslint-disable-next-line no-await-in-loop
-        await invoke('rag_ingest_jwt', {
-          req: {
-            project_folder_id: p.id,
-            access_token: session.access_token,
-            api_base_url: base,
-            openai_api_key: openAiKey.trim(),
-          },
-        });
-        okProjects.push(p.name);
-      }
+      setStatus('Triggering RAG ingest…');
+      await reindexRagForProjects({
+        invoke,
+        supabase,
+        config,
+        projects,
+        vaultPath: vaultPath || null,
+        syncRootFolderName,
+        openAiKey,
+      });
       setStatus('');
       setSyncInfo('RAG ingest triggered for all projects.');
     } catch (e: any) {
@@ -570,16 +499,9 @@ export function App() {
   const loadEvents = async () => {
     if (!vaultPath) return;
     try {
-      const all: any[] = [];
-      for (const p of projects) {
-        const loc = projectLocal(p, vaultPath);
-        // eslint-disable-next-line no-await-in-loop
-        const evs = (await invoke('sync_read_events', { vaultPath: loc.abs, limit: 40 })) as any[];
-        if (Array.isArray(evs)) all.push(...evs);
-      }
-      all.sort((a, b) => String(b.ts || '').localeCompare(String(a.ts || '')));
-      setEvents(all.slice(0, 80));
-      if (!all.length) {
+      const evs = await loadAllProjectEvents({ invoke, projects, rootVault: vaultPath, syncRootFolderName });
+      setEvents(evs);
+      if (!evs.length) {
         setStatus('No events yet (sync can still be healthy). Try again after an edit or a remote change.');
         setTimeout(() => setStatus(''), 2500);
       }
@@ -595,28 +517,7 @@ export function App() {
     if (!vp) return;
     setStatus('Writing AI bundle into vault…');
     try {
-      let bundle = buildAiGuideBundle();
-      if (config?.nexusmapApiBaseUrl) {
-        try {
-          const base = config.nexusmapApiBaseUrl.replace(/\/$/, '');
-          const res = await fetch(`${base}/api/ai-guides/bundle`, { method: 'GET' });
-          const json = (await res.json().catch(() => null)) as any;
-          if (res.ok && json?.ok && Array.isArray(json?.files) && json.files.length) {
-            bundle = json.files.map((f: any) => ({ relativePath: String(f.relativePath || ''), content: String(f.content || '') }));
-          }
-        } catch {
-          // fall back to built-in bundle
-        }
-      }
-      try {
-        await invoke('vault_ensure_dir', { vaultPath: vp, relativePath: 'NexusMap AI' });
-      } catch {
-        // ignore
-      }
-      for (const f of bundle) {
-        // eslint-disable-next-line no-await-in-loop
-        await invoke('vault_write_text_file', { vaultPath: vp, relativePath: f.relativePath, content: f.content });
-      }
+      await writeAiBundleToVault({ invoke, vaultPath: vp, apiBaseUrl: config?.nexusmapApiBaseUrl || null });
       setStatus('');
       setSyncInfo('Wrote the full AI bundle into `NexusMap AI/`.');
     } catch (e: any) {
@@ -625,11 +526,16 @@ export function App() {
   };
 
   return (
-    <div className="appShell">
-      <div className="card">
+    <div className="appShell macDesktop">
+      <div className="card macWindow">
         <div className="row" style={{ justifyContent: 'space-between' }}>
           <div>
-            <div style={{ fontSize: 18, fontWeight: 700 }}>NexusMap Sync</div>
+            <div className="titleRow">
+              <span className="brandMark">
+                <DiregramMark size={16} />
+              </span>
+              <div style={{ fontSize: 14, fontWeight: 800, letterSpacing: 0.2 }}>Diregram Sync</div>
+            </div>
           </div>
           <div className="row">
             {step === 'signedIn' ? (
@@ -642,70 +548,31 @@ export function App() {
 
         <div style={{ marginTop: 14 }}>
           {!config ? (
-            <>
-              <div className="row" style={{ marginTop: 12 }}>
-                <input
-                  value={configHostedUrl}
-                  onChange={(e) => setConfigHostedUrl(e.target.value)}
-                  placeholder="Connect URL"
-                />
-              </div>
-              <div className="row" style={{ marginTop: 12 }}>
-                <button className="btn btnPrimary" onClick={connectHosted} type="button">
-                  Connect
-                </button>
-                <button className="btn" onClick={() => setShowAdvancedConfig((v) => !v)} type="button">
-                  {showAdvancedConfig ? 'Hide advanced' : 'Advanced'}
-                </button>
-              </div>
-
-              {showAdvancedConfig ? (
-                <div style={{ marginTop: 12 }}>
-                  <div className="muted">Advanced (self-host / development)</div>
-                  <div className="row" style={{ marginTop: 8 }}>
-                    <input
-                      value={configSupabaseUrl}
-                      onChange={(e) => setConfigSupabaseUrl(e.target.value)}
-                      placeholder="Supabase URL"
-                    />
-                  </div>
-                  <div className="row" style={{ marginTop: 10 }}>
-                    <input
-                      value={configAnonKey}
-                      onChange={(e) => setConfigAnonKey(e.target.value)}
-                      placeholder="Supabase anon key"
-                    />
-                  </div>
-                  <div className="row" style={{ marginTop: 10 }}>
-                    <input
-                      value={configApiBaseUrl}
-                      onChange={(e) => setConfigApiBaseUrl(e.target.value)}
-                      placeholder="NexusMap API base URL"
-                    />
-                  </div>
-                </div>
-              ) : null}
-            </>
+            <ConnectPanel
+              hostedUrl={configHostedUrl}
+              onHostedUrlChange={setConfigHostedUrl}
+              onConnect={connectHosted}
+              showAdvanced={showAdvancedConfig}
+              onToggleAdvanced={() => setShowAdvancedConfig((v) => !v)}
+              supabaseUrl={configSupabaseUrl}
+              anonKey={configAnonKey}
+              apiBaseUrl={configApiBaseUrl}
+              onSupabaseUrlChange={setConfigSupabaseUrl}
+              onAnonKeyChange={setConfigAnonKey}
+              onApiBaseUrlChange={setConfigApiBaseUrl}
+            />
           ) : null}
 
           {step === 'signedOut' ? (
-            <>
-              <div className="row" style={{ marginTop: 12 }}>
-                <input value={loginEmail} onChange={(e) => setLoginEmail(e.target.value)} placeholder="Email" />
-                <button className="btn btnPrimary" onClick={sendEmailCode} type="button">
-                  Send code
-                </button>
-                <button className="btn" onClick={resetConfig} type="button">
-                  Reset config
-                </button>
-              </div>
-              <div className="row" style={{ marginTop: 10 }}>
-                <input value={loginOtp} onChange={(e) => setLoginOtp(e.target.value)} placeholder="Code" />
-                <button className="btn btnPrimary" onClick={verifyEmailCode} type="button">
-                  Verify
-                </button>
-              </div>
-            </>
+            <SignedOutPanel
+              loginEmail={loginEmail}
+              loginOtp={loginOtp}
+              onLoginEmailChange={setLoginEmail}
+              onLoginOtpChange={setLoginOtp}
+              onSendCode={sendEmailCode}
+              onVerify={verifyEmailCode}
+              onResetConfig={resetConfig}
+            />
           ) : (
             <>
               <div className="row">
@@ -727,26 +594,13 @@ export function App() {
                 <div className="mono">{vaultPath || '(not selected)'}</div>
               </div>
 
-              <div style={{ marginTop: 14 }}>
-                <div className="muted">OpenAI API key (for RAG reindex)</div>
-                <div className="row" style={{ marginTop: 8 }}>
-                  <input
-                    value={openAiKeyDraft}
-                    onChange={(e) => setOpenAiKeyDraft(e.target.value)}
-                    placeholder="sk-…"
-                    type="password"
-                  />
-                  <button className="btn btnPrimary" onClick={saveKey} type="button" disabled={!openAiKeyDraft.trim()}>
-                    Save
-                  </button>
-                  <button className="btn" onClick={clearKey} type="button" disabled={!openAiKey.trim()}>
-                    Clear
-                  </button>
-                </div>
-                <div className="muted" style={{ marginTop: 6 }}>
-                  Stored locally in Keychain. Never sent to NexusMap except as a request header to generate embeddings.
-                </div>
-              </div>
+              <OpenAiKeySection
+                value={openAiKeyDraft}
+                onChange={setOpenAiKeyDraft}
+                hasSavedKey={Boolean(openAiKey.trim())}
+                onSave={saveKey}
+                onClear={clearKey}
+              />
 
               <div style={{ marginTop: 14 }}>
                 <div className="row" style={{ marginTop: 8 }}>
@@ -797,21 +651,7 @@ export function App() {
                   </div>
                 ) : null}
 
-                {events.length ? (
-                  <div style={{ marginTop: 12 }}>
-                    <div className="muted">Recent sync events</div>
-                    <div style={{ marginTop: 6, maxHeight: 180, overflow: 'auto' }}>
-                      {events.map((e, idx) => (
-                        <div key={idx} className="muted" style={{ marginBottom: 8 }}>
-                          <div className="mono">
-                            [{e.ts}] {e.kind} — {e.path}
-                          </div>
-                          <div style={{ opacity: 0.85 }}>{e.detail}</div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
+                <EventsList events={events} />
               </div>
             </>
           )}

@@ -37,6 +37,8 @@ pub struct SyncMappingV1 {
   pub updated_at: String,
   #[serde(default)]
   pub last_pull_at: String,
+  #[serde(default)]
+  pub last_rag_export_at: String,
   /// Relative folder path (posix-style) -> supabase folder UUID.
   pub folders: HashMap<String, String>,
   /// Relative file path (posix-style) -> remote mapping.
@@ -577,6 +579,7 @@ pub async fn sync_init(vault_path: String, project_folder_id: String) -> Result<
     created_at: now.clone(),
     updated_at: now,
     last_pull_at: String::new(),
+    last_rag_export_at: String::new(),
     folders,
     files: HashMap::new(),
     resources: HashMap::new(),
@@ -629,6 +632,9 @@ pub async fn sync_initial_import(vault_path: String, project_folder_id: String, 
       None => continue,
     };
     if rel == "resources" || rel.starts_with("resources/") {
+      continue;
+    }
+    if rel == "rag" || rel.starts_with("rag/") {
       continue;
     }
 
@@ -731,6 +737,9 @@ async fn sync_one_path(vault_path: &str, project_folder_id: &str, auth: &Supabas
   };
   // `project_resources` are pulled into `resources/…` locally. Do not push these back as normal files.
   if rel == "resources" || rel.starts_with("resources/") {
+    return Ok(());
+  }
+  if rel == "rag" || rel.starts_with("rag/") {
     return Ok(());
   }
 
@@ -974,6 +983,51 @@ struct RemoteResourceRow {
   source: Option<serde_json::Value>,
 }
 
+#[derive(Debug, Deserialize, Clone, Serialize)]
+struct RagProjectRow {
+  owner_id: String,
+  project_folder_id: String,
+  public_id: String,
+  updated_at: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Clone, Serialize)]
+struct KgEntityRow {
+  owner_id: String,
+  id: String,
+  project_folder_id: Option<String>,
+  entity_type: String,
+  file_id: Option<String>,
+  data: serde_json::Value,
+  updated_at: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Clone, Serialize)]
+struct KgEdgeRow {
+  owner_id: String,
+  id: String,
+  project_folder_id: Option<String>,
+  edge_type: String,
+  src: String,
+  dst: String,
+  data: serde_json::Value,
+  updated_at: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Clone, Serialize)]
+struct RagChunkRowLite {
+  owner_id: String,
+  id: String,
+  project_folder_id: Option<String>,
+  file_id: Option<String>,
+  resource_id: Option<String>,
+  file_kind: Option<String>,
+  anchor: Option<String>,
+  text: String,
+  metadata: Option<serde_json::Value>,
+  updated_at: Option<String>,
+}
+
 async fn fetch_all_folders(client: &reqwest::Client, auth: &mut SupabaseAuth) -> Result<Vec<FolderNode>, String> {
   let mut url = reqwest::Url::parse(&format!("{}/folders", rest_base(auth))).map_err(|e| e.to_string())?;
   {
@@ -1121,6 +1175,161 @@ async fn fetch_resources_updated_since(
     },
   )
   .await
+}
+
+async fn fetch_one_rag_project(
+  client: &reqwest::Client,
+  auth: &mut SupabaseAuth,
+  project_folder_id: &str,
+) -> Result<Option<RagProjectRow>, String> {
+  let base = rest_base(auth);
+  let mut url = reqwest::Url::parse(&format!("{}/rag_projects", base)).map_err(|e| e.to_string())?;
+  {
+    let mut q = url.query_pairs_mut();
+    q.append_pair("select", "owner_id,project_folder_id,public_id,updated_at");
+    q.append_pair("project_folder_id", &format!("eq.{}", project_folder_id));
+    q.append_pair("limit", "1");
+  }
+  send_with_refresh(
+    client,
+    auth,
+    || client.get(url.clone()),
+    |res| {
+      Box::pin(async move {
+        if !res.status().is_success() {
+          return Err(format!("rag_projects fetch failed: HTTP {}", res.status()));
+        }
+        let rows: Vec<RagProjectRow> = res.json().await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().next())
+      })
+    },
+  )
+  .await
+}
+
+async fn fetch_paginated<T: for<'de> Deserialize<'de>>(
+  client: &reqwest::Client,
+  auth: &mut SupabaseAuth,
+  table: &str,
+  select: &str,
+  project_folder_id: &str,
+) -> Result<Vec<T>, String> {
+  let base = rest_base(auth);
+  let table_name = table.to_string();
+  let mut out: Vec<T> = Vec::new();
+  let page_size: usize = 1000;
+  let mut offset: usize = 0;
+  loop {
+    let mut url = reqwest::Url::parse(&format!("{}/{}", base, table)).map_err(|e| e.to_string())?;
+    {
+      let mut q = url.query_pairs_mut();
+      q.append_pair("select", select);
+      q.append_pair("project_folder_id", &format!("eq.{}", project_folder_id));
+      q.append_pair("limit", &page_size.to_string());
+      q.append_pair("offset", &offset.to_string());
+    }
+    let mut rows: Vec<T> = send_with_refresh(
+      client,
+      auth,
+      || client.get(url.clone()),
+      |res| {
+        let table_name = table_name.clone();
+        Box::pin(async move {
+          if !res.status().is_success() {
+            return Err(format!("{} fetch failed: HTTP {}", table_name, res.status()));
+          }
+          let rows: Vec<T> = res.json().await.map_err(|e| e.to_string())?;
+          Ok(rows)
+        })
+      },
+    )
+    .await?;
+    let n = rows.len();
+    out.append(&mut rows);
+    if n < page_size {
+      break;
+    }
+    offset += page_size;
+    if offset > 200_000 {
+      break;
+    }
+  }
+  Ok(out)
+}
+
+fn write_jsonl<T: Serialize>(path: &Path, rows: &[T]) -> Result<(), String> {
+  if let Some(parent) = path.parent() {
+    fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+  }
+  let mut f = OpenOptions::new()
+    .create(true)
+    .truncate(true)
+    .write(true)
+    .open(path)
+    .map_err(|e| e.to_string())?;
+  for r in rows {
+    let line = serde_json::to_string(r).map_err(|e| e.to_string())?;
+    writeln!(f, "{}", line).map_err(|e| e.to_string())?;
+  }
+  Ok(())
+}
+
+fn write_json(path: &Path, v: &serde_json::Value) -> Result<(), String> {
+  if let Some(parent) = path.parent() {
+    fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+  }
+  let text = serde_json::to_string_pretty(v).map_err(|e| e.to_string())?;
+  fs::write(path, text).map_err(|e| e.to_string())
+}
+
+async fn rag_export_into_vault(
+  client: &reqwest::Client,
+  auth: &mut SupabaseAuth,
+  vault_path: &str,
+  project_folder_id: &str,
+  last_export_at: &str,
+) -> Result<Option<String>, String> {
+  let rag_project = fetch_one_rag_project(client, auth, project_folder_id).await?;
+  let Some(rp) = rag_project else { return Ok(None); };
+  let updated_at = rp.updated_at.clone().unwrap_or_else(now_iso);
+  if !last_export_at.trim().is_empty() && updated_at.as_str() <= last_export_at.trim() {
+    return Ok(None);
+  }
+
+  let ents: Vec<KgEntityRow> = fetch_paginated(client, auth, "kg_entities", "owner_id,id,project_folder_id,entity_type,file_id,data,updated_at", project_folder_id).await?;
+  let edges: Vec<KgEdgeRow> = fetch_paginated(client, auth, "kg_edges", "owner_id,id,project_folder_id,edge_type,src,dst,data,updated_at", project_folder_id).await?;
+  let chunks: Vec<RagChunkRowLite> = fetch_paginated(
+    client,
+    auth,
+    "rag_chunks",
+    // Exclude `embedding` (too large/noisy for filesystem sync).
+    "owner_id,id,project_folder_id,file_id,resource_id,file_kind,anchor,text,metadata,updated_at",
+    project_folder_id,
+  )
+  .await?;
+
+  let rag_dir = Path::new(vault_path).join("rag");
+  write_json(&rag_dir.join("project.json"), &serde_json::to_value(&rp).map_err(|e| e.to_string())?)?;
+  write_jsonl(&rag_dir.join("kg_entities.jsonl"), &ents)?;
+  write_jsonl(&rag_dir.join("kg_edges.jsonl"), &edges)?;
+  write_jsonl(&rag_dir.join("rag_chunks.jsonl"), &chunks)?;
+
+  let _ = append_event(
+    vault_path,
+    &SyncEvent {
+      ts: now_iso(),
+      kind: "rag_export".to_string(),
+      path: "rag/".to_string(),
+      detail: format!(
+        "Exported RAG/KG. Entities: {}, edges: {}, chunks: {}.",
+        ents.len(),
+        edges.len(),
+        chunks.len()
+      ),
+    },
+  );
+
+  Ok(Some(updated_at))
 }
 
 #[tauri::command]
@@ -1305,6 +1514,14 @@ pub async fn sync_pull_once(vault_path: String, project_folder_id: String, auth:
     );
   }
 
+  // Export RAG/KG into vault if KB updated since last export.
+  // This keeps `rag/` in sync even if the KB was rebuilt from the web app.
+  if let Ok(Some(rag_updated_at)) =
+    rag_export_into_vault(&client, &mut auth, &vault_path, &project_folder_id, &mapping.last_rag_export_at).await
+  {
+    mapping.last_rag_export_at = rag_updated_at;
+  }
+
   mapping.last_pull_at = now_iso();
   mapping.updated_at = now_iso();
   write_mapping(&vault_path, &mapping)?;
@@ -1360,6 +1577,31 @@ pub async fn sync_pull_stop() -> Result<(), String> {
 #[tauri::command]
 pub async fn sync_read_events(vault_path: String, limit: Option<u32>) -> Result<Vec<SyncEvent>, String> {
   read_events(&vault_path, limit.unwrap_or(50) as usize)
+}
+
+#[tauri::command]
+pub async fn rag_export_once(vault_path: String, project_folder_id: String, auth: SupabaseAuth) -> Result<(), String> {
+  let root = Path::new(&vault_path);
+  if !root.exists() {
+    return Err("vault_path does not exist".to_string());
+  }
+  let client = reqwest::Client::new();
+  let mut auth = auth;
+  let mut mapping = match read_mapping(&vault_path)? {
+    Some(m) => m,
+    None => sync_init(vault_path.clone(), project_folder_id.clone()).await?,
+  };
+  if mapping.project_folder_id != project_folder_id {
+    return Err("mapping project_folder_id mismatch".to_string());
+  }
+  if let Some(rag_updated_at) =
+    rag_export_into_vault(&client, &mut auth, &vault_path, &project_folder_id, &mapping.last_rag_export_at).await?
+  {
+    mapping.last_rag_export_at = rag_updated_at;
+    mapping.updated_at = now_iso();
+    write_mapping(&vault_path, &mapping)?;
+  }
+  Ok(())
 }
 
 #[tauri::command]
