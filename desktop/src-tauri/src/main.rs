@@ -34,7 +34,7 @@ fn secure_storage_get(key: String) -> Result<Option<String>, String> {
 #[tauri::command]
 fn secure_storage_remove(key: String) -> Result<(), String> {
   let entry = keyring::Entry::new(KEYCHAIN_SERVICE, &key).map_err(|e| e.to_string())?;
-  match entry.delete_password() {
+  match entry.delete_credential() {
     Ok(()) => Ok(()),
     Err(keyring::Error::NoEntry) => Ok(()),
     Err(e) => Err(e.to_string()),
