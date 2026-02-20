@@ -13,6 +13,8 @@ import {
   saveAppConfig,
   type AppConfigV1,
 } from './lib/appConfig';
+import { loadRuntimeState, saveRuntimeState } from './lib/runtimeState';
+import { enable as enableAutostart, disable as disableAutostart, isEnabled as isAutostartEnabled } from '@tauri-apps/plugin-autostart';
 
 type AppStep = 'signedOut' | 'signedIn';
 type Project = { id: string; name: string };
@@ -39,6 +41,7 @@ export function App() {
   const [watching, setWatching] = useState<boolean>(false);
   const [pulling, setPulling] = useState<boolean>(false);
   const [events, setEvents] = useState<Array<{ ts: string; kind: string; path: string; detail: string }>>([]);
+  const [launchAtLogin, setLaunchAtLogin] = useState<boolean>(false);
 
   useEffect(() => {
     let unsub: (() => void) | null = null;
@@ -82,11 +85,50 @@ export function App() {
       const sb = createSupabaseClient(cfg);
       setSupabase(sb);
 
+      try {
+        setLaunchAtLogin(await isAutostartEnabled());
+      } catch {
+        // ignore
+      }
+
       const session = await getSession(sb);
       if (session?.user) {
         setEmail(session.user.email ?? '');
         setStep('signedIn');
         await refreshProjects(sb);
+      }
+
+      // Resume background sync if previously enabled.
+      try {
+        const rs = await loadRuntimeState();
+        if (rs && rs.vaultPath && rs.projectFolderId && session?.user) {
+          setVaultPath(rs.vaultPath);
+          setSelectedProjectId(rs.projectFolderId);
+          if (rs.watching) {
+            const auth = {
+              supabase_url: cfg.supabaseUrl,
+              supabase_anon_key: cfg.supabaseAnonKey,
+              access_token: session.access_token,
+              refresh_token: session.refresh_token,
+              owner_id: session.user.id,
+            };
+            await invoke('sync_watch_start', { vault_path: rs.vaultPath, project_folder_id: rs.projectFolderId, auth });
+            setWatching(true);
+          }
+          if (rs.pulling) {
+            const auth = {
+              supabase_url: cfg.supabaseUrl,
+              supabase_anon_key: cfg.supabaseAnonKey,
+              access_token: session.access_token,
+              refresh_token: session.refresh_token,
+              owner_id: session.user.id,
+            };
+            await invoke('sync_pull_start', { vault_path: rs.vaultPath, project_folder_id: rs.projectFolderId, auth, interval_ms: 5000 });
+            setPulling(true);
+          }
+        }
+      } catch {
+        // ignore resume failures
       }
 
       const startUrls = await getCurrent();
@@ -106,6 +148,17 @@ export function App() {
       }
     };
   }, []);
+
+  const toggleLaunchAtLogin = async () => {
+    try {
+      const next = !(await isAutostartEnabled());
+      if (next) await enableAutostart();
+      else await disableAutostart();
+      setLaunchAtLogin(next);
+    } catch {
+      // ignore
+    }
+  };
 
   const handleOpenUrls = async (sb: SupabaseClient, urls: string[]) => {
     const url = urls[0];
@@ -191,19 +244,26 @@ export function App() {
     const token = loginOtp.trim();
     if (!e || !token) return;
     setStatus('Verifying…');
-    const { error } = await supabase.auth.verifyOtp({ email: e, token, type: 'email' });
+    const { data, error } = await supabase.auth.verifyOtp({ email: e, token, type: 'email' });
     if (error) {
       setStatus(`Verify failed: ${error.message}`);
       return;
     }
-    const session = await getSession(supabase);
-    if (session?.user) {
-      setEmail(session.user.email ?? '');
-      setStep('signedIn');
-      setStatus('');
+
+    // Prefer the session/user returned by verifyOtp (more reliable than waiting for storage propagation).
+    const userEmail =
+      data?.user?.email ??
+      data?.session?.user?.email ??
+      e;
+
+    setEmail(userEmail ?? e);
+    setStep('signedIn');
+    setStatus('');
+
+    // If we got a session, project queries will work immediately.
+    // Otherwise, the user is still considered signed-in, but data fetch may fail until a session exists.
+    if (data?.session?.user) {
       await refreshProjects(supabase);
-    } else {
-      setStatus('Signed in.');
     }
   };
 
@@ -249,6 +309,13 @@ export function App() {
     setEmail('');
     setProjects([]);
     setSelectedProjectId('');
+    setWatching(false);
+    setPulling(false);
+    try {
+      await saveRuntimeState({ version: 1, vaultPath: '', projectFolderId: '', watching: false, pulling: false });
+    } catch {
+      // ignore
+    }
   };
 
   const connectHosted = async () => {
@@ -288,6 +355,13 @@ export function App() {
     setSelectedProjectId('');
     setVaultPath('');
     setStatus('Reset.');
+    setWatching(false);
+    setPulling(false);
+    try {
+      await saveRuntimeState({ version: 1, vaultPath: '', projectFolderId: '', watching: false, pulling: false });
+    } catch {
+      // ignore
+    }
   };
 
   const initMapping = async () => {
@@ -298,6 +372,11 @@ export function App() {
       setSyncInfo('Mapping initialized at .nexusmap/sync.json');
       setStatus('');
       void writeAiGuide();
+      try {
+        await saveRuntimeState({ version: 1, vaultPath, projectFolderId: selectedProjectId, watching, pulling });
+      } catch {
+        // ignore
+      }
     } catch (e: any) {
       setStatus(`Init failed: ${e?.message ?? String(e)}`);
     }
@@ -315,6 +394,7 @@ export function App() {
         supabase_url: config.supabaseUrl,
         supabase_anon_key: config.supabaseAnonKey,
         access_token: session.access_token,
+        refresh_token: session.refresh_token,
         owner_id: session.user.id,
       };
 
@@ -345,12 +425,14 @@ export function App() {
         supabase_url: config.supabaseUrl,
         supabase_anon_key: config.supabaseAnonKey,
         access_token: session.access_token,
+        refresh_token: session.refresh_token,
         owner_id: session.user.id,
       };
       await invoke('sync_watch_start', { vault_path: vaultPath, project_folder_id: selectedProjectId, auth });
       setWatching(true);
       setStatus('');
       setSyncInfo('Watcher running: local changes will sync automatically.');
+      await saveRuntimeState({ version: 1, vaultPath, projectFolderId: selectedProjectId, watching: true, pulling });
     } catch (e: any) {
       setStatus(`Watcher failed: ${e?.message ?? String(e)}`);
     }
@@ -363,6 +445,7 @@ export function App() {
       setWatching(false);
       setStatus('');
       setSyncInfo('Watcher stopped.');
+      await saveRuntimeState({ version: 1, vaultPath, projectFolderId: selectedProjectId, watching: false, pulling });
     } catch (e: any) {
       setStatus(`Stop failed: ${e?.message ?? String(e)}`);
     }
@@ -379,6 +462,7 @@ export function App() {
         supabase_url: config.supabaseUrl,
         supabase_anon_key: config.supabaseAnonKey,
         access_token: session.access_token,
+        refresh_token: session.refresh_token,
         owner_id: session.user.id,
       };
       const summary = (await invoke('sync_pull_once', { vault_path: vaultPath, project_folder_id: selectedProjectId, auth })) as any;
@@ -429,12 +513,14 @@ export function App() {
         supabase_url: config.supabaseUrl,
         supabase_anon_key: config.supabaseAnonKey,
         access_token: session.access_token,
+        refresh_token: session.refresh_token,
         owner_id: session.user.id,
       };
       await invoke('sync_pull_start', { vault_path: vaultPath, project_folder_id: selectedProjectId, auth, interval_ms: 5000 });
       setPulling(true);
       setStatus('');
       setSyncInfo('Remote poller running: remote edits will be pulled into the vault.');
+      await saveRuntimeState({ version: 1, vaultPath, projectFolderId: selectedProjectId, watching, pulling: true });
     } catch (e: any) {
       setStatus(`Poller failed: ${e?.message ?? String(e)}`);
     }
@@ -447,6 +533,7 @@ export function App() {
       setPulling(false);
       setStatus('');
       setSyncInfo('Remote poller stopped.');
+      await saveRuntimeState({ version: 1, vaultPath, projectFolderId: selectedProjectId, watching, pulling: false });
     } catch (e: any) {
       setStatus(`Stop failed: ${e?.message ?? String(e)}`);
     }
@@ -566,6 +653,13 @@ export function App() {
               <div className="row">
                 <div className="muted">Signed in as</div>
                 <div className="mono">{email || '(unknown)'}</div>
+              </div>
+
+              <div className="row" style={{ marginTop: 10 }}>
+                <button className="btn" onClick={toggleLaunchAtLogin} type="button">
+                  {launchAtLogin ? 'Disable launch at login' : 'Enable launch at login'}
+                </button>
+                <div className="muted">{launchAtLogin ? 'Launch at login: ON' : 'Launch at login: OFF'}</div>
               </div>
 
               <div className="row" style={{ marginTop: 12 }}>

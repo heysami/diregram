@@ -9,9 +9,13 @@
     "core:window:default",
     "core:app:default",
     "core:resources:default",
+    "core:tray:default",
     "dialog:default",
     "deep-link:default",
-    "shell:default"
+    "shell:default",
+    "autostart:allow-enable",
+    "autostart:allow-disable",
+    "autostart:allow-is-enabled"
   ]
 }
 

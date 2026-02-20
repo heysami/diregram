@@ -14,6 +14,9 @@ use sync::{
   sync_watch_start,
   sync_watch_stop,
 };
+use tauri::{Manager, WindowEvent};
+use tauri::menu::MenuBuilder;
+use tauri::tray::TrayIconBuilder;
 
 #[tauri::command]
 fn secure_storage_set(key: String, value: String) -> Result<(), String> {
@@ -47,6 +50,45 @@ pub fn run() {
     .plugin(tauri_plugin_dialog::init())
     .plugin(tauri_plugin_deep_link::init())
     .plugin(tauri_plugin_shell::init())
+    .plugin(tauri_plugin_autostart::init(
+      tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+      None,
+    ))
+    .setup(|app| {
+      let handle = app.handle();
+      let menu = MenuBuilder::new(handle)
+        .text("show", "Show")
+        .separator()
+        .text("quit", "Quit")
+        .build()?;
+
+      let icon = handle.default_window_icon().cloned().unwrap();
+      TrayIconBuilder::new()
+        .icon(icon)
+        .menu(&menu)
+        .on_menu_event(|app, event| match event.id.as_ref() {
+          "show" => {
+            if let Some(w) = app.get_webview_window("main") {
+              let _ = w.show();
+              let _ = w.set_focus();
+            }
+          }
+          "quit" => {
+            std::process::exit(0);
+          }
+          _ => {}
+        })
+        .build(handle)?;
+
+      Ok(())
+    })
+    .on_window_event(|window, event| {
+      if let WindowEvent::CloseRequested { api, .. } = event {
+        // Close-to-tray: keep process alive for background sync.
+        let _ = window.hide();
+        api.prevent_close();
+      }
+    })
     .invoke_handler(tauri::generate_handler![
       secure_storage_set,
       secure_storage_get,
