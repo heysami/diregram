@@ -1,5 +1,4 @@
 import { createClient, type SupabaseClient, type Session } from '@supabase/supabase-js';
-import { secureStorage } from './secureStorage';
 import type { AppConfigV1 } from './appConfig';
 
 export function createSupabaseClient(config: AppConfigV1): SupabaseClient {
@@ -8,7 +7,6 @@ export function createSupabaseClient(config: AppConfigV1): SupabaseClient {
       flowType: 'pkce',
       autoRefreshToken: true,
       persistSession: true,
-      storage: secureStorage as any,
       detectSessionInUrl: false,
     },
   });

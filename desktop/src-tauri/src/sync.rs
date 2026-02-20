@@ -12,8 +12,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use walkdir::WalkDir;
 
-static WATCH_STATE: Lazy<Mutex<Option<WatchState>>> = Lazy::new(|| Mutex::new(None));
-static PULL_STATE: Lazy<Mutex<Option<PullState>>> = Lazy::new(|| Mutex::new(None));
+static WATCH_STATE: Lazy<Mutex<HashMap<String, WatchState>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+static PULL_STATE: Lazy<Mutex<HashMap<String, PullState>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 
 struct WatchState {
   _watcher: notify::RecommendedWatcher,
@@ -22,6 +22,10 @@ struct WatchState {
 
 struct PullState {
   stop_tx: mpsc::Sender<()>,
+}
+
+fn sync_key(vault_path: &str, project_folder_id: &str) -> String {
+  format!("{}|{}", vault_path, project_folder_id)
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -37,6 +41,9 @@ pub struct SyncMappingV1 {
   pub folders: HashMap<String, String>,
   /// Relative file path (posix-style) -> remote mapping.
   pub files: HashMap<String, FileMappingV1>,
+  /// Relative resource path (posix-style) -> remote mapping.
+  #[serde(default)]
+  pub resources: HashMap<String, ResourceMappingV1>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -49,10 +56,18 @@ pub struct FileMappingV1 {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ResourceMappingV1 {
+  pub resource_id: String,
+  pub local_hash: String,
+  pub remote_updated_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SupabaseAuth {
   pub supabase_url: String,
   pub supabase_anon_key: String,
   pub access_token: String,
+  pub refresh_token: Option<String>,
   pub owner_id: String,
 }
 
@@ -185,6 +200,64 @@ fn supabase_headers(auth: &SupabaseAuth) -> Result<HeaderMap, String> {
   Ok(h)
 }
 
+#[derive(Debug, Deserialize)]
+struct RefreshTokenResponse {
+  access_token: String,
+  refresh_token: Option<String>,
+}
+
+async fn refresh_access_token(client: &reqwest::Client, auth: &mut SupabaseAuth) -> Result<(), String> {
+  let refresh = auth
+    .refresh_token
+    .clone()
+    .ok_or_else(|| "missing refresh_token (cannot refresh)".to_string())?;
+
+  let url = format!("{}/auth/v1/token?grant_type=refresh_token", auth.supabase_url.trim_end_matches('/'));
+  let res = client
+    .post(url)
+    .header("apikey", auth.supabase_anon_key.clone())
+    .header("content-type", "application/json")
+    .json(&serde_json::json!({ "refresh_token": refresh }))
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+
+  if !res.status().is_success() {
+    return Err(format!("token refresh failed: HTTP {}", res.status()));
+  }
+  let json: RefreshTokenResponse = res.json().await.map_err(|e| e.to_string())?;
+  auth.access_token = json.access_token;
+  if let Some(rt) = json.refresh_token {
+    auth.refresh_token = Some(rt);
+  }
+  Ok(())
+}
+
+async fn send_with_refresh<T>(
+  client: &reqwest::Client,
+  auth: &mut SupabaseAuth,
+  make_req: impl Fn() -> reqwest::RequestBuilder,
+  parse: impl Fn(reqwest::Response) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<T, String>> + Send>>,
+) -> Result<T, String> {
+  let res = make_req()
+    .headers(supabase_headers(auth)?)
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+
+  if res.status() == reqwest::StatusCode::UNAUTHORIZED {
+    refresh_access_token(client, auth).await?;
+    let res2 = make_req()
+      .headers(supabase_headers(auth)?)
+      .send()
+      .await
+      .map_err(|e| e.to_string())?;
+    return parse(res2).await;
+  }
+
+  parse(res).await
+}
+
 fn rest_base(auth: &SupabaseAuth) -> String {
   format!("{}/rest/v1", auth.supabase_url.trim_end_matches('/'))
 }
@@ -200,7 +273,12 @@ struct FileRow {
   updated_at: Option<String>,
 }
 
-async fn find_folder_id(client: &reqwest::Client, auth: &SupabaseAuth, parent_id: Option<&str>, name: &str) -> Result<Option<String>, String> {
+async fn find_folder_id(
+  client: &reqwest::Client,
+  auth: &mut SupabaseAuth,
+  parent_id: Option<&str>,
+  name: &str,
+) -> Result<Option<String>, String> {
   let mut url = reqwest::Url::parse(&format!("{}/folders", rest_base(auth))).map_err(|e| e.to_string())?;
   {
     let mut q = url.query_pairs_mut();
@@ -213,22 +291,29 @@ async fn find_folder_id(client: &reqwest::Client, auth: &SupabaseAuth, parent_id
     q.append_pair("limit", "1");
   }
 
-  let res = client
-    .get(url)
-    .headers(supabase_headers(auth)?)
-    .send()
-    .await
-    .map_err(|e| e.to_string())?;
-
-  if !res.status().is_success() {
-    return Err(format!("folder lookup failed: HTTP {}", res.status()));
-  }
-
-  let rows: Vec<FolderRow> = res.json().await.map_err(|e| e.to_string())?;
-  Ok(rows.into_iter().next().map(|r| r.id))
+  send_with_refresh(
+    client,
+    auth,
+    || client.get(url.clone()),
+    |res| {
+      Box::pin(async move {
+        if !res.status().is_success() {
+          return Err(format!("folder lookup failed: HTTP {}", res.status()));
+        }
+        let rows: Vec<FolderRow> = res.json().await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().next().map(|r| r.id))
+      })
+    },
+  )
+  .await
 }
 
-async fn create_folder(client: &reqwest::Client, auth: &SupabaseAuth, parent_id: Option<&str>, name: &str) -> Result<String, String> {
+async fn create_folder(
+  client: &reqwest::Client,
+  auth: &mut SupabaseAuth,
+  parent_id: Option<&str>,
+  name: &str,
+) -> Result<String, String> {
   let url = format!("{}/folders", rest_base(auth));
   let body = serde_json::json!({
     "name": name,
@@ -236,30 +321,30 @@ async fn create_folder(client: &reqwest::Client, auth: &SupabaseAuth, parent_id:
     "parent_id": parent_id
   });
 
-  let res = client
-    .post(url)
-    .headers(supabase_headers(auth)?)
-    .header("Prefer", "return=representation")
-    .json(&body)
-    .send()
-    .await
-    .map_err(|e| e.to_string())?;
-
-  if !res.status().is_success() {
-    return Err(format!("folder create failed: HTTP {}", res.status()));
-  }
-
-  let rows: Vec<FolderRow> = res.json().await.map_err(|e| e.to_string())?;
-  rows
-    .into_iter()
-    .next()
-    .map(|r| r.id)
-    .ok_or_else(|| "folder create: empty response".to_string())
+  send_with_refresh(
+    client,
+    auth,
+    || client.post(url.clone()).header("Prefer", "return=representation").json(&body),
+    |res| {
+      Box::pin(async move {
+        if !res.status().is_success() {
+          return Err(format!("folder create failed: HTTP {}", res.status()));
+        }
+        let rows: Vec<FolderRow> = res.json().await.map_err(|e| e.to_string())?;
+        rows
+          .into_iter()
+          .next()
+          .map(|r| r.id)
+          .ok_or_else(|| "folder create: empty response".to_string())
+      })
+    },
+  )
+  .await
 }
 
 async fn ensure_folder_path(
   client: &reqwest::Client,
-  auth: &SupabaseAuth,
+  auth: &mut SupabaseAuth,
   mapping: &mut SyncMappingV1,
   summary: &mut SyncSummary,
   rel_folder_path: &str,
@@ -302,7 +387,12 @@ async fn ensure_folder_path(
   Ok(parent_id)
 }
 
-async fn find_file_id(client: &reqwest::Client, auth: &SupabaseAuth, folder_id: &str, name: &str) -> Result<Option<String>, String> {
+async fn find_file_id(
+  client: &reqwest::Client,
+  auth: &mut SupabaseAuth,
+  folder_id: &str,
+  name: &str,
+) -> Result<Option<String>, String> {
   let mut url = reqwest::Url::parse(&format!("{}/files", rest_base(auth))).map_err(|e| e.to_string())?;
   {
     let mut q = url.query_pairs_mut();
@@ -312,24 +402,26 @@ async fn find_file_id(client: &reqwest::Client, auth: &SupabaseAuth, folder_id: 
     q.append_pair("limit", "1");
   }
 
-  let res = client
-    .get(url)
-    .headers(supabase_headers(auth)?)
-    .send()
-    .await
-    .map_err(|e| e.to_string())?;
-
-  if !res.status().is_success() {
-    return Err(format!("file lookup failed: HTTP {}", res.status()));
-  }
-
-  let rows: Vec<FileRow> = res.json().await.map_err(|e| e.to_string())?;
-  Ok(rows.into_iter().next().map(|r| r.id))
+  send_with_refresh(
+    client,
+    auth,
+    || client.get(url.clone()),
+    |res| {
+      Box::pin(async move {
+        if !res.status().is_success() {
+          return Err(format!("file lookup failed: HTTP {}", res.status()));
+        }
+        let rows: Vec<FileRow> = res.json().await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().next().map(|r| r.id))
+      })
+    },
+  )
+  .await
 }
 
 async fn create_file(
   client: &reqwest::Client,
-  auth: &SupabaseAuth,
+  auth: &mut SupabaseAuth,
   folder_id: &str,
   name: &str,
   kind: &str,
@@ -346,29 +438,29 @@ async fn create_file(
     "updated_at": updated_at
   });
 
-  let res = client
-    .post(url)
-    .headers(supabase_headers(auth)?)
-    .header("Prefer", "return=representation")
-    .json(&body)
-    .send()
-    .await
-    .map_err(|e| e.to_string())?;
-
-  if !res.status().is_success() {
-    return Err(format!("file create failed: HTTP {}", res.status()));
-  }
-
-  let rows: Vec<FileRow> = res.json().await.map_err(|e| e.to_string())?;
-  rows
-    .into_iter()
-    .next()
-    .ok_or_else(|| "file create: empty response".to_string())
+  send_with_refresh(
+    client,
+    auth,
+    || client.post(url.clone()).header("Prefer", "return=representation").json(&body),
+    |res| {
+      Box::pin(async move {
+        if !res.status().is_success() {
+          return Err(format!("file create failed: HTTP {}", res.status()));
+        }
+        let rows: Vec<FileRow> = res.json().await.map_err(|e| e.to_string())?;
+        rows
+          .into_iter()
+          .next()
+          .ok_or_else(|| "file create: empty response".to_string())
+      })
+    },
+  )
+  .await
 }
 
 async fn update_file(
   client: &reqwest::Client,
-  auth: &SupabaseAuth,
+  auth: &mut SupabaseAuth,
   file_id: &str,
   kind: &str,
   content: &str,
@@ -385,43 +477,46 @@ async fn update_file(
     "updated_at": updated_at
   });
 
-  let res = client
-    .patch(url)
-    .headers(supabase_headers(auth)?)
-    .header("Prefer", "return=representation")
-    .json(&body)
-    .send()
-    .await
-    .map_err(|e| e.to_string())?;
-
-  if !res.status().is_success() {
-    return Err(format!("file update failed: HTTP {}", res.status()));
-  }
-
-  let rows: Vec<FileRow> = res.json().await.map_err(|e| e.to_string())?;
-  rows
-    .into_iter()
-    .next()
-    .ok_or_else(|| "file update: empty response".to_string())
+  send_with_refresh(
+    client,
+    auth,
+    || client.patch(url.clone()).header("Prefer", "return=representation").json(&body),
+    |res| {
+      Box::pin(async move {
+        if !res.status().is_success() {
+          return Err(format!("file update failed: HTTP {}", res.status()));
+        }
+        let rows: Vec<FileRow> = res.json().await.map_err(|e| e.to_string())?;
+        rows
+          .into_iter()
+          .next()
+          .ok_or_else(|| "file update: empty response".to_string())
+      })
+    },
+  )
+  .await
 }
 
-async fn delete_file(client: &reqwest::Client, auth: &SupabaseAuth, file_id: &str) -> Result<(), String> {
+async fn delete_file(client: &reqwest::Client, auth: &mut SupabaseAuth, file_id: &str) -> Result<(), String> {
   let mut url = reqwest::Url::parse(&format!("{}/files", rest_base(auth))).map_err(|e| e.to_string())?;
   url
     .query_pairs_mut()
     .append_pair("id", &format!("eq.{}", file_id));
 
-  let res = client
-    .delete(url)
-    .headers(supabase_headers(auth)?)
-    .send()
-    .await
-    .map_err(|e| e.to_string())?;
-
-  if !res.status().is_success() {
-    return Err(format!("file delete failed: HTTP {}", res.status()));
-  }
-  Ok(())
+  send_with_refresh(
+    client,
+    auth,
+    || client.delete(url.clone()),
+    |res| {
+      Box::pin(async move {
+        if !res.status().is_success() {
+          return Err(format!("file delete failed: HTTP {}", res.status()));
+        }
+        Ok(())
+      })
+    },
+  )
+  .await
 }
 
 #[derive(Debug, Deserialize)]
@@ -431,7 +526,7 @@ struct RemoteFileBackupRow {
   content: Option<String>,
 }
 
-async fn fetch_file_backup(client: &reqwest::Client, auth: &SupabaseAuth, file_id: &str) -> Result<Option<RemoteFileBackupRow>, String> {
+async fn fetch_file_backup(client: &reqwest::Client, auth: &mut SupabaseAuth, file_id: &str) -> Result<Option<RemoteFileBackupRow>, String> {
   let mut url = reqwest::Url::parse(&format!("{}/files", rest_base(auth))).map_err(|e| e.to_string())?;
   {
     let mut q = url.query_pairs_mut();
@@ -439,17 +534,21 @@ async fn fetch_file_backup(client: &reqwest::Client, auth: &SupabaseAuth, file_i
     q.append_pair("id", &format!("eq.{}", file_id));
     q.append_pair("limit", "1");
   }
-  let res = client
-    .get(url)
-    .headers(supabase_headers(auth)?)
-    .send()
-    .await
-    .map_err(|e| e.to_string())?;
-  if !res.status().is_success() {
-    return Err(format!("file backup fetch failed: HTTP {}", res.status()));
-  }
-  let rows: Vec<RemoteFileBackupRow> = res.json().await.map_err(|e| e.to_string())?;
-  Ok(rows.into_iter().next())
+  send_with_refresh(
+    client,
+    auth,
+    || client.get(url.clone()),
+    |res| {
+      Box::pin(async move {
+        if !res.status().is_success() {
+          return Err(format!("file backup fetch failed: HTTP {}", res.status()));
+        }
+        let rows: Vec<RemoteFileBackupRow> = res.json().await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().next())
+      })
+    },
+  )
+  .await
 }
 
 #[tauri::command]
@@ -480,6 +579,7 @@ pub async fn sync_init(vault_path: String, project_folder_id: String) -> Result<
     last_pull_at: String::new(),
     folders,
     files: HashMap::new(),
+    resources: HashMap::new(),
   };
 
   write_mapping(&vault_path, &mapping)?;
@@ -493,6 +593,7 @@ pub async fn sync_initial_import(vault_path: String, project_folder_id: String, 
     return Err("vault_path does not exist".to_string());
   }
 
+  let mut auth = auth;
   let mut mapping = match read_mapping(&vault_path)? {
     Some(m) => m,
     None => sync_init(vault_path.clone(), project_folder_id.clone()).await?,
@@ -527,9 +628,12 @@ pub async fn sync_initial_import(vault_path: String, project_folder_id: String, 
       Some(r) => r,
       None => continue,
     };
+    if rel == "resources" || rel.starts_with("resources/") {
+      continue;
+    }
 
     if entry.file_type().is_dir() {
-      let _ = ensure_folder_path(&client, &auth, &mut mapping, &mut summary, &rel).await?;
+      let _ = ensure_folder_path(&client, &mut auth, &mut mapping, &mut summary, &rel).await?;
       continue;
     }
 
@@ -550,14 +654,14 @@ pub async fn sync_initial_import(vault_path: String, project_folder_id: String, 
       .unwrap_or("")
       .to_string();
     let parent_rel = if parent_rel == "." { "".to_string() } else { parent_rel };
-    let folder_id = ensure_folder_path(&client, &auth, &mut mapping, &mut summary, &parent_rel).await?;
+    let folder_id = ensure_folder_path(&client, &mut auth, &mut mapping, &mut summary, &parent_rel).await?;
 
     if let Some(prev) = mapping.files.get(&rel) {
       if prev.local_hash == local_hash {
         summary.files_skipped += 1;
         continue;
       }
-      let row = update_file(&client, &auth, &prev.file_id, &kind, &content, &updated_at).await?;
+      let row = update_file(&client, &mut auth, &prev.file_id, &kind, &content, &updated_at).await?;
       mapping.files.insert(
         rel.clone(),
         FileMappingV1 {
@@ -574,10 +678,10 @@ pub async fn sync_initial_import(vault_path: String, project_folder_id: String, 
 
     // Try reuse an existing remote row with same name in the same folder.
     let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("Untitled.md");
-    let file_id = match find_file_id(&client, &auth, &folder_id, name).await? {
+    let file_id = match find_file_id(&client, &mut auth, &folder_id, name).await? {
       Some(id) => id,
       None => {
-        let row = create_file(&client, &auth, &folder_id, name, &kind, &content, &updated_at).await?;
+        let row = create_file(&client, &mut auth, &folder_id, name, &kind, &content, &updated_at).await?;
         summary.files_created += 1;
         mapping.files.insert(
           rel.clone(),
@@ -593,7 +697,7 @@ pub async fn sync_initial_import(vault_path: String, project_folder_id: String, 
       }
     };
 
-    let row = update_file(&client, &auth, &file_id, &kind, &content, &updated_at).await?;
+    let row = update_file(&client, &mut auth, &file_id, &kind, &content, &updated_at).await?;
     summary.files_updated += 1;
     mapping.files.insert(
       rel.clone(),
@@ -625,11 +729,16 @@ async fn sync_one_path(vault_path: &str, project_folder_id: &str, auth: &Supabas
     Some(r) => r,
     None => return Ok(()),
   };
+  // `project_resources` are pulled into `resources/…` locally. Do not push these back as normal files.
+  if rel == "resources" || rel.starts_with("resources/") {
+    return Ok(());
+  }
 
   let client = reqwest::Client::new();
   let mut summary = SyncSummary::default();
   let updated_at = now_iso();
 
+  let mut auth = auth.clone();
   let mut mapping = match read_mapping(vault_path)? {
     Some(m) => m,
     None => sync_init(vault_path.to_string(), project_folder_id.to_string()).await?,
@@ -640,9 +749,18 @@ async fn sync_one_path(vault_path: &str, project_folder_id: &str, auth: &Supabas
   mapping.folders.insert("".to_string(), project_folder_id.to_string());
 
   if abs_path.exists() && abs_path.is_dir() {
-    let _ = ensure_folder_path(&client, auth, &mut mapping, &mut summary, &rel).await?;
+    let _ = ensure_folder_path(&client, &mut auth, &mut mapping, &mut summary, &rel).await?;
     mapping.updated_at = now_iso();
     write_mapping(vault_path, &mapping)?;
+    let _ = append_event(
+      vault_path,
+      &SyncEvent {
+        ts: now_iso(),
+        kind: "push".to_string(),
+        path: rel.clone(),
+        detail: "Ensured remote folder".to_string(),
+      },
+    );
     return Ok(());
   }
 
@@ -650,7 +768,7 @@ async fn sync_one_path(vault_path: &str, project_folder_id: &str, auth: &Supabas
   if !abs_path.exists() {
     if let Some(prev) = mapping.files.remove(&rel) {
       let ts = Utc::now().format("%Y-%m-%dT%H%M%SZ").to_string();
-      if let Ok(Some(bk)) = fetch_file_backup(&client, auth, &prev.file_id).await {
+      if let Ok(Some(bk)) = fetch_file_backup(&client, &mut auth, &prev.file_id).await {
         let trash_path = trash_dir(vault_path).join(&ts).join(&rel);
         if let Some(parent) = trash_path.parent() {
           let _ = fs::create_dir_all(parent);
@@ -666,7 +784,7 @@ async fn sync_one_path(vault_path: &str, project_folder_id: &str, auth: &Supabas
           detail: format!("Deleted remote file_id={}", prev.file_id),
         },
       );
-      let _ = delete_file(&client, auth, &prev.file_id).await;
+      let _ = delete_file(&client, &mut auth, &prev.file_id).await;
       mapping.updated_at = now_iso();
       write_mapping(vault_path, &mapping)?;
     }
@@ -689,13 +807,13 @@ async fn sync_one_path(vault_path: &str, project_folder_id: &str, auth: &Supabas
     .unwrap_or("")
     .to_string();
   let parent_rel = if parent_rel == "." { "".to_string() } else { parent_rel };
-  let folder_id = ensure_folder_path(&client, auth, &mut mapping, &mut summary, &parent_rel).await?;
+  let folder_id = ensure_folder_path(&client, &mut auth, &mut mapping, &mut summary, &parent_rel).await?;
 
-  if let Some(prev) = mapping.files.get(&rel) {
+  if let Some(prev) = mapping.files.get(&rel).cloned() {
     if prev.local_hash == local_hash {
       return Ok(());
     }
-    let row = update_file(&client, auth, &prev.file_id, &kind, &content, &updated_at).await?;
+    let row = update_file(&client, &mut auth, &prev.file_id, &kind, &content, &updated_at).await?;
     mapping.files.insert(
       rel.clone(),
       FileMappingV1 {
@@ -708,15 +826,24 @@ async fn sync_one_path(vault_path: &str, project_folder_id: &str, auth: &Supabas
     );
     mapping.updated_at = now_iso();
     write_mapping(vault_path, &mapping)?;
+    let _ = append_event(
+      vault_path,
+      &SyncEvent {
+        ts: now_iso(),
+        kind: "push".to_string(),
+        path: rel.clone(),
+        detail: format!("Updated remote file_id={}", prev.file_id),
+      },
+    );
     return Ok(());
   }
 
   // Insert or reuse remote file
   let name = abs_path.file_name().and_then(|n| n.to_str()).unwrap_or("Untitled.md");
-  let file_id = match find_file_id(&client, auth, &folder_id, name).await? {
+  let file_id = match find_file_id(&client, &mut auth, &folder_id, name).await? {
     Some(id) => id,
     None => {
-      let row = create_file(&client, auth, &folder_id, name, &kind, &content, &updated_at).await?;
+      let row = create_file(&client, &mut auth, &folder_id, name, &kind, &content, &updated_at).await?;
       mapping.files.insert(
         rel.clone(),
         FileMappingV1 {
@@ -733,7 +860,7 @@ async fn sync_one_path(vault_path: &str, project_folder_id: &str, auth: &Supabas
     }
   };
 
-  let row = update_file(&client, auth, &file_id, &kind, &content, &updated_at).await?;
+  let row = update_file(&client, &mut auth, &file_id, &kind, &content, &updated_at).await?;
   mapping.files.insert(
     rel.clone(),
     FileMappingV1 {
@@ -746,14 +873,24 @@ async fn sync_one_path(vault_path: &str, project_folder_id: &str, auth: &Supabas
   );
   mapping.updated_at = now_iso();
   write_mapping(vault_path, &mapping)?;
+  let _ = append_event(
+    vault_path,
+    &SyncEvent {
+      ts: now_iso(),
+      kind: "push".to_string(),
+      path: rel.clone(),
+      detail: format!("Upserted remote file_id={}", file_id),
+    },
+  );
   Ok(())
 }
 
 #[tauri::command]
 pub async fn sync_watch_start(vault_path: String, project_folder_id: String, auth: SupabaseAuth) -> Result<(), String> {
   let mut guard = WATCH_STATE.lock().map_err(|_| "watch state lock poisoned".to_string())?;
-  if guard.is_some() {
-    return Err("sync watcher already running".to_string());
+  let key = sync_key(&vault_path, &project_folder_id);
+  if guard.contains_key(&key) {
+    return Err("sync watcher already running for this project".to_string());
   }
 
   let (evt_tx, evt_rx) = mpsc::channel::<Result<notify::Event, notify::Error>>();
@@ -798,14 +935,14 @@ pub async fn sync_watch_start(vault_path: String, project_folder_id: String, aut
     }
   });
 
-  *guard = Some(WatchState { _watcher: watcher, stop_tx });
+  guard.insert(key, WatchState { _watcher: watcher, stop_tx });
   Ok(())
 }
 
 #[tauri::command]
 pub async fn sync_watch_stop() -> Result<(), String> {
   let mut guard = WATCH_STATE.lock().map_err(|_| "watch state lock poisoned".to_string())?;
-  if let Some(st) = guard.take() {
+  for (_, st) in guard.drain() {
     let _ = st.stop_tx.send(());
   }
   Ok(())
@@ -828,24 +965,37 @@ struct RemoteFileRow {
   kind: Option<String>,
 }
 
-async fn fetch_all_folders(client: &reqwest::Client, auth: &SupabaseAuth) -> Result<Vec<FolderNode>, String> {
+#[derive(Debug, Deserialize, Clone)]
+struct RemoteResourceRow {
+  id: String,
+  name: String,
+  markdown: String,
+  updated_at: Option<String>,
+  source: Option<serde_json::Value>,
+}
+
+async fn fetch_all_folders(client: &reqwest::Client, auth: &mut SupabaseAuth) -> Result<Vec<FolderNode>, String> {
   let mut url = reqwest::Url::parse(&format!("{}/folders", rest_base(auth))).map_err(|e| e.to_string())?;
   {
     let mut q = url.query_pairs_mut();
     q.append_pair("select", "id,parent_id,name");
     q.append_pair("limit", "10000");
   }
-  let res = client
-    .get(url)
-    .headers(supabase_headers(auth)?)
-    .send()
-    .await
-    .map_err(|e| e.to_string())?;
-  if !res.status().is_success() {
-    return Err(format!("folders fetch failed: HTTP {}", res.status()));
-  }
-  let rows: Vec<FolderNode> = res.json().await.map_err(|e| e.to_string())?;
-  Ok(rows)
+  send_with_refresh(
+    client,
+    auth,
+    || client.get(url.clone()),
+    |res| {
+      Box::pin(async move {
+        if !res.status().is_success() {
+          return Err(format!("folders fetch failed: HTTP {}", res.status()));
+        }
+        let rows: Vec<FolderNode> = res.json().await.map_err(|e| e.to_string())?;
+        Ok(rows)
+      })
+    },
+  )
+  .await
 }
 
 fn compute_subtree_folder_ids(project_folder_id: &str, folders: &[FolderNode]) -> Vec<String> {
@@ -902,7 +1052,7 @@ fn reverse_file_map(mapping: &SyncMappingV1) -> HashMap<String, String> {
 
 async fn fetch_files_updated_since(
   client: &reqwest::Client,
-  auth: &SupabaseAuth,
+  auth: &mut SupabaseAuth,
   folder_ids: &[String],
   since_iso: &str,
 ) -> Result<Vec<RemoteFileRow>, String> {
@@ -920,19 +1070,57 @@ async fn fetch_files_updated_since(
       q.append_pair("updated_at", &format!("gt.{}", since_iso));
       q.append_pair("limit", "10000");
     }
-    let res = client
-      .get(url)
-      .headers(supabase_headers(auth)?)
-      .send()
-      .await
-      .map_err(|e| e.to_string())?;
-    if !res.status().is_success() {
-      return Err(format!("files fetch failed: HTTP {}", res.status()));
-    }
-    let mut rows: Vec<RemoteFileRow> = res.json().await.map_err(|e| e.to_string())?;
+    let mut rows = send_with_refresh(
+      client,
+      auth,
+      || client.get(url.clone()),
+      |res| {
+        Box::pin(async move {
+          if !res.status().is_success() {
+            return Err(format!("files fetch failed: HTTP {}", res.status()));
+          }
+          let rows: Vec<RemoteFileRow> = res.json().await.map_err(|e| e.to_string())?;
+          Ok(rows)
+        })
+      },
+    )
+    .await?;
     out.append(&mut rows);
   }
   Ok(out)
+}
+
+async fn fetch_resources_updated_since(
+  client: &reqwest::Client,
+  auth: &mut SupabaseAuth,
+  project_folder_id: &str,
+  since_iso: &str,
+) -> Result<Vec<RemoteResourceRow>, String> {
+  let base = rest_base(auth);
+  let mut url = reqwest::Url::parse(&format!("{}/project_resources", base)).map_err(|e| e.to_string())?;
+  {
+    let mut q = url.query_pairs_mut();
+    q.append_pair("select", "id,name,markdown,updated_at,source");
+    q.append_pair("project_folder_id", &format!("eq.{}", project_folder_id));
+    q.append_pair("updated_at", &format!("gt.{}", since_iso));
+    q.append_pair("limit", "10000");
+  }
+
+  send_with_refresh(
+    client,
+    auth,
+    || client.get(url.clone()),
+    |res| {
+      Box::pin(async move {
+        if !res.status().is_success() {
+          return Err(format!("project_resources fetch failed: HTTP {}", res.status()));
+        }
+        let rows: Vec<RemoteResourceRow> = res.json().await.map_err(|e| e.to_string())?;
+        Ok(rows)
+      })
+    },
+  )
+  .await
 }
 
 #[tauri::command]
@@ -943,6 +1131,7 @@ pub async fn sync_pull_once(vault_path: String, project_folder_id: String, auth:
   }
 
   let client = reqwest::Client::new();
+  let mut auth = auth;
   let mut mapping = match read_mapping(&vault_path)? {
     Some(m) => m,
     None => sync_init(vault_path.clone(), project_folder_id.clone()).await?,
@@ -957,14 +1146,16 @@ pub async fn sync_pull_once(vault_path: String, project_folder_id: String, auth:
     mapping.last_pull_at.clone()
   };
 
-  let folders = fetch_all_folders(&client, &auth).await?;
+  let folders = fetch_all_folders(&client, &mut auth).await?;
   let folders_by_id: HashMap<String, FolderNode> = folders.into_iter().map(|f| (f.id.clone(), f)).collect();
   let folder_vec: Vec<FolderNode> = folders_by_id.values().cloned().collect();
   let folder_ids = compute_subtree_folder_ids(&project_folder_id, &folder_vec);
-  let remote_files = fetch_files_updated_since(&client, &auth, &folder_ids, &since).await?;
+  let remote_files = fetch_files_updated_since(&client, &mut auth, &folder_ids, &since).await?;
+  let remote_resources = fetch_resources_updated_since(&client, &mut auth, &project_folder_id, &since).await?;
 
   let mut summary = SyncSummary::default();
   let by_file_id = reverse_file_map(&mapping);
+  let mut conflicts: u32 = 0;
 
   for rf in remote_files {
     let remote_updated_at = rf.updated_at.clone().unwrap_or_else(|| now_iso());
@@ -1023,6 +1214,7 @@ pub async fn sync_pull_once(vault_path: String, project_folder_id: String, auth:
           detail: format!("Remote update would overwrite local edits. Wrote {}", conflict_path.display()),
         },
       );
+      conflicts += 1;
       continue;
     }
 
@@ -1032,6 +1224,11 @@ pub async fn sync_pull_once(vault_path: String, project_folder_id: String, auth:
     }
 
     let next_hash = sha256_hex(remote_content.as_bytes());
+    if prev.is_some() {
+      summary.files_updated += 1;
+    } else {
+      summary.files_created += 1;
+    }
     mapping.files.insert(
       rel_path.clone(),
       FileMappingV1 {
@@ -1044,17 +1241,97 @@ pub async fn sync_pull_once(vault_path: String, project_folder_id: String, auth:
     );
   }
 
+  for rr in remote_resources {
+    let remote_updated_at = rr.updated_at.clone().unwrap_or_else(now_iso);
+    let mut rel_path = format!("resources/{}", rr.name);
+    if let Some(src) = rr.source.as_ref() {
+      if src.get("type").and_then(|v| v.as_str()) == Some("docling") {
+        rel_path = format!("resources/docling/{}", rr.name);
+      }
+    }
+    let abs_path = root.join(&rel_path);
+    if let Some(parent) = abs_path.parent() {
+      if let Err(e) = fs::create_dir_all(parent) {
+        summary.errors.push(e.to_string());
+        continue;
+      }
+    }
+
+    let local_bytes = fs::read(&abs_path).ok();
+    let local_hash = local_bytes.as_ref().map(|b| sha256_hex(b)).unwrap_or_default();
+    let content_hash = sha256_hex(rr.markdown.as_bytes());
+
+    let prev = mapping.resources.get(&rel_path).cloned();
+    let prev_local_hash = prev.as_ref().map(|m| m.local_hash.clone()).unwrap_or_default();
+    let prev_remote_updated = prev.as_ref().map(|m| m.remote_updated_at.clone()).unwrap_or_default();
+
+    let local_modified = !prev_local_hash.is_empty() && local_hash != prev_local_hash;
+    let remote_newer = !prev_remote_updated.is_empty() && remote_updated_at > prev_remote_updated;
+
+    if local_modified && remote_newer {
+      let ts = Utc::now().format("%Y-%m-%dT%H%M%SZ").to_string();
+      let stem = abs_path.file_stem().and_then(|s| s.to_str()).unwrap_or("resource");
+      let ext = abs_path.extension().and_then(|e| e.to_str()).unwrap_or("md");
+      let conflict_name = format!("{stem} (conflict from NexusMap {ts}).{ext}");
+      let conflict_path = abs_path.with_file_name(conflict_name);
+      if let Err(e) = fs::write(&conflict_path, rr.markdown.as_bytes()) {
+        summary.errors.push(e.to_string());
+      }
+      let _ = append_event(
+        &vault_path,
+        &SyncEvent {
+          ts: now_iso(),
+          kind: "conflict".to_string(),
+          path: rel_path.clone(),
+          detail: format!("Remote resource update would overwrite local edits. Wrote {}", conflict_path.display()),
+        },
+      );
+      conflicts += 1;
+      continue;
+    }
+
+    if let Err(e) = fs::write(&abs_path, rr.markdown.as_bytes()) {
+      summary.errors.push(e.to_string());
+      continue;
+    }
+
+    mapping.resources.insert(
+      rel_path.clone(),
+      ResourceMappingV1 {
+        resource_id: rr.id.clone(),
+        local_hash: content_hash,
+        remote_updated_at,
+      },
+    );
+  }
+
   mapping.last_pull_at = now_iso();
   mapping.updated_at = now_iso();
   write_mapping(&vault_path, &mapping)?;
+  let _ = append_event(
+    &vault_path,
+    &SyncEvent {
+      ts: now_iso(),
+      kind: "pull".to_string(),
+      path: String::new(),
+      detail: format!(
+        "Pulled. Files created: {}, updated: {}. Conflicts: {}. Errors: {}.",
+        summary.files_created,
+        summary.files_updated,
+        conflicts,
+        summary.errors.len()
+      ),
+    },
+  );
   Ok(summary)
 }
 
 #[tauri::command]
 pub async fn sync_pull_start(vault_path: String, project_folder_id: String, auth: SupabaseAuth, interval_ms: Option<u64>) -> Result<(), String> {
   let mut guard = PULL_STATE.lock().map_err(|_| "pull state lock poisoned".to_string())?;
-  if guard.is_some() {
-    return Err("remote poller already running".to_string());
+  let key = sync_key(&vault_path, &project_folder_id);
+  if guard.contains_key(&key) {
+    return Err("remote poller already running for this project".to_string());
   }
   let (stop_tx, stop_rx) = mpsc::channel::<()>();
   let interval = interval_ms.unwrap_or(5000);
@@ -1067,14 +1344,14 @@ pub async fn sync_pull_start(vault_path: String, project_folder_id: String, auth
     std::thread::sleep(std::time::Duration::from_millis(interval));
   });
 
-  *guard = Some(PullState { stop_tx });
+  guard.insert(key, PullState { stop_tx });
   Ok(())
 }
 
 #[tauri::command]
 pub async fn sync_pull_stop() -> Result<(), String> {
   let mut guard = PULL_STATE.lock().map_err(|_| "pull state lock poisoned".to_string())?;
-  if let Some(st) = guard.take() {
+  for (_, st) in guard.drain() {
     let _ = st.stop_tx.send(());
   }
   Ok(())
@@ -1102,5 +1379,21 @@ pub async fn vault_write_text_file(vault_path: String, relative_path: String, co
     fs::create_dir_all(parent).map_err(|e| e.to_string())?;
   }
   fs::write(&target, content).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn vault_ensure_dir(vault_path: String, relative_path: String) -> Result<(), String> {
+  let root = Path::new(&vault_path);
+  if !root.exists() {
+    return Err("vault_path does not exist".to_string());
+  }
+
+  let rel = Path::new(&relative_path);
+  if rel.is_absolute() || rel.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+    return Err("relative_path must stay within the vault".to_string());
+  }
+
+  let target = root.join(rel);
+  fs::create_dir_all(&target).map_err(|e| e.to_string())
 }
 
