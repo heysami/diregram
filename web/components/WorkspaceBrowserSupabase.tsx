@@ -24,6 +24,8 @@ import { exportKgAndVectorsForProject } from '@/lib/kg-vector-export';
 import { ProjectActionMenus } from '@/components/workspace/ProjectActionMenus';
 import { SemanticKgViewerModal } from '@/components/kg/SemanticKgViewerModal';
 import { DoclingImportPanel } from '@/components/docling/DoclingImportPanel';
+import { MarkdownDocModal } from '@/components/grid/MarkdownDocModal';
+import { downloadTextFile } from '@/lib/client-download';
 
 type DbFolder = {
   id: string;
@@ -44,6 +46,16 @@ type DbFile = {
   access: { people?: AccessPerson[] } | null;
   layout_direction?: LayoutDirection | null;
   kind?: string | null;
+};
+
+type DbProjectResource = {
+  id: string;
+  name: string;
+  owner_id: string;
+  project_folder_id: string;
+  kind: string | null;
+  created_at: string;
+  updated_at: string | null;
 };
 
 function normalizeKind(raw: unknown): DocKind {
@@ -137,6 +149,12 @@ export function WorkspaceBrowserSupabase() {
   const [kgViewerOpen, setKgViewerOpen] = useState(false);
   const [kgExportResult, setKgExportResult] = useState<Awaited<ReturnType<typeof exportKgAndVectorsForProject>> | null>(null);
 
+  const [resourcesLoading, setResourcesLoading] = useState(false);
+  const [resourcesError, setResourcesError] = useState<string | null>(null);
+  const [resources, setResources] = useState<DbProjectResource[]>([]);
+  const [resourceModalOpen, setResourceModalOpen] = useState(false);
+  const [resourceModal, setResourceModal] = useState<{ id: string; name: string; markdown: string } | null>(null);
+
   const loadOpenAiKey = () => {
     try {
       return String(window.localStorage.getItem('nexusmap.openaiApiKey.v1') || '');
@@ -175,6 +193,42 @@ export function WorkspaceBrowserSupabase() {
       showToast('Copy failed');
     }
   };
+
+  const reloadResources = async () => {
+    if (!supabase) return;
+    if (!activeFolderId) return;
+    setResourcesError(null);
+    setResourcesLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('project_resources')
+        .select('id,name,owner_id,project_folder_id,kind,created_at,updated_at')
+        .eq('project_folder_id', activeFolderId)
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      setResources((data || []) as any);
+    } catch (e) {
+      setResources([]);
+      setResourcesError(e instanceof Error ? e.message : 'Failed to load resources');
+    } finally {
+      setResourcesLoading(false);
+    }
+  };
+
+  const loadResourceMarkdown = async (resourceId: string): Promise<{ name: string; markdown: string } | null> => {
+    if (!supabase) return null;
+    const { data, error } = await supabase.from('project_resources').select('name,markdown').eq('id', resourceId).single();
+    if (error) throw error;
+    return { name: String((data as any)?.name || 'Resource'), markdown: String((data as any)?.markdown || '') };
+  };
+
+  useEffect(() => {
+    if (!supabase) return;
+    if (!activeFolderId) return;
+    if (projectTab !== 'import') return;
+    reloadResources();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [supabase, activeFolderId, projectTab]);
 
   useEffect(() => {
     return () => {
@@ -994,7 +1048,101 @@ export function WorkspaceBrowserSupabase() {
           <div className="grid gap-2">
             {(() => {
               if (projectTab === 'import') {
-                return <DoclingImportPanel supabase={supabase} userId={userId} />;
+                return (
+                  <div className="space-y-4">
+                    <DoclingImportPanel
+                      supabase={supabase}
+                      userId={userId}
+                      projectFolderId={activeFolder.id}
+                      onSavedResource={() => {
+                        reloadResources();
+                        showToast('Saved to resources');
+                      }}
+                    />
+
+                    <div className="mac-window mac-double-outline p-5 space-y-3 max-w-[760px]">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="space-y-1">
+                          <div className="text-sm font-bold tracking-tight">Additional resources</div>
+                          <div className="text-xs opacity-70">Markdown saved to this project (used as reference material).</div>
+                        </div>
+                        <button type="button" className="mac-btn h-8" onClick={reloadResources} disabled={resourcesLoading} title="Refresh">
+                          Refresh
+                        </button>
+                      </div>
+
+                      {resourcesError ? <div className="text-xs mac-double-outline p-3">Error: {resourcesError}</div> : null}
+                      {resourcesLoading ? <div className="text-xs opacity-70">Loading…</div> : null}
+
+                      {!resourcesLoading && resources.length === 0 ? <div className="text-xs opacity-70">No resources yet.</div> : null}
+
+                      <div className="grid gap-2">
+                        {resources.map((r) => (
+                          <div key={r.id} className="mac-double-outline p-3 flex items-center justify-between gap-3">
+                            <button
+                              type="button"
+                              className="text-left min-w-0 flex-1"
+                              title="Open"
+                              onClick={async () => {
+                                try {
+                                  const res = await loadResourceMarkdown(r.id);
+                                  if (!res) return;
+                                  setResourceModal({ id: r.id, name: res.name, markdown: res.markdown });
+                                  setResourceModalOpen(true);
+                                } catch (e) {
+                                  showToast(e instanceof Error ? e.message : 'Failed to open');
+                                }
+                              }}
+                            >
+                              <div className="text-xs font-semibold truncate">{r.name || 'Resource'}</div>
+                              <div className="text-[11px] opacity-70 mt-1">
+                                {r.created_at ? new Date(r.created_at).toLocaleString() : ''}
+                              </div>
+                            </button>
+
+                            <div className="flex items-center gap-1 shrink-0">
+                              <button
+                                type="button"
+                                className="mac-btn h-8"
+                                title="Download .md"
+                                onClick={async () => {
+                                  try {
+                                    const res = await loadResourceMarkdown(r.id);
+                                    if (!res) return;
+                                    downloadTextFile(res.name || 'resource.md', res.markdown);
+                                  } catch (e) {
+                                    showToast(e instanceof Error ? e.message : 'Download failed');
+                                  }
+                                }}
+                              >
+                                <Download size={14} />
+                              </button>
+                              <button
+                                type="button"
+                                className="mac-btn h-8"
+                                title="Delete"
+                                onClick={async () => {
+                                  if (!supabase) return;
+                                  if (!confirm('Delete this resource?')) return;
+                                  try {
+                                    const { error } = await supabase.from('project_resources').delete().eq('id', r.id);
+                                    if (error) throw error;
+                                    setResources((prev) => prev.filter((x) => x.id !== r.id));
+                                    showToast('Deleted');
+                                  } catch (e) {
+                                    showToast(e instanceof Error ? e.message : 'Delete failed');
+                                  }
+                                }}
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                );
               }
 
               if (projectTab === 'templates' && templateScope === 'global') {
@@ -1143,6 +1291,17 @@ export function WorkspaceBrowserSupabase() {
           </div>
         </div>
       )}
+
+      <MarkdownDocModal
+        isOpen={resourceModalOpen}
+        title={resourceModal?.name || 'Resource'}
+        views={[{ id: 'markdown', label: 'Markdown', text: resourceModal?.markdown || '' }]}
+        initialViewId="markdown"
+        onClose={() => {
+          setResourceModalOpen(false);
+          setResourceModal(null);
+        }}
+      />
 
       {editProject ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-6">

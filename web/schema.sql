@@ -192,3 +192,73 @@ create table public.file_permissions (
 -- RLS for Permissions
 alter table public.file_permissions enable row level security;
 -- (Add complex policies for sharing later)
+
+-- Project resources (Additional markdown-only reference material attached to a project/folder)
+create table public.project_resources (
+  id uuid default uuid_generate_v4() primary key,
+  owner_id uuid references public.profiles(id) on delete cascade not null,
+  project_folder_id uuid references public.folders(id) on delete cascade not null,
+  name text not null,
+  kind text default 'markdown',
+  markdown text not null,
+  source jsonb,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+create index project_resources_project_created_idx
+  on public.project_resources (project_folder_id, created_at);
+
+alter table public.project_resources enable row level security;
+
+create policy "project_resources_select_via_project_access" on public.project_resources
+  for select
+  using (
+    auth.uid() = owner_id
+    or exists (
+      select 1 from public.folders f
+      where f.id = project_resources.project_folder_id
+        and (auth.uid() = f.owner_id or public.access_can_view(f.access) or public.access_can_edit(f.access))
+    )
+  );
+
+create policy "project_resources_insert_via_project_edit" on public.project_resources
+  for insert
+  with check (
+    auth.uid() = owner_id
+    and exists (
+      select 1 from public.folders f
+      where f.id = project_resources.project_folder_id
+        and (auth.uid() = f.owner_id or public.access_can_edit(f.access))
+    )
+  );
+
+create policy "project_resources_update_via_project_edit" on public.project_resources
+  for update
+  using (
+    auth.uid() = owner_id
+    or exists (
+      select 1 from public.folders f
+      where f.id = project_resources.project_folder_id
+        and (auth.uid() = f.owner_id or public.access_can_edit(f.access))
+    )
+  )
+  with check (
+    auth.uid() = owner_id
+    or exists (
+      select 1 from public.folders f
+      where f.id = project_resources.project_folder_id
+        and (auth.uid() = f.owner_id or public.access_can_edit(f.access))
+    )
+  );
+
+create policy "project_resources_delete_via_project_edit" on public.project_resources
+  for delete
+  using (
+    auth.uid() = owner_id
+    or exists (
+      select 1 from public.folders f
+      where f.id = project_resources.project_folder_id
+        and (auth.uid() = f.owner_id or public.access_can_edit(f.access))
+    )
+  );
