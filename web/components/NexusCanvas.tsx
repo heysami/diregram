@@ -132,8 +132,12 @@ interface Props {
     onRenameStage?: (stageIndex: number, label: string) => void;
     onInsertLane?: (atIndex: number) => void;
     onDeleteLane?: (laneId: string) => void;
+    /** Reorder lanes by moving the given lane earlier/later in the list. */
+    onMoveLane?: (laneId: string, delta: -1 | 1) => void;
     onInsertStage?: (atIndex: number) => void;
     onDeleteStage?: (stageIndex: number) => void;
+    /** Reorder stages by moving the given stage earlier/later in the list. */
+    onMoveStage?: (stageIndex: number, delta: -1 | 1) => void;
     canDeleteLaneIds?: Set<string>;
     canDeleteStageIdxs?: Set<number>;
   };
@@ -3016,6 +3020,38 @@ export function NexusCanvas({
                                   title="Click to set insertion lane; double-click to rename"
                                 >
                                   <span>{lane.label}</span>
+                                  <div className="inline-flex items-center gap-1">
+                                    <button
+                                      type="button"
+                                      className={`h-5 w-5 border text-[10px] leading-none ${
+                                        idx === 0 ? 'opacity-30 cursor-not-allowed' : 'hover:bg-white'
+                                      }`}
+                                      title="Move lane up"
+                                      disabled={idx === 0}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        if (idx === 0) return;
+                                        swimlaneActions?.onMoveLane?.(lane.id, -1);
+                                      }}
+                                    >
+                                      ↑
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className={`h-5 w-5 border text-[10px] leading-none ${
+                                        idx >= swimlaneLayout.lanes.length - 1 ? 'opacity-30 cursor-not-allowed' : 'hover:bg-white'
+                                      }`}
+                                      title="Move lane down"
+                                      disabled={idx >= swimlaneLayout.lanes.length - 1}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        if (idx >= swimlaneLayout.lanes.length - 1) return;
+                                        swimlaneActions?.onMoveLane?.(lane.id, +1);
+                                      }}
+                                    >
+                                      ↓
+                                    </button>
+                                  </div>
                                   <button
                                     type="button"
                                     className={`h-5 w-5 border transition-opacity ${
@@ -3082,6 +3118,7 @@ export function NexusCanvas({
                       {Array.from({ length: stageCount }).map((_, idx) => {
                         const stage =
                           swimlaneLayout.stages[idx] || { id: `stage-${idx + 1}`, label: `Stage ${idx + 1}` };
+                        const isDefinedStage = idx < swimlaneLayout.stages.length;
                         const left = swimlaneBands?.stageLefts[idx] ?? idx * STAGE_STRIDE;
                         const isActiveStage =
                           !!swimlaneLayout.showInsertTargetUI && swimlaneLayout.insertTarget?.stage === idx;
@@ -3141,6 +3178,40 @@ export function NexusCanvas({
                                 }`}
                               >
                                 <span>{stage.label}</span>
+                                {isDefinedStage ? (
+                                  <div className="inline-flex items-center gap-1">
+                                    <button
+                                      type="button"
+                                      className={`h-5 w-5 border text-[10px] leading-none ${
+                                        idx === 0 ? 'opacity-30 cursor-not-allowed' : 'hover:bg-white'
+                                      }`}
+                                      title="Move stage left"
+                                      disabled={idx === 0}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        if (idx === 0) return;
+                                        swimlaneActions?.onMoveStage?.(idx, -1);
+                                      }}
+                                    >
+                                      ←
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className={`h-5 w-5 border text-[10px] leading-none ${
+                                        idx >= swimlaneLayout.stages.length - 1 ? 'opacity-30 cursor-not-allowed' : 'hover:bg-white'
+                                      }`}
+                                      title="Move stage right"
+                                      disabled={idx >= swimlaneLayout.stages.length - 1}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        if (idx >= swimlaneLayout.stages.length - 1) return;
+                                        swimlaneActions?.onMoveStage?.(idx, +1);
+                                      }}
+                                    >
+                                      →
+                                    </button>
+                                  </div>
+                                ) : null}
                                 <button
                                   type="button"
                                     className={`h-5 w-5 border transition-opacity ${
@@ -3185,6 +3256,7 @@ export function NexusCanvas({
                       {Array.from({ length: stageCount }).map((_, idx) => {
                         const stage =
                           swimlaneLayout.stages[idx] || { id: `stage-${idx + 1}`, label: `Stage ${idx + 1}` };
+                        const isDefinedStage = idx < swimlaneLayout.stages.length;
                         const top = swimlaneBands?.stageTops[idx] ?? idx * LANE_STRIDE;
                         const h = swimlaneBands?.stageHeights[idx] ?? LANE_STRIDE;
                         const isActiveStage =
@@ -3236,6 +3308,40 @@ export function NexusCanvas({
                               title="Click to set insertion stage; double-click to rename"
                             >
                               <span>{stage.label}</span>
+                              {isDefinedStage ? (
+                                <div className="inline-flex items-center gap-1">
+                                  <button
+                                    type="button"
+                                    className={`h-5 w-5 border text-[10px] leading-none ${
+                                      idx === 0 ? 'opacity-30 cursor-not-allowed' : 'hover:bg-white'
+                                    }`}
+                                    title="Move stage up"
+                                    disabled={idx === 0}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      if (idx === 0) return;
+                                      swimlaneActions?.onMoveStage?.(idx, -1);
+                                    }}
+                                  >
+                                    ↑
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className={`h-5 w-5 border text-[10px] leading-none ${
+                                      idx >= swimlaneLayout.stages.length - 1 ? 'opacity-30 cursor-not-allowed' : 'hover:bg-white'
+                                    }`}
+                                    title="Move stage down"
+                                    disabled={idx >= swimlaneLayout.stages.length - 1}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      if (idx >= swimlaneLayout.stages.length - 1) return;
+                                      swimlaneActions?.onMoveStage?.(idx, +1);
+                                    }}
+                                  >
+                                    ↓
+                                  </button>
+                                </div>
+                              ) : null}
                               <button
                                 type="button"
                                 className={`h-5 w-5 border transition-opacity ${
@@ -3354,6 +3460,38 @@ export function NexusCanvas({
                                 }`}
                               >
                                 <span>{lane.label}</span>
+                                <div className="inline-flex items-center gap-1">
+                                  <button
+                                    type="button"
+                                    className={`h-5 w-5 border text-[10px] leading-none ${
+                                      idx === 0 ? 'opacity-30 cursor-not-allowed' : 'hover:bg-white'
+                                    }`}
+                                    title="Move lane left"
+                                    disabled={idx === 0}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      if (idx === 0) return;
+                                      swimlaneActions?.onMoveLane?.(lane.id, -1);
+                                    }}
+                                  >
+                                    ←
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className={`h-5 w-5 border text-[10px] leading-none ${
+                                      idx >= swimlaneLayout.lanes.length - 1 ? 'opacity-30 cursor-not-allowed' : 'hover:bg-white'
+                                    }`}
+                                    title="Move lane right"
+                                    disabled={idx >= swimlaneLayout.lanes.length - 1}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      if (idx >= swimlaneLayout.lanes.length - 1) return;
+                                      swimlaneActions?.onMoveLane?.(lane.id, +1);
+                                    }}
+                                  >
+                                    →
+                                  </button>
+                                </div>
                                 <button
                                   type="button"
                                   className={`h-5 w-5 border transition-opacity ${
@@ -4828,15 +4966,16 @@ export function NexusCanvas({
                             </div>
                           )}
                           {isInProcessFlowMode && processNodeType === 'goto' && (
-                            <div className="flex w-full items-center justify-center gap-1 text-xs text-slate-900">
-                              <span className="text-slate-600">Go to</span>
+                            <div className="flex w-full min-w-0 items-center justify-center gap-1 text-xs text-slate-900 overflow-hidden">
+                              <span className="shrink-0 text-slate-600">Go to</span>
                               <select
                                 value={gotoTargets[node.id] || ''}
                                 onChange={(e) => {
                                   e.stopPropagation();
                                   handleSaveGotoTarget(node.id, e.target.value);
                                 }}
-                                className="appearance-none rounded border border-transparent bg-transparent px-1.5 py-0.5 text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-400"
+                                className="w-24 min-w-0 appearance-none rounded border border-transparent bg-transparent px-1.5 py-0.5 text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-400"
+                                style={{ width: 96, maxWidth: 96 }}
                                 onClick={(e) => e.stopPropagation()}
                               >
                                 <option value="" disabled>

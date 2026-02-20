@@ -1611,7 +1611,7 @@ export function DimensionFlowEditor({
                     // Diamonds must be a true DIAMOND_SIZE square; min-width breaks connector math.
                     isDiamond
                       ? 'items-center justify-center p-0'
-                      : 'min-w-[160px] max-w-[220px] flex-col items-stretch justify-between px-3 py-2 rounded-md'
+                      : 'min-w-0 flex-col items-stretch justify-between px-3 py-2 rounded-md overflow-hidden'
                   } ${
                     isEditing 
                       ? 'cursor-text' 
@@ -1710,15 +1710,15 @@ export function DimensionFlowEditor({
                         End
                       </div>
                     ) : node.type === 'goto' ? (
-                      <div className="flex w-full items-center justify-center gap-1 text-xs text-slate-900">
-                        <span className="text-slate-600">Go to</span>
+                      <div className="flex w-full min-w-0 items-center justify-center gap-1 text-xs text-slate-900">
+                        <span className="shrink-0 text-slate-600">Go to</span>
                         <select
                           value={node.gotoTargetId || ''}
                           onChange={(e) => {
                             const nextTargetId = e.target.value;
                             updateNode(node.id, { gotoTargetId: nextTargetId });
                           }}
-                          className="appearance-none rounded border border-transparent bg-transparent px-1.5 py-0.5 text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-400"
+                          className="w-24 min-w-0 appearance-none rounded border border-transparent bg-transparent px-1.5 py-0.5 text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-400"
                         >
                           <option value="" disabled>
                             Select…

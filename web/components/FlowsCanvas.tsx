@@ -1378,6 +1378,18 @@ export function FlowsCanvas({
                       saveFlowTabSwimlane(doc, next);
                       if (nextLaneId === laneId) setNextLaneId(nextLanes[0]?.id || 'branch-1');
                     },
+                    onMoveLane: (laneId, delta) => {
+                      const idx = swimlane.lanes.findIndex((l) => l.id === laneId);
+                      if (idx === -1) return;
+                      const nextIdx = idx + delta;
+                      if (nextIdx < 0 || nextIdx >= swimlane.lanes.length) return;
+                      const nextLanes = swimlane.lanes.slice();
+                      const [moved] = nextLanes.splice(idx, 1);
+                      nextLanes.splice(nextIdx, 0, moved);
+                      const next: FlowTabSwimlaneData = { ...swimlane, lanes: nextLanes };
+                      setSwimlane(next);
+                      saveFlowTabSwimlane(doc, next);
+                    },
                     onInsertStage: (atIndex) => {
                       const nextStages = [...swimlane.stages];
                       const idx = Math.max(0, Math.min(atIndex, nextStages.length));
@@ -1406,6 +1418,30 @@ export function FlowsCanvas({
                       saveFlowTabSwimlane(doc, next);
                       if (nextStage === stageIndex) setNextStage(Math.max(0, stageIndex - 1));
                       if (nextStage > stageIndex) setNextStage((s) => Math.max(0, s - 1));
+                    },
+                    onMoveStage: (stageIndex, delta) => {
+                      const idx = stageIndex;
+                      const nextIdx = idx + delta;
+                      if (nextIdx < 0 || nextIdx >= swimlane.stages.length) return;
+
+                      const nextStages = swimlane.stages.slice();
+                      const tmp = nextStages[idx];
+                      nextStages[idx] = nextStages[nextIdx];
+                      nextStages[nextIdx] = tmp;
+
+                      const nextPlacement: FlowTabSwimlaneData['placement'] = {};
+                      Object.entries(swimlane.placement || {}).forEach(([nodeId, p]) => {
+                        if (!Number.isFinite(p.stage)) return;
+                        if (p.stage === idx) nextPlacement[nodeId] = { ...p, stage: nextIdx };
+                        else if (p.stage === nextIdx) nextPlacement[nodeId] = { ...p, stage: idx };
+                        else nextPlacement[nodeId] = p;
+                      });
+
+                      const next: FlowTabSwimlaneData = { ...swimlane, stages: nextStages, placement: nextPlacement };
+                      setSwimlane(next);
+                      saveFlowTabSwimlane(doc, next);
+                      setNextStage((s) => (s === idx ? nextIdx : s === nextIdx ? idx : s));
+                      setShowInsertTargetUI(true);
                     },
                     canDeleteLaneIds,
                     canDeleteStageIdxs,

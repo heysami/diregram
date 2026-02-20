@@ -2,9 +2,10 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import * as Y from 'yjs';
-import { X, Database, ArrowRightLeft } from 'lucide-react';
+import { X, Database, ArrowRightLeft, Plus, Trash2 } from 'lucide-react';
 import type { NexusNode } from '@/types/nexus';
 import { buildMergedDataObjectGraph, type DataObjectEdge } from '@/lib/data-object-graph';
+import { createDataObject, deleteDataObjectAndCleanupReferences } from '@/lib/data-object-storage';
 
 interface Props {
   doc: Y.Doc;
@@ -67,14 +68,46 @@ export function DataObjectsPanel({ doc, roots, onClose }: Props) {
             </div>
           </div>
         </div>
-        <button
-          type="button"
-          onClick={onClose}
-          className="p-1.5 rounded-md hover:bg-gray-100 text-gray-500"
-          title="Close"
-        >
-          <X size={14} />
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => {
+              const name = window.prompt('Data object name?', 'New object') || '';
+              const obj = createDataObject(doc, name);
+              setSelectedId(obj.id);
+            }}
+            className="p-1.5 rounded-md hover:bg-gray-100 text-gray-600"
+            title="New data object"
+          >
+            <Plus size={14} />
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              const id = (effectiveSelectedId || '').trim();
+              if (!id) return;
+              const ok = window.confirm(
+                `Delete data object "${id}"?\n\nThis will also remove any node/expanded-grid links to it.`,
+              );
+              if (!ok) return;
+              deleteDataObjectAndCleanupReferences(doc, id);
+              setSelectedId(null);
+            }}
+            className={`p-1.5 rounded-md hover:bg-gray-100 ${effectiveSelectedId ? 'text-gray-600' : 'text-gray-300 cursor-not-allowed'}`}
+            title={effectiveSelectedId ? 'Delete selected data object' : 'Select an object to delete'}
+            disabled={!effectiveSelectedId}
+          >
+            <Trash2 size={14} />
+          </button>
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-1.5 rounded-md hover:bg-gray-100 text-gray-500"
+            title="Close"
+          >
+            <X size={14} />
+          </button>
+        </div>
       </div>
 
       <div className="mb-3">
@@ -221,7 +254,7 @@ export function DataObjectsPanel({ doc, roots, onClose }: Props) {
       </div>
 
       <div className="mt-3 text-[10px] text-gray-500">
-        Read-only view derived from the canvas: node assignments + expanded grid metadata.
+        Links are derived from node assignments + expanded grid metadata.
       </div>
     </div>
   );

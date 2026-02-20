@@ -4,7 +4,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import * as Y from 'yjs';
 import type { NexusNode } from '@/types/nexus';
 import { buildMergedDataObjectGraph, type DataObjectEdge, type DataObjectGraph, type DataObjectNode } from '@/lib/data-object-graph';
-import { loadDataObjects, upsertDataObject } from '@/lib/data-object-storage';
+import { createDataObject, deleteDataObjectAndCleanupReferences, loadDataObjects, upsertDataObject } from '@/lib/data-object-storage';
 import { ManageDataObjectsModal } from '@/components/ManageDataObjectsModal';
 import { DataObjectInspectorPanel } from '@/components/DataObjectInspectorPanel';
 import { loadDataObjectAttributes } from '@/lib/data-object-attributes';
@@ -16,6 +16,7 @@ import type { PresenceController } from '@/lib/presence';
 import { computeSafeViewport } from '@/lib/safe-viewport';
 import { useAutoCenterOnce } from '@/hooks/use-auto-center-once';
 import { usePointerPan } from '@/hooks/use-pointer-pan';
+import { DATAOBJECTS_TOOL_EVENT, type DataObjectsToolEventDetail } from '@/lib/dataobjects-tool-events';
 
 type MultiplicityMark = 'one' | 'many' | 'unknown';
 
@@ -460,16 +461,21 @@ export function DataObjectsCanvas({
   // Listen for toolbar actions (we keep the canvas uncluttered).
   useEffect(() => {
     const onTool = (evt: Event) => {
-      const e = evt as CustomEvent<{ tool?: string }>;
+      const e = evt as CustomEvent<DataObjectsToolEventDetail>;
       const tool = e.detail?.tool;
       if (!tool) return;
+      if (tool === 'new') {
+        const name = window.prompt('Data object name?', 'New object') || '';
+        const obj = createDataObject(doc, name);
+        setSelectedId(obj.id);
+      }
       if (tool === 'manage') openManage();
       if (tool === 'zoomIn') zoomIn();
       if (tool === 'zoomOut') zoomOut();
       if (tool === 'center') fitToContent();
     };
-    window.addEventListener('diregram:dataobjectsTool', onTool as EventListener);
-    return () => window.removeEventListener('diregram:dataobjectsTool', onTool as EventListener);
+    window.addEventListener(DATAOBJECTS_TOOL_EVENT, onTool as EventListener);
+    return () => window.removeEventListener(DATAOBJECTS_TOOL_EVENT, onTool as EventListener);
   }, [fitToContent, openManage, zoomIn, zoomOut]);
 
   // Auto-center selection (once per selection change; never fight dragging)
@@ -514,6 +520,21 @@ export function DataObjectsCanvas({
           selectedId={selectedId}
           onClose={() => setSelectedId(null)}
           onSelectId={(id) => setSelectedId(id)}
+          onCreateNew={() => {
+            const name = window.prompt('Data object name?', 'New object') || '';
+            const obj = createDataObject(doc, name);
+            setSelectedId(obj.id);
+          }}
+          onDelete={(id) => {
+            const cleanId = String(id || '').trim();
+            if (!cleanId) return;
+            const ok = window.confirm(
+              `Delete data object "${cleanId}"?\n\nThis will also remove any node/expanded-grid links to it.`,
+            );
+            if (!ok) return;
+            deleteDataObjectAndCleanupReferences(doc, cleanId);
+            setSelectedId(null);
+          }}
         />
       ) : null}
 

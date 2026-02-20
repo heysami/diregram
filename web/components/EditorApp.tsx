@@ -18,6 +18,7 @@ import { SystemFlowsCanvas } from '@/components/SystemFlowsCanvas';
 import { AppHeader, type AppView } from '@/components/AppHeader';
 import { CommentsPanel } from '@/components/CommentsPanel';
 import { parseNexusMarkdown } from '@/lib/nexus-parser';
+import { dispatchDataObjectsTool } from '@/lib/dataobjects-tool-events';
 import type { NexusNode } from '@/types/nexus';
 import {
   loadExpandedStates,
@@ -1705,7 +1706,7 @@ export function EditorApp() {
           variant={activeView === 'flows' || activeView === 'systemFlow' || activeView === 'dataObjects' ? 'notesOnly' : 'full'}
           onCenterView={() => {
             if (activeView === 'dataObjects') {
-              window.dispatchEvent(new CustomEvent('diregram:dataobjectsTool', { detail: { tool: 'center' } }));
+              dispatchDataObjectsTool('center');
               return;
             }
             window.dispatchEvent(new CustomEvent('diregram:canvasTool', { detail: { tool: 'center', view: activeView } }));
@@ -1724,9 +1725,10 @@ export function EditorApp() {
           dataObjectsTools={
             activeView === 'dataObjects'
               ? {
-                  onOpenManage: () => window.dispatchEvent(new CustomEvent('diregram:dataobjectsTool', { detail: { tool: 'manage' } })),
-                  onZoomIn: () => window.dispatchEvent(new CustomEvent('diregram:dataobjectsTool', { detail: { tool: 'zoomIn' } })),
-                  onZoomOut: () => window.dispatchEvent(new CustomEvent('diregram:dataobjectsTool', { detail: { tool: 'zoomOut' } })),
+                  onNew: () => dispatchDataObjectsTool('new'),
+                  onOpenManage: () => dispatchDataObjectsTool('manage'),
+                  onZoomIn: () => dispatchDataObjectsTool('zoomIn'),
+                  onZoomOut: () => dispatchDataObjectsTool('zoomOut'),
                 }
               : null
           }

@@ -1,4 +1,4 @@
-import { ArrowUpRight, Eye, Highlighter, MessageSquareText, MousePointer2, Move, Pencil, Pin, Redo2, Settings2, Square, SquareDashed, Trash2, Undo2, ZoomIn, ZoomOut } from 'lucide-react';
+import { ArrowUpRight, Eye, Highlighter, MessageSquareText, MousePointer2, Move, Pencil, Pin, Plus, Redo2, Settings2, Square, SquareDashed, Trash2, Undo2, ZoomIn, ZoomOut } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import * as Y from 'yjs';
 import type { TagViewState } from '@/types/tagging';
@@ -40,6 +40,7 @@ interface Props {
     onDeleteSelection: () => void;
   } | null;
   dataObjectsTools?: {
+    onNew: () => void;
     onOpenManage: () => void;
     onZoomIn: () => void;
     onZoomOut: () => void;
@@ -257,6 +258,12 @@ export function Toolbar({
         {dataObjectsTools ? (
           <>
             <div className="mac-sep" />
+            <ToolButton
+              isActive={false}
+              onClick={dataObjectsTools.onNew}
+              icon={<Plus size={18} />}
+              label="New data object"
+            />
             <ToolButton
               isActive={false}
               onClick={dataObjectsTools.onOpenManage}
