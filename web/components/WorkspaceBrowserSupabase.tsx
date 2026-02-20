@@ -118,6 +118,7 @@ export function WorkspaceBrowserSupabase() {
   const [error, setError] = useState<string | null>(null);
   const [folders, setFolders] = useState<DbFolder[]>([]);
   const [files, setFiles] = useState<DbFile[]>([]);
+  const [ragReady, setRagReady] = useState<boolean | null>(null);
 
   const [activeFolderId, setActiveFolderId] = useState<string | null>(null);
   const [editProject, setEditProject] = useState<EditProjectState | null>(null);
@@ -249,6 +250,32 @@ export function WorkspaceBrowserSupabase() {
 
   const activeFolder = useMemo(() => (activeFolderId ? folderById.get(activeFolderId) || null : null), [activeFolderId, folderById]);
   const isAccountTemplatesProject = activeFolder?.name === 'Account Templates';
+
+  // Detect whether this project has a built RAG KB (presence of rag_projects row).
+  useEffect(() => {
+    let cancelled = false;
+    const run = async () => {
+      setRagReady(null);
+      if (!supabase) return;
+      if (!activeFolder) return;
+      const { data, error } = await supabase
+        .from('rag_projects')
+        .select('public_id')
+        .eq('owner_id', activeFolder.owner_id)
+        .eq('project_folder_id', activeFolder.id)
+        .maybeSingle();
+      if (cancelled) return;
+      if (error) {
+        setRagReady(false);
+        return;
+      }
+      setRagReady(Boolean(data?.public_id));
+    };
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }, [supabase, activeFolder?.id, activeFolder?.owner_id]);
 
   // If user opens the special "Account Templates" folder, force it into template-library mode
   // so account templates don't show up under the normal Files tab.
@@ -842,10 +869,12 @@ export function WorkspaceBrowserSupabase() {
                     const stats = (json as any)?.stats;
                     if (stats?.chunks != null) showToast(`KB built (${stats.chunks} chunks)`);
                     else showToast('KB built');
+                    setRagReady(true);
                   } catch (e) {
                     showToast(e instanceof Error ? e.message : 'Build failed');
                   }
                 }}
+                ragStatus={ragReady == null ? 'loading' : ragReady ? 'ready' : 'not_built'}
                 onCopyMcpAccountUrl={async () => {
                   try {
                     showToast('Creating MCP account link…');

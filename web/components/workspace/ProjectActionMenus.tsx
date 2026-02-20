@@ -5,7 +5,7 @@ import { ChevronDown, Copy, Eye, FileText, FlaskConical, Network, Package, Penci
 
 type MenuItem = {
   id: string;
-  label: string;
+  label: React.ReactNode;
   icon?: React.ReactNode;
   disabled?: boolean;
   title?: string;
@@ -92,6 +92,7 @@ export function ProjectActionMenus({
   onNewVision,
   onNewTest,
   onBuildKnowledgeBase,
+  ragStatus,
   onCopyMcpAccountUrl,
   onCopyProjectLink,
   onExportBundle,
@@ -107,6 +108,7 @@ export function ProjectActionMenus({
   onNewVision: () => void;
   onNewTest: () => void;
   onBuildKnowledgeBase?: () => void | Promise<void>;
+  ragStatus?: 'ready' | 'not_built' | 'loading' | null;
   onCopyMcpAccountUrl?: () => void | Promise<void>;
   onCopyProjectLink?: () => void | Promise<void>;
   onExportBundle: () => void | Promise<void>;
@@ -115,6 +117,21 @@ export function ProjectActionMenus({
 }) {
   const newDisabled = projectTab !== 'files' || !canEdit;
   const newTitle = projectTab !== 'files' ? 'Switch to Files tab to create new files' : !canEdit ? 'No edit access' : 'Create new content';
+
+  const ragPill =
+    ragStatus === 'ready' ? (
+      <span className="shrink-0 rounded border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">
+        Ready
+      </span>
+    ) : ragStatus === 'not_built' ? (
+      <span className="shrink-0 rounded border border-gray-200 bg-gray-50 px-1.5 py-0.5 text-[10px] font-semibold text-gray-600">
+        Not built
+      </span>
+    ) : ragStatus === 'loading' ? (
+      <span className="shrink-0 rounded border border-gray-200 bg-white px-1.5 py-0.5 text-[10px] font-semibold text-gray-500">
+        Checking…
+      </span>
+    ) : null;
 
   return (
     <div className="flex items-center gap-2">
@@ -142,7 +159,12 @@ export function ProjectActionMenus({
         items={[
           {
             id: 'build-kb',
-            label: 'Build knowledge base (RAG)',
+            label: (
+              <span className="flex-1 flex items-center justify-between gap-2">
+                <span>Build knowledge base (RAG)</span>
+                {ragPill}
+              </span>
+            ),
             icon: <Share2 size={14} />,
             disabled: !onBuildKnowledgeBase,
             title: onBuildKnowledgeBase ? 'Generate embeddings + semantic KG for this project' : 'RAG ingestion is only available in Supabase mode',
