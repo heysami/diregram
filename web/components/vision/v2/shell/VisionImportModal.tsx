@@ -4,12 +4,7 @@ import { useMemo, useState } from 'react';
 import type * as Y from 'yjs';
 import { X, AlertTriangle } from 'lucide-react';
 import { normalizeMarkdownNewlines } from '@/lib/markdown-normalize';
-import { VISION_AI_GUIDANCE_PROMPT_FROM_RESOURCES, VISION_AI_GUIDANCE_PROMPT_FROM_WEBSITE } from '@/lib/ai-guides/vision-guidance';
-import { POST_GEN_CHECKLIST_VISION_IMPORT } from '@/lib/ai-checklists/post-generation-vision';
-import { POST_GEN_CHECKLIST_VISION_COMPONENT_LIBRARY } from '@/lib/ai-checklists/post-generation-vision-component-library';
 import { validateVisionMarkdownImport } from '@/lib/vision/vision-markdown-import-validator';
-import { downloadTextFile } from '@/lib/client-download';
-import { CollapsibleCopyPanel } from '@/components/import/CollapsibleCopyPanel';
 
 export function VisionImportModal({ doc, isOpen, onClose }: { doc: Y.Doc; isOpen: boolean; onClose: () => void }) {
   const [markdown, setMarkdown] = useState('');
@@ -17,8 +12,6 @@ export function VisionImportModal({ doc, isOpen, onClose }: { doc: Y.Doc; isOpen
   const [step, setStep] = useState<'edit' | 'confirm'>('edit');
   const [clearComments, setClearComments] = useState(true);
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
-  const [downloadStatus, setDownloadStatus] = useState<string | null>(null);
-  const [isDownloading, setIsDownloading] = useState(false);
 
   const currentText = useMemo(() => doc.getText('nexus').toString(), [doc]);
   const hasExistingContent = useMemo(() => currentText.trim().length > 0, [currentText]);
@@ -27,7 +20,6 @@ export function VisionImportModal({ doc, isOpen, onClose }: { doc: Y.Doc; isOpen
     setIssues(null);
     setStep('edit');
     setCopyStatus(null);
-    setDownloadStatus(null);
     onClose();
   };
 
@@ -39,55 +31,6 @@ export function VisionImportModal({ doc, isOpen, onClose }: { doc: Y.Doc; isOpen
     } catch {
       setCopyStatus('Copy failed (clipboard permission).');
       setTimeout(() => setCopyStatus(null), 1500);
-    }
-  };
-
-  const downloadBundleSingleFile = () => {
-    const bundle = [
-      '# Vision — AI guidance + checklists (bundle)',
-      '',
-      '## Prompt A — design system resources provided',
-      VISION_AI_GUIDANCE_PROMPT_FROM_RESOURCES,
-      '',
-      '## Prompt B — discover from website',
-      VISION_AI_GUIDANCE_PROMPT_FROM_WEBSITE,
-      '',
-      '## Post-generation checklist — Vision importability',
-      POST_GEN_CHECKLIST_VISION_IMPORT,
-      '',
-      '## Post-generation checklist — Vision component library',
-      POST_GEN_CHECKLIST_VISION_COMPONENT_LIBRARY,
-      '',
-    ].join('\n');
-    downloadTextFile('vision-guides-and-checklists-bundle.md', bundle);
-    setDownloadStatus('Triggered 1 download (bundle).');
-    setTimeout(() => setDownloadStatus(null), 4000);
-  };
-
-  const onDownloadAllGuides = async () => {
-    if (isDownloading) return;
-    setIsDownloading(true);
-    setDownloadStatus('Starting downloads… (your browser may ask to allow multiple downloads)');
-    try {
-      const files: Array<{ name: string; content: string }> = [
-        { name: 'vision-ai-guidance-prompt-a-from-resources.md', content: VISION_AI_GUIDANCE_PROMPT_FROM_RESOURCES },
-        { name: 'vision-ai-guidance-prompt-b-from-website.md', content: VISION_AI_GUIDANCE_PROMPT_FROM_WEBSITE },
-        { name: 'post-generation-checklist-vision-import.md', content: POST_GEN_CHECKLIST_VISION_IMPORT },
-        { name: 'post-generation-checklist-vision-component-library.md', content: POST_GEN_CHECKLIST_VISION_COMPONENT_LIBRARY },
-      ];
-      for (let i = 0; i < files.length; i++) {
-        const f = files[i]!;
-        downloadTextFile(f.name, f.content);
-        // eslint-disable-next-line no-await-in-loop
-        await new Promise((r) => setTimeout(r, 120));
-      }
-      setDownloadStatus(`Triggered ${files.length} downloads.`);
-      setTimeout(() => setDownloadStatus(null), 4000);
-    } catch {
-      setDownloadStatus('Failed to trigger downloads.');
-      setTimeout(() => setDownloadStatus(null), 4000);
-    } finally {
-      setIsDownloading(false);
     }
   };
 
@@ -137,67 +80,9 @@ export function VisionImportModal({ doc, isOpen, onClose }: { doc: Y.Doc; isOpen
         </div>
 
         <div className="p-4 overflow-auto space-y-4">
-          <CollapsibleCopyPanel
-            title="Vision AI guidance prompt A (design system resources provided)"
-            description="Use when you already have design system docs/tokens. Generates an importable Vision skeleton plus an SVG component library."
-            copyLabel="Copy"
-            textToCopy={VISION_AI_GUIDANCE_PROMPT_FROM_RESOURCES}
-            childrenText={VISION_AI_GUIDANCE_PROMPT_FROM_RESOURCES}
-            copy={copy}
-          />
-
-          <CollapsibleCopyPanel
-            title="Vision AI guidance prompt B (discover from website)"
-            description="Use when you need the AI to find the design system from the website (or infer from live UI), then produce SVG components."
-            copyLabel="Copy"
-            textToCopy={VISION_AI_GUIDANCE_PROMPT_FROM_WEBSITE}
-            childrenText={VISION_AI_GUIDANCE_PROMPT_FROM_WEBSITE}
-            copy={copy}
-          />
-
-          <div className="flex items-center gap-2 flex-wrap">
-            <button
-              type="button"
-              className="px-3 py-1.5 rounded-md border border-slate-200 bg-white text-[12px] font-semibold text-slate-700 hover:bg-slate-50"
-              onClick={downloadBundleSingleFile}
-              title="Download a single bundle file (most reliable)."
-            >
-              Download bundle (single file)
-            </button>
-            <button
-              type="button"
-              className={`px-3 py-1.5 rounded-md border text-[12px] font-semibold ${
-                isDownloading ? 'border-slate-200 bg-slate-100 text-slate-500' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
-              }`}
-              onClick={onDownloadAllGuides}
-              disabled={isDownloading}
-              title="Downloads multiple files (your browser may prompt to allow multiple downloads)."
-            >
-              {isDownloading ? 'Downloading…' : 'Download individual files'}
-            </button>
-            <div className="text-[11px] text-slate-600">
-              Some browsers block multiple downloads; use the single-file bundle if that happens.
-            </div>
+          <div className="text-[11px] text-slate-600">
+            Need the AI guidance prompts and checklists? Use <span className="font-semibold">Project → Download … guides + checklists</span>.
           </div>
-          {downloadStatus ? <div className="text-[11px] text-slate-600">{downloadStatus}</div> : null}
-
-          <CollapsibleCopyPanel
-            title="Post-generation checklist — Vision importability"
-            description="Checks nexus-doc + visionjson validity and common freezing pitfalls."
-            copyLabel="Copy"
-            textToCopy={POST_GEN_CHECKLIST_VISION_IMPORT}
-            childrenText={POST_GEN_CHECKLIST_VISION_IMPORT}
-            copy={copy}
-          />
-
-          <CollapsibleCopyPanel
-            title="Post-generation checklist — Vision component library"
-            description="Checks token sourcing, component/state coverage, and SVG editability."
-            copyLabel="Copy"
-            textToCopy={POST_GEN_CHECKLIST_VISION_COMPONENT_LIBRARY}
-            childrenText={POST_GEN_CHECKLIST_VISION_COMPONENT_LIBRARY}
-            copy={copy}
-          />
 
           <div>
             <div className="text-[11px] font-bold uppercase tracking-wide text-slate-600">Paste Vision markdown</div>

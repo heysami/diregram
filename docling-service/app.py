@@ -10,8 +10,6 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from supabase import create_client
 
-from docling.document_converter import DocumentConverter
-
 
 def _require_env(name: str) -> str:
     v = (os.getenv(name) or "").strip()
@@ -94,6 +92,9 @@ def convert(req: ConvertRequest):
         with tempfile.TemporaryDirectory(prefix="docling_") as td:
             in_path = Path(td) / f"input{suffix}"
             in_path.write_bytes(data if isinstance(data, (bytes, bytearray)) else bytes(data))
+
+            # Import Docling lazily so the server can start with low memory.
+            from docling.document_converter import DocumentConverter
 
             converter = DocumentConverter()
             result = converter.convert(str(in_path))

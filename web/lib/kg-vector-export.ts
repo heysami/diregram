@@ -815,7 +815,9 @@ function exportDiagramSemanticKg(opts: {
       walk(c);
     });
 
-    // Sequencing edges: preserve sibling order (useful for "before/next", especially under #flow# nodes).
+    // Sequencing edges:
+    // - Always preserve sibling order (generic)
+    // - Additionally, under a #flow# node, treat children as ordered "steps" and emit explicit next/prev edges.
     try {
       const children = Array.isArray(n.children) ? n.children : [];
       for (let i = 0; i + 1 < children.length; i += 1) {
@@ -825,8 +827,27 @@ function exportDiagramSemanticKg(opts: {
         const aId = diagramNodeEntityId(f.id, a.lineIndex, expids.get(a.lineIndex) ?? null);
         const bId = diagramNodeEntityId(f.id, b.lineIndex, expids.get(b.lineIndex) ?? null);
         edges.push({ type: 'edge', id: edgeId('node_next_sibling', aId, bId), edgeType: 'node_next_sibling', src: aId, dst: bId });
-        if (n.isFlowNode && a.isFlowNode && b.isFlowNode) {
-          edges.push({ type: 'edge', id: edgeId('flow_tree_next', aId, bId), edgeType: 'flow_tree_next', src: aId, dst: bId });
+        if (n.isFlowNode) {
+          // Steps under a #flow# node are sequential by child order, even though the step lines typically do NOT carry #flow#.
+          edges.push({
+            type: 'edge',
+            id: edgeId('flow_step_next', aId, bId),
+            edgeType: 'flow_step_next',
+            src: aId,
+            dst: bId,
+            flowRootId: nid,
+          });
+          edges.push({
+            type: 'edge',
+            id: edgeId('flow_step_prev', bId, aId),
+            edgeType: 'flow_step_prev',
+            src: bId,
+            dst: aId,
+            flowRootId: nid,
+          });
+
+          // Back-compat alias (older name).
+          edges.push({ type: 'edge', id: edgeId('flow_tree_next', aId, bId), edgeType: 'flow_tree_next', src: aId, dst: bId, flowRootId: nid });
         }
       }
     } catch {

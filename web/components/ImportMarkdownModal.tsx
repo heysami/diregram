@@ -5,22 +5,6 @@ import * as Y from 'yjs';
 import { Clipboard, X, AlertTriangle } from 'lucide-react';
 import { validateNexusMarkdownImport } from '@/lib/markdown-import-validator';
 import { normalizeMarkdownNewlines } from '@/lib/markdown-normalize';
-import { downloadTextFile } from '@/lib/client-download';
-import { CollapsibleCopyPanel } from '@/components/import/CollapsibleCopyPanel';
-import {
-  POST_GEN_CHECKLIST_ALL,
-  POST_GEN_CHECKLIST_COMPLETENESS,
-  POST_GEN_CHECKLIST_CONDITIONAL,
-  POST_GEN_CHECKLIST_DATA_OBJECTS,
-  POST_GEN_CHECKLIST_EXPANDED_NODES,
-  POST_GEN_CHECKLIST_IA,
-  POST_GEN_CHECKLIST_PROCESS_FLOWS,
-  POST_GEN_CHECKLIST_SYSTEM_FLOW,
-  POST_GEN_CHECKLIST_SWIMLANE,
-  POST_GEN_CHECKLIST_TAGS,
-  POST_GEN_CHECKLIST_TECHNICAL,
-} from '@/lib/ai-checklists/post-generation-index';
-import { EXPANDED_NODE_PLANNING_PROMPT } from '@/lib/ai-guides/expanded-node-planning';
 
 const AI_PROMPT = `You are generating a SINGLE markdown document for the NexusMap app.
 
@@ -1525,8 +1509,7 @@ E) Completeness Summary (counts; do not shrink scope to pass)
 `;
 
 // Repo-local verifier script (context-agnostic; checks NexusMap markdown format + linkage rules only).
-// Note: This is embedded for easy copy/paste from the Import Markdown popup.
-const PYTHON_MARKDOWN_VERIFIER_SCRIPT = String.raw`#!/usr/bin/env python3
+export const PYTHON_MARKDOWN_VERIFIER_SCRIPT = String.raw`#!/usr/bin/env python3
 """
 NexusMap markdown verifier (repo-local sanity checks)
 
@@ -2114,7 +2097,7 @@ if __name__ == "__main__":
     main()
 `;
 
-const FULL_AI_PROMPT = `${AI_PROMPT}\n\n${AI_PROMPT_ADDON}\n\n${PRE_GENERATION_CHECKLIST}`;
+export const FULL_AI_PROMPT = `${AI_PROMPT}\n\n${AI_PROMPT_ADDON}\n\n${PRE_GENERATION_CHECKLIST}`;
 
 type Props = {
   doc: Y.Doc;
@@ -2130,8 +2113,6 @@ export function ImportMarkdownModal({ doc, isOpen, onClose, onDidReplace }: Prop
   const [step, setStep] = useState<'edit' | 'confirm'>('edit');
   const [clearComments, setClearComments] = useState(true);
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
-  const [downloadStatus, setDownloadStatus] = useState<string | null>(null);
-  const [isDownloading, setIsDownloading] = useState(false);
 
   const currentText = useMemo(() => doc.getText('nexus').toString(), [doc]);
   const hasExistingContent = useMemo(() => currentText.trim().length > 0, [currentText]);
@@ -2195,43 +2176,6 @@ export function ImportMarkdownModal({ doc, isOpen, onClose, onDidReplace }: Prop
     return currentText.trim() !== markdown.trim();
   }, [issues, hasExistingContent, currentText, markdown]);
 
-  const onDownloadAllGuides = async () => {
-    if (isDownloading) return;
-    setIsDownloading(true);
-    setDownloadStatus('Starting downloads… (your browser may ask to allow multiple downloads)');
-    try {
-      const files: Array<{ name: string; content: string }> = [
-        { name: 'nexusmap-ai-guidance-prompt.md', content: FULL_AI_PROMPT },
-        { name: 'expanded-node-parking-lot-template.md', content: EXPANDED_NODE_PLANNING_PROMPT },
-        { name: 'post-generation-checklist-all.md', content: POST_GEN_CHECKLIST_ALL },
-        { name: 'post-generation-checklist-technical.md', content: POST_GEN_CHECKLIST_TECHNICAL },
-        { name: 'post-generation-checklist-ia.md', content: POST_GEN_CHECKLIST_IA },
-        { name: 'post-generation-checklist-expanded-nodes.md', content: POST_GEN_CHECKLIST_EXPANDED_NODES },
-        { name: 'post-generation-checklist-tags.md', content: POST_GEN_CHECKLIST_TAGS },
-        { name: 'post-generation-checklist-main-canvas-process-flows.md', content: POST_GEN_CHECKLIST_PROCESS_FLOWS },
-        { name: 'post-generation-checklist-system-flow.md', content: POST_GEN_CHECKLIST_SYSTEM_FLOW },
-        { name: 'post-generation-checklist-conditional.md', content: POST_GEN_CHECKLIST_CONDITIONAL },
-        { name: 'post-generation-checklist-data-objects.md', content: POST_GEN_CHECKLIST_DATA_OBJECTS },
-        { name: 'post-generation-checklist-swimlane-flowtab.md', content: POST_GEN_CHECKLIST_SWIMLANE },
-        { name: 'post-generation-checklist-completeness.md', content: POST_GEN_CHECKLIST_COMPLETENESS },
-      ];
-
-      for (let i = 0; i < files.length; i++) {
-        const f = files[i];
-        downloadTextFile(f.name, f.content);
-        // eslint-disable-next-line no-await-in-loop
-        await new Promise((r) => setTimeout(r, 120));
-      }
-      setDownloadStatus(`Triggered ${files.length} downloads.`);
-      setTimeout(() => setDownloadStatus(null), 4000);
-    } catch {
-      setDownloadStatus('Failed to trigger downloads.');
-      setTimeout(() => setDownloadStatus(null), 4000);
-    } finally {
-      setIsDownloading(false);
-    }
-  };
-
   if (!isOpen) return null;
 
   return (
@@ -2249,145 +2193,9 @@ export function ImportMarkdownModal({ doc, isOpen, onClose, onDidReplace }: Prop
         </div>
 
         <div className="p-4 overflow-auto space-y-4">
-          <CollapsibleCopyPanel
-            title="AI guidance prompt (guideline; copy/paste into your AI)"
-            description="This explains NexusMap structure + flow/conditional/swimlane concepts + ID/linkage rules."
-            copyLabel="Copy prompt"
-            textToCopy={FULL_AI_PROMPT}
-            childrenText={FULL_AI_PROMPT}
-            copy={copy}
-          />
-
-          <CollapsibleCopyPanel
-            title="Expanded-node parking lot template (optional staging; separate file)"
-            description="If expanded-grid generation is too heavy, put the expanded-node list aside here first (screens + primary objects + relations), then come back and finish using the expanded-nodes checklist."
-            copyLabel="Copy"
-            textToCopy={EXPANDED_NODE_PLANNING_PROMPT}
-            childrenText={EXPANDED_NODE_PLANNING_PROMPT}
-            copy={copy}
-          />
-
-
-          <div className="flex items-center gap-2">
-            <button type="button" className="mac-btn" onClick={onDownloadAllGuides} disabled={isDownloading}>
-              {isDownloading ? 'Downloading…' : 'Download guidelines + checklists'}
-            </button>
-            <div className="text-[11px] text-slate-600">
-              Downloads individual files (your browser may prompt to allow multiple downloads).
-            </div>
+          <div className="text-[11px] text-slate-600">
+            Need the AI guidance prompt and checklists? Use <span className="font-semibold">Project → Download … guides + checklists</span>.
           </div>
-          {downloadStatus ? <div className="text-[11px] text-slate-600">{downloadStatus}</div> : null}
-
-          <CollapsibleCopyPanel
-            title="Post-generation checklist — 0) Copy ALL (combined)"
-            description="Optional: copy everything as one blob. Recommended order: Technical → IA → Expanded Nodes → Tags → Process Flows → System Flow → Conditional → Data Objects → Swimlane → Completeness."
-            copyLabel="Copy all"
-            textToCopy={POST_GEN_CHECKLIST_ALL}
-            childrenText={POST_GEN_CHECKLIST_ALL}
-            copy={copy}
-          />
-
-          <CollapsibleCopyPanel
-            title="Post-generation checklist — 1) Technical Markdown"
-            description="Very technical: indentation, fences, JSON validity, registries, expid integrity, connector validity."
-            copyLabel="Copy"
-            textToCopy={POST_GEN_CHECKLIST_TECHNICAL}
-            childrenText={POST_GEN_CHECKLIST_TECHNICAL}
-            copy={copy}
-          />
-
-          <CollapsibleCopyPanel
-            title="Post-generation checklist — 2) IA (main canvas)"
-            description="Checks that IA nodes are navigable UI items and that journeys do NOT leak into non-#flow# nodes."
-            copyLabel="Copy"
-            textToCopy={POST_GEN_CHECKLIST_IA}
-            childrenText={POST_GEN_CHECKLIST_IA}
-            copy={copy}
-          />
-
-          <CollapsibleCopyPanel
-            title="Post-generation checklist — 2.1) Expanded nodes (screens)"
-            description="Checks expanded screen coverage, primary-object binding, and relation realization via expanded grids."
-            copyLabel="Copy"
-            textToCopy={POST_GEN_CHECKLIST_EXPANDED_NODES}
-            childrenText={POST_GEN_CHECKLIST_EXPANDED_NODES}
-            copy={copy}
-          />
-
-          <CollapsibleCopyPanel
-            title="Post-generation checklist — 2.25) Tags"
-            description="Checks tag-store integrity, actor/ui-surface tagging rules, and pinned-tag metadata (global + per-flow)."
-            copyLabel="Copy"
-            textToCopy={POST_GEN_CHECKLIST_TAGS}
-            childrenText={POST_GEN_CHECKLIST_TAGS}
-            copy={copy}
-          />
-
-          <CollapsibleCopyPanel
-            title="Post-generation checklist — 2.5) Main canvas process flows (#flow#)"
-            description="Focused checks for #flow# trees + process registries (flow-nodes, process-node-type, process-goto, connector labels)."
-            copyLabel="Copy"
-            textToCopy={POST_GEN_CHECKLIST_PROCESS_FLOWS}
-            childrenText={POST_GEN_CHECKLIST_PROCESS_FLOWS}
-            copy={copy}
-          />
-
-          <CollapsibleCopyPanel
-            title="Post-generation checklist — System Flow (integration diagrams)"
-            description="Checks #systemflow roots and systemflow blocks: boxes/zones/links validity, architecture grouping, and sequence ordering."
-            copyLabel="Copy"
-            textToCopy={POST_GEN_CHECKLIST_SYSTEM_FLOW}
-            childrenText={POST_GEN_CHECKLIST_SYSTEM_FLOW}
-            copy={copy}
-          />
-
-          <CollapsibleCopyPanel
-            title="Post-generation checklist — 3) Conditional (hubs)"
-            description="Checks hub/variant usage, desc/hubnote registries, and avoids using hubs as a second sitemap."
-            copyLabel="Copy"
-            textToCopy={POST_GEN_CHECKLIST_CONDITIONAL}
-            childrenText={POST_GEN_CHECKLIST_CONDITIONAL}
-            copy={copy}
-          />
-
-          <CollapsibleCopyPanel
-            title="Post-generation checklist — 4) Data objects"
-            description="Checks orphan detection, transaction object declaration per process root, and logical relationships. Revise IA/flows if logic doesn’t fit."
-            copyLabel="Copy"
-            textToCopy={POST_GEN_CHECKLIST_DATA_OBJECTS}
-            childrenText={POST_GEN_CHECKLIST_DATA_OBJECTS}
-            copy={copy}
-          />
-
-          <CollapsibleCopyPanel
-            title="Post-generation checklist — 5) Swimlane (Flowtab)"
-            description="Checks journey-map semantics, references/coverage, and reminders about nesting vs sibling misuse."
-            copyLabel="Copy"
-            textToCopy={POST_GEN_CHECKLIST_SWIMLANE}
-            childrenText={POST_GEN_CHECKLIST_SWIMLANE}
-            copy={copy}
-          />
-
-          <CollapsibleCopyPanel
-            title="Post-generation checklist — 6) Completeness"
-            description="Counts S/P/J using the counting rules and prevents shrinking scope to pass."
-            copyLabel="Copy"
-            textToCopy={POST_GEN_CHECKLIST_COMPLETENESS}
-            childrenText={POST_GEN_CHECKLIST_COMPLETENESS}
-            copy={copy}
-          />
-
-
-          <CollapsibleCopyPanel
-            title="Repo-local Python verifier script (optional)"
-            description="Context-agnostic sanity checks aligned with our validator + checklists. Copy/paste into a file and run it against a markdown doc."
-            copyLabel="Copy script"
-            textToCopy={PYTHON_MARKDOWN_VERIFIER_SCRIPT}
-            childrenText={PYTHON_MARKDOWN_VERIFIER_SCRIPT}
-            copy={copy}
-          />
-
-          {copyStatus ? <div className="text-[11px] text-slate-600">{copyStatus}</div> : null}
 
           <div>
             <div className="text-[11px] font-bold uppercase tracking-wide text-slate-600">Paste AI-generated markdown</div>
@@ -2486,6 +2294,8 @@ export function ImportMarkdownModal({ doc, isOpen, onClose, onDidReplace }: Prop
               ) : null}
             </div>
           ) : null}
+
+          {copyStatus ? <div className="text-[11px] text-slate-600">{copyStatus}</div> : null}
 
           {step === 'confirm' && issues && issues.errors.length === 0 ? (
             <div className="rounded-lg border border-slate-200 bg-white p-3">

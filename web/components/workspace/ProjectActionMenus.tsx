@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { ChevronDown, Copy, Eye, FileText, FlaskConical, Network, Package, Pencil, Plus, Share2, Table } from 'lucide-react';
+import { AiUsageHelpModal } from '@/components/workspace/AiUsageHelpModal';
 
 type MenuItem = {
   id: string;
@@ -117,6 +118,7 @@ export function ProjectActionMenus({
 }) {
   const newDisabled = projectTab !== 'files' || !canEdit;
   const newTitle = projectTab !== 'files' ? 'Switch to Files tab to create new files' : !canEdit ? 'No edit access' : 'Create new content';
+  const [aiHelpOpen, setAiHelpOpen] = useState(false);
 
   const ragPill =
     ragStatus === 'ready' ? (
@@ -135,6 +137,14 @@ export function ProjectActionMenus({
 
   return (
     <div className="flex items-center gap-2">
+      <button
+        type="button"
+        className="mac-btn flex items-center gap-1.5"
+        onClick={() => setAiHelpOpen(true)}
+        title="Recommended sequence for AI usage, imports, exports, and RAG"
+      >
+        <FileText size={14} /> Help on AI usage
+      </button>
       <DropdownMenu
         label={
           <>
@@ -171,6 +181,26 @@ export function ProjectActionMenus({
             onClick: onBuildKnowledgeBase || (() => {}),
           },
           {
+            id: 'download-guides-diagram',
+            label: 'Download diagram guides + checklists',
+            icon: <FileText size={14} />,
+            title: 'Downloads a single .md bundle (AI prompt + checklists)',
+            onClick: async () => {
+              const mod = await import('@/lib/ai-guides/download-guides-and-checklists');
+              mod.downloadDiagramGuidesAndChecklistsBundle();
+            },
+          },
+          {
+            id: 'download-guides-vision',
+            label: 'Download Vision guides + checklists',
+            icon: <Eye size={14} />,
+            title: 'Downloads a single .md bundle (AI prompts + checklists)',
+            onClick: async () => {
+              const mod = await import('@/lib/ai-guides/download-guides-and-checklists');
+              mod.downloadVisionGuidesAndChecklistsBundle();
+            },
+          },
+          {
             id: 'copy-mcp-account',
             label: 'Copy MCP URL (account)',
             icon: <Copy size={14} />,
@@ -192,6 +222,8 @@ export function ProjectActionMenus({
           { id: 'edit-project', label: 'Edit project', icon: <Pencil size={14} />, disabled: !canEdit, title: !canEdit ? 'No edit access' : undefined, onClick: onEditProject },
         ]}
       />
+
+      <AiUsageHelpModal open={aiHelpOpen} onClose={() => setAiHelpOpen(false)} />
     </div>
   );
 }
