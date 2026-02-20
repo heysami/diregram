@@ -45,20 +45,8 @@ jobs:
       # - APPLE_ID: your Apple ID email
       # - APPLE_PASSWORD: app-specific password
       # ------------------------------------------------------------
-      - name: Validate Apple signing secrets
-        env:
-          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-        run: |
-          set -euo pipefail
-          if [ -z "${KEYCHAIN_PASSWORD:-}" ] || [ -z "${APPLE_CERTIFICATE:-}" ] || [ -z "${APPLE_CERTIFICATE_PASSWORD:-}" ]; then
-            echo "Missing required secrets for macOS signing."
-            echo "Set KEYCHAIN_PASSWORD, APPLE_CERTIFICATE, and APPLE_CERTIFICATE_PASSWORD in GitHub Secrets."
-            exit 1
-          fi
-
       - name: Import Apple signing certificate
+        if: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_CERTIFICATE_PASSWORD != '' && secrets.KEYCHAIN_PASSWORD != '' }}
         env:
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
@@ -75,7 +63,7 @@ jobs:
           security find-identity -v -p codesigning build.keychain
 
       - name: Resolve APPLE_SIGNING_IDENTITY
-        if: ${{ secrets.APPLE_CERTIFICATE != '' }}
+        if: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_CERTIFICATE_PASSWORD != '' && secrets.KEYCHAIN_PASSWORD != '' }}
         run: |
           set -euo pipefail
           # Prefer Developer ID Application identities for distribution outside the App Store.
@@ -118,7 +106,13 @@ jobs:
         working-directory: desktop
         run: npm ci
 
-      - name: Build Tauri app (macOS)
+      - name: Build Tauri app (macOS) — unsigned (temporary)
+        if: ${{ secrets.APPLE_CERTIFICATE == '' || secrets.APPLE_CERTIFICATE_PASSWORD == '' || secrets.KEYCHAIN_PASSWORD == '' }}
+        working-directory: desktop
+        run: npm run tauri:build -- --target ${{ matrix.target }}
+
+      - name: Build Tauri app (macOS) — signed + notarized
+        if: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_CERTIFICATE_PASSWORD != '' && secrets.KEYCHAIN_PASSWORD != '' }}
         working-directory: desktop
         env:
           # Signing (required)
