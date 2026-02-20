@@ -83,6 +83,13 @@ function sseWriteText(res, event, text) {
   res.write(`data: ${String(text || '')}\n\n`);
 }
 
+function bearerUnauthorized(res, message) {
+  // Hint MCP clients this is bearer-token auth, not OAuth.
+  // (Prevents some clients from attempting OAuth dynamic registration.)
+  res.setHeader('WWW-Authenticate', 'Bearer realm="nexusmap-mcp", error="invalid_token"');
+  return res.status(401).json({ error: message || 'Unauthorized' });
+}
+
 async function ragQueryScoped(share, args, opts) {
   const parsed = QueryArgs.safeParse(args);
   if (!parsed.success) throw new Error(parsed.error.message);
@@ -168,8 +175,14 @@ app.get('/sse', async (req, res, next) => {
     const auth = String(req.headers.authorization || '');
     const tokenFromAuth = auth.toLowerCase().startsWith('bearer ') ? auth.slice('bearer '.length).trim() : '';
     const token = tokenFromQuery || tokenFromAuth;
-    if (!token) return res.status(401).json({ error: 'Missing token' });
-    const share = await resolveShareFromToken(token);
+    if (!token) return bearerUnauthorized(res, 'Missing token (use /sse?token=... or Authorization: Bearer ...)');
+
+    let share;
+    try {
+      share = await resolveShareFromToken(token);
+    } catch (e) {
+      return bearerUnauthorized(res, e instanceof Error ? e.message : 'Unauthorized');
+    }
 
     const sessionId = randomUUID();
     res.status(200);
@@ -205,7 +218,7 @@ app.get('/sse', async (req, res, next) => {
     });
     return;
   } catch (e) {
-    return res.status(401).json({ error: e instanceof Error ? e.message : 'Unauthorized' });
+    return bearerUnauthorized(res, e instanceof Error ? e.message : 'Unauthorized');
   }
 });
 
@@ -213,6 +226,14 @@ app.get('/sse', async (req, res, next) => {
 // Our MCP server is SSE-based, so return a clear error (Cursor will fall back to SSE).
 app.post('/sse', async (_req, res) => {
   return res.status(405).json({ error: 'This MCP server uses SSE. Connect with GET /sse (not POST).' });
+});
+
+// Cursor OAuth dynamic client registration (not supported).
+// If a client tries OAuth anyway, return JSON (not HTML) with guidance.
+app.post('/register', async (_req, res) => {
+  return res.status(404).json({
+    error: 'OAuth is not supported by this MCP server. Configure it with /sse?token=... or Authorization: Bearer ...',
+  });
 });
 
 app.post('/messages', async (req, res) => {
@@ -375,6 +396,11 @@ app.post('/messages', async (req, res) => {
     sendError(e);
     return res.status(202).end();
   }
+});
+
+// Make unknown routes return JSON (avoid HTML "Cannot POST /...").
+app.use((req, res) => {
+  return res.status(404).json({ error: 'Not found' });
 });
 
 const port = Number(process.env.PORT || 3232);
