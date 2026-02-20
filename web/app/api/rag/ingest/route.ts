@@ -149,11 +149,20 @@ export async function POST(request: Request) {
       id: String(c.id),
       project_folder_id: projectFolderId,
       file_id: typeof c.fileId === 'string' ? c.fileId : null,
+      resource_id: typeof c.resourceId === 'string' ? c.resourceId : null,
       file_kind: typeof c.fileKind === 'string' ? c.fileKind : null,
       anchor: typeof c.anchor === 'string' ? c.anchor : null,
       text: String(c.text || ''),
       embedding: embeddings[j],
-      metadata: { fileId: c.fileId, fileKind: c.fileKind, anchor: c.anchor } as any,
+      metadata: {
+        fileId: c.fileId,
+        fileKind: c.fileKind,
+        anchor: c.anchor,
+        resourceId: c.resourceId,
+        resourceName: c.resourceName,
+        resourceKind: c.resourceKind,
+        projectFolderId: c.projectFolderId,
+      } as any,
     }));
     const { error } = await admin.from('rag_chunks').upsert(rows, { onConflict: 'owner_id,id' });
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });

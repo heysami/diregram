@@ -34,10 +34,14 @@ export type KgEdgeRecord = {
 export type EmbeddingChunkRecord = {
   type: 'chunk';
   id: string;
-  fileId: string;
+  fileId: string | null;
   fileKind: string;
   text: string;
   anchor?: string;
+  resourceId?: string;
+  resourceName?: string;
+  resourceKind?: string;
+  projectFolderId?: string;
   [k: string]: unknown;
 };
 
@@ -70,6 +74,7 @@ function slugifyHeading(text: string): string {
 }
 
 type ProjectFileRow = { id: string; name: string; kind: string; folderId: string | null; content: string };
+type ProjectResourceRow = { id: string; name: string; kind: string; projectFolderId: string; markdown: string };
 
 async function listProjectFolderIdsSupabase(supabase: SupabaseClient, folderId: string): Promise<string[]> {
   // Include root project folder + all descendants.
@@ -102,6 +107,23 @@ async function listProjectFilesSupabase(supabase: SupabaseClient, folderIds: str
       content: String(r?.content || ''),
     }))
     .filter((r) => !!r.id);
+}
+
+async function listProjectResourcesSupabase(supabase: SupabaseClient, folderIds: string[]): Promise<ProjectResourceRow[]> {
+  const { data, error } = await supabase
+    .from('project_resources')
+    .select('id,name,kind,project_folder_id,markdown')
+    .in('project_folder_id', folderIds);
+  if (error) throw error;
+  return (data || [])
+    .map((r: any) => ({
+      id: String(r?.id || ''),
+      name: String(r?.name || 'Untitled resource'),
+      kind: String(r?.kind || 'markdown'),
+      projectFolderId: String(r?.project_folder_id || ''),
+      markdown: String(r?.markdown || ''),
+    }))
+    .filter((r) => !!r.id && !!r.projectFolderId && !!r.markdown.trim());
 }
 
 function listProjectFolderIdsLocal(projectFolderId: string): string[] {
@@ -1017,16 +1039,26 @@ export async function exportKgAndVectorsForProject(res: {
       })()
     : resolveRootFolderIdLocal(res.projectFolderId!);
 
+  const folderIds = res.supabaseMode
+    ? await (async () => {
+        if (!res.supabase) throw new Error('Not connected to Supabase.');
+        return await listProjectFolderIdsSupabase(res.supabase, rootProjectFolderId);
+      })()
+    : listProjectFolderIdsLocal(rootProjectFolderId);
+
   const files: ProjectFileRow[] = res.supabaseMode
     ? await (async () => {
         if (!res.supabase) throw new Error('Not connected to Supabase.');
-        const folderIds = await listProjectFolderIdsSupabase(res.supabase, rootProjectFolderId);
         return await listProjectFilesSupabase(res.supabase, folderIds);
       })()
-    : (() => {
-        const folderIds = listProjectFolderIdsLocal(rootProjectFolderId);
-        return listProjectFilesLocal(folderIds);
-      })();
+    : listProjectFilesLocal(folderIds);
+
+  const resources: ProjectResourceRow[] = res.supabaseMode
+    ? await (async () => {
+        if (!res.supabase) throw new Error('Not connected to Supabase.');
+        return await listProjectResourcesSupabase(res.supabase, folderIds);
+      })()
+    : [];
 
   const entities: KgEntityRecord[] = [];
   const edges: KgEdgeRecord[] = [];
@@ -1116,6 +1148,26 @@ export async function exportKgAndVectorsForProject(res: {
     // Other kinds (grid/etc): file-only chunk.
     const fallbackText = String(f.content || '').trim();
     if (fallbackText) chunks.push({ type: 'chunk', id: chunkId(f.id, 'file'), fileId: f.id, fileKind: f.kind, text: fallbackText.slice(0, 50_000), anchor: 'file' });
+  }
+
+  // Project resources (e.g. Docling-imported markdown): embed as project-level chunks (no file_id).
+  for (const r of resources) {
+    const anchor = 'resource';
+    const resourceKey = `resource:${r.id}`;
+    const text = String([r.name, r.markdown].filter(Boolean).join('\n\n')).trim().slice(0, 50_000);
+    if (!text) continue;
+    chunks.push({
+      type: 'chunk',
+      id: chunkId(resourceKey, anchor),
+      fileId: null,
+      fileKind: 'resource',
+      anchor,
+      text,
+      resourceId: r.id,
+      resourceName: r.name,
+      resourceKind: r.kind,
+      projectFolderId: r.projectFolderId,
+    });
   }
 
   // Deduplicate by id (best-effort; preserves first occurrence).

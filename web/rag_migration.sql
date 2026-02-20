@@ -17,6 +17,7 @@ create table if not exists public.rag_chunks (
   id text not null,
   project_folder_id uuid references public.folders(id) on delete cascade,
   file_id uuid references public.files(id) on delete cascade,
+  resource_id uuid references public.project_resources(id) on delete cascade,
   file_kind text,
   anchor text,
   text text not null,
@@ -27,11 +28,18 @@ create table if not exists public.rag_chunks (
   primary key (owner_id, id)
 );
 
+-- If the table already existed, add the resource_id column (safe no-op).
+alter table public.rag_chunks
+  add column if not exists resource_id uuid references public.project_resources(id) on delete cascade;
+
 create index if not exists rag_chunks_owner_project_idx
   on public.rag_chunks (owner_id, project_folder_id);
 
 create index if not exists rag_chunks_file_idx
   on public.rag_chunks (owner_id, file_id);
+
+create index if not exists rag_chunks_resource_idx
+  on public.rag_chunks (owner_id, resource_id);
 
 create index if not exists rag_chunks_embedding_hnsw
   on public.rag_chunks using hnsw (embedding vector_cosine_ops);
@@ -168,25 +176,46 @@ alter table public.rag_projects enable row level security;
 alter table public.rag_mcp_tokens enable row level security;
 
 drop policy if exists "rag_chunks_select_via_file_access" on public.rag_chunks;
-create policy "rag_chunks_select_via_file_access" on public.rag_chunks
+drop policy if exists "rag_chunks_select_via_file_or_resource_access" on public.rag_chunks;
+create policy "rag_chunks_select_via_file_or_resource_access" on public.rag_chunks
   for select
   using (
-    file_id is not null
-    and exists (
-      select 1
-      from public.files f
-      left join public.folders fo on fo.id = f.folder_id
-      where f.id = rag_chunks.file_id
-        and (
-          auth.uid() = f.owner_id
-          or public.access_can_view(f.access)
-          or public.access_can_edit(f.access)
-          or (fo.id is not null and (
-            auth.uid() = fo.owner_id
-            or public.access_can_view(fo.access)
-            or public.access_can_edit(fo.access)
-          ))
-        )
+    (
+      file_id is not null
+      and exists (
+        select 1
+        from public.files f
+        left join public.folders fo on fo.id = f.folder_id
+        where f.id = rag_chunks.file_id
+          and (
+            auth.uid() = f.owner_id
+            or public.access_can_view(f.access)
+            or public.access_can_edit(f.access)
+            or (fo.id is not null and (
+              auth.uid() = fo.owner_id
+              or public.access_can_view(fo.access)
+              or public.access_can_edit(fo.access)
+            ))
+          )
+      )
+    )
+    or
+    (
+      resource_id is not null
+      and exists (
+        select 1
+        from public.project_resources pr
+        left join public.folders f on f.id = pr.project_folder_id
+        where pr.id = rag_chunks.resource_id
+          and (
+            auth.uid() = pr.owner_id
+            or (f.id is not null and (
+              auth.uid() = f.owner_id
+              or public.access_can_view(f.access)
+              or public.access_can_edit(f.access)
+            ))
+          )
+      )
     )
   );
 
