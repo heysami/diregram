@@ -51,9 +51,19 @@ function getBearerToken(request: Request): string | null {
 
 export async function POST(request: Request) {
   try {
-    const body = (await request.json().catch(() => null)) as null | { projectFolderId?: string; openaiApiKey?: string; embeddingModel?: string };
+    const body = (await request.json().catch(() => null)) as null | {
+      projectFolderId?: string;
+      cursor?: number;
+      chunkLimit?: number;
+      openaiApiKey?: string;
+      embeddingModel?: string;
+    };
     const projectFolderId = String(body?.projectFolderId || '').trim();
     if (!projectFolderId) return withCors(NextResponse.json({ error: 'Missing projectFolderId' }, { status: 400 }));
+    const cursorRaw = Number((body as any)?.cursor ?? 0);
+    const cursor = Number.isFinite(cursorRaw) && cursorRaw > 0 ? Math.floor(cursorRaw) : 0;
+    const limitRaw = Number((body as any)?.chunkLimit ?? process.env.RAG_EMBED_BATCH_SIZE ?? 48);
+    const chunkLimit = Math.max(8, Math.min(96, Number.isFinite(limitRaw) ? Math.floor(limitRaw) : 48));
 
     const jwt = getBearerToken(request);
     if (!jwt) return withCors(NextResponse.json({ error: 'Missing Authorization Bearer token' }, { status: 401 }));
@@ -105,10 +115,6 @@ export async function POST(request: Request) {
     const entityRecords = graphRecords.filter((r) => r && r.type === 'entity' && typeof r.id === 'string' && typeof r.entityType === 'string');
     const edgeRecords = graphRecords.filter((r) => r && r.type === 'edge' && typeof r.id === 'string' && typeof r.edgeType === 'string');
 
-    await admin.from('rag_chunks').delete().eq('owner_id', ownerId).eq('project_folder_id', projectFolderId);
-    await admin.from('kg_entities').delete().eq('owner_id', ownerId).eq('project_folder_id', projectFolderId);
-    await admin.from('kg_edges').delete().eq('owner_id', ownerId).eq('project_folder_id', projectFolderId);
-
     const existingProject = await admin
       .from('rag_projects')
       .select('public_id')
@@ -117,53 +123,59 @@ export async function POST(request: Request) {
       .maybeSingle();
     const existingPublicId = (existingProject.data as any)?.public_id ? String((existingProject.data as any).public_id) : '';
     const publicId = existingPublicId || randomPublicId();
-    await admin.from('rag_projects').upsert(
-      {
-        owner_id: ownerId,
-        project_folder_id: projectFolderId,
-        public_id: publicId,
-        updated_at: new Date().toISOString(),
-      } as any,
-      { onConflict: 'owner_id,project_folder_id' },
-    );
+    if (cursor === 0) {
+      // First slice: reset + upsert graph. Subsequent slices only do embeddings.
+      await admin.from('rag_chunks').delete().eq('owner_id', ownerId).eq('project_folder_id', projectFolderId);
+      await admin.from('kg_entities').delete().eq('owner_id', ownerId).eq('project_folder_id', projectFolderId);
+      await admin.from('kg_edges').delete().eq('owner_id', ownerId).eq('project_folder_id', projectFolderId);
 
-    for (const batch of chunkArray(entityRecords, 500)) {
-      const rows = batch.map((r) => ({
-        owner_id: ownerId,
-        id: String(r.id),
-        project_folder_id: projectFolderId,
-        entity_type: String(r.entityType),
-        file_id: typeof r.fileId === 'string' ? r.fileId : null,
-        data: r,
-      }));
-      const { error } = await admin.from('kg_entities').upsert(rows, { onConflict: 'owner_id,id' });
-      if (error) return withCors(NextResponse.json({ error: error.message }, { status: 500 }));
+      await admin.from('rag_projects').upsert(
+        {
+          owner_id: ownerId,
+          project_folder_id: projectFolderId,
+          public_id: publicId,
+          updated_at: new Date().toISOString(),
+        } as any,
+        { onConflict: 'owner_id,project_folder_id' },
+      );
+
+      for (const batch of chunkArray(entityRecords, 500)) {
+        const rows = batch.map((r) => ({
+          owner_id: ownerId,
+          id: String(r.id),
+          project_folder_id: projectFolderId,
+          entity_type: String(r.entityType),
+          file_id: typeof r.fileId === 'string' ? r.fileId : null,
+          data: r,
+        }));
+        const { error } = await admin.from('kg_entities').upsert(rows, { onConflict: 'owner_id,id' });
+        if (error) return withCors(NextResponse.json({ error: error.message }, { status: 500 }));
+      }
+
+      for (const batch of chunkArray(edgeRecords, 500)) {
+        const rows = batch.map((r) => ({
+          owner_id: ownerId,
+          id: String(r.id),
+          project_folder_id: projectFolderId,
+          edge_type: String(r.edgeType),
+          src: String(r.src),
+          dst: String(r.dst),
+          data: r,
+        }));
+        const { error } = await admin.from('kg_edges').upsert(rows, { onConflict: 'owner_id,id' });
+        if (error) return withCors(NextResponse.json({ error: error.message }, { status: 500 }));
+      }
     }
 
-    for (const batch of chunkArray(edgeRecords, 500)) {
-      const rows = batch.map((r) => ({
-        owner_id: ownerId,
-        id: String(r.id),
-        project_folder_id: projectFolderId,
-        edge_type: String(r.edgeType),
-        src: String(r.src),
-        dst: String(r.dst),
-        data: r,
-      }));
-      const { error } = await admin.from('kg_edges').upsert(rows, { onConflict: 'owner_id,id' });
-      if (error) return withCors(NextResponse.json({ error: error.message }, { status: 500 }));
-    }
+    const totalChunks = chunkRecords.length;
+    const start = Math.min(cursor, totalChunks);
+    const end = Math.min(start + chunkLimit, totalChunks);
+    const slice = chunkRecords.slice(start, end);
+    const texts = slice.map((c: any) => String(c.text || '').slice(0, 50_000));
+    const embeddings = texts.length ? await embedTextsOpenAI(texts, { apiKey: openaiApiKey || undefined, model: embeddingModel }) : [];
 
-    const texts = chunkRecords.map((c: any) => String(c.text || '').slice(0, 50_000));
-    const batchSize = Number(process.env.RAG_EMBED_BATCH_SIZE || 96);
-    const textBatches = chunkArray(texts, Math.max(1, Math.min(256, batchSize)));
-    const recordBatches = chunkArray(chunkRecords, Math.max(1, Math.min(256, batchSize)));
-
-    for (let i = 0; i < textBatches.length; i++) {
-      const t = textBatches[i];
-      const recs = recordBatches[i];
-      const embeddings = await embedTextsOpenAI(t, { apiKey: openaiApiKey || undefined, model: embeddingModel });
-      const rows = recs.map((c: any, j: number) => ({
+    if (slice.length) {
+      const rows = slice.map((c: any, j: number) => ({
         owner_id: ownerId,
         id: String(c.id),
         project_folder_id: projectFolderId,
@@ -187,12 +199,16 @@ export async function POST(request: Request) {
       if (error) return withCors(NextResponse.json({ error: error.message }, { status: 500 }));
     }
 
+    const nextCursor = end;
+    const done = nextCursor >= totalChunks;
+
     return withCors(
       NextResponse.json({
         ok: true,
         projectFolderId,
         ownerId,
         publicProjectId: publicId,
+        ingest: { cursor, nextCursor, done, chunkLimit, totalChunks },
         stats: {
           files: exp.stats.files,
           entities: entityRecords.length,
