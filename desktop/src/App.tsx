@@ -29,6 +29,7 @@ export function App() {
   const [step, setStep] = useState<AppStep>('signedOut');
   const [email, setEmail] = useState<string>('');
   const [loginEmail, setLoginEmail] = useState<string>('');
+  const [loginOtp, setLoginOtp] = useState<string>('');
   const [vaultPath, setVaultPath] = useState<string>('');
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string>('');
@@ -38,17 +39,6 @@ export function App() {
   const [watching, setWatching] = useState<boolean>(false);
   const [pulling, setPulling] = useState<boolean>(false);
   const [events, setEvents] = useState<Array<{ ts: string; kind: string; path: string; detail: string }>>([]);
-
-  const deepLinkHelp = useMemo(
-    () =>
-      [
-        'Deep link scheme:',
-        '  nexusmap://auth/callback?code=... (Supabase OAuth PKCE)',
-        '',
-        'Note: you must add this redirect URL in Supabase Auth settings.',
-      ].join('\n'),
-    [],
-  );
 
   useEffect(() => {
     let unsub: (() => void) | null = null;
@@ -80,7 +70,7 @@ export function App() {
           return;
         }
 
-        setStatus('Enter your hosted NexusMap URL to connect.');
+        setStatus('Not configured.');
         return;
       }
 
@@ -177,22 +167,44 @@ export function App() {
     setStatus('');
   };
 
-  const signInWithEmailMagicLink = async () => {
+  const sendEmailCode = async () => {
     if (!supabase) return;
     const e = loginEmail.trim();
     if (!e) return;
-    setStatus('Sending magic link…');
+    setStatus('Sending code…');
     const { error } = await supabase.auth.signInWithOtp({
       email: e,
       options: {
-        emailRedirectTo: 'nexusmap://auth/callback',
+        shouldCreateUser: true,
       },
     });
     if (error) {
       setStatus(`Sign-in error: ${error.message}`);
       return;
     }
-    setStatus('Magic link sent. Check your email and click the link.');
+    setStatus('Code sent. Check your email.');
+  };
+
+  const verifyEmailCode = async () => {
+    if (!supabase) return;
+    const e = loginEmail.trim();
+    const token = loginOtp.trim();
+    if (!e || !token) return;
+    setStatus('Verifying…');
+    const { error } = await supabase.auth.verifyOtp({ email: e, token, type: 'email' });
+    if (error) {
+      setStatus(`Verify failed: ${error.message}`);
+      return;
+    }
+    const session = await getSession(supabase);
+    if (session?.user) {
+      setEmail(session.user.email ?? '');
+      setStep('signedIn');
+      setStatus('');
+      await refreshProjects(supabase);
+    } else {
+      setStatus('Signed in.');
+    }
   };
 
   const pickVaultFolder = async () => {
@@ -275,7 +287,7 @@ export function App() {
     setProjects([]);
     setSelectedProjectId('');
     setVaultPath('');
-    setStatus('Config cleared. Restart app or set config again.');
+    setStatus('Reset.');
   };
 
   const initMapping = async () => {
@@ -402,7 +414,7 @@ export function App() {
       setStatus('');
       setSyncInfo(`RAG ingest ok. Public project id: ${json.publicProjectId || '(unknown)'}`);
     } catch (e: any) {
-      setStatus(`RAG ingest failed: ${e?.message ?? String(e)}`);
+      setStatus('RAG ingest failed.');
     }
   };
 
@@ -472,10 +484,7 @@ export function App() {
       <div className="card">
         <div className="row" style={{ justifyContent: 'space-between' }}>
           <div>
-            <div style={{ fontSize: 18, fontWeight: 700 }}>NexusMap Sync (macOS)</div>
-            <div className="muted" style={{ marginTop: 4 }}>
-              Bidirectional filesystem sync for NexusMap Markdown.
-            </div>
+            <div style={{ fontSize: 18, fontWeight: 700 }}>NexusMap Sync</div>
           </div>
           <div className="row">
             {step === 'signedIn' ? (
@@ -489,14 +498,11 @@ export function App() {
         <div style={{ marginTop: 14 }}>
           {!config ? (
             <>
-              <div className="muted" style={{ whiteSpace: 'pre-wrap' }}>
-                Connect to your hosted NexusMap instance.
-              </div>
               <div className="row" style={{ marginTop: 12 }}>
                 <input
                   value={configHostedUrl}
                   onChange={(e) => setConfigHostedUrl(e.target.value)}
-                  placeholder="Hosted NexusMap URL (e.g. https://app.yourdomain.com)"
+                  placeholder="Connect URL"
                 />
               </div>
               <div className="row" style={{ marginTop: 12 }}>
@@ -539,16 +545,19 @@ export function App() {
 
           {step === 'signedOut' ? (
             <>
-              <div className="muted" style={{ whiteSpace: 'pre-wrap' }}>
-                {deepLinkHelp}
-              </div>
               <div className="row" style={{ marginTop: 12 }}>
-                <input value={loginEmail} onChange={(e) => setLoginEmail(e.target.value)} placeholder="Email for magic link" />
-                <button className="btn btnPrimary" onClick={signInWithEmailMagicLink} type="button">
-                  Send magic link
+                <input value={loginEmail} onChange={(e) => setLoginEmail(e.target.value)} placeholder="Email" />
+                <button className="btn btnPrimary" onClick={sendEmailCode} type="button">
+                  Send code
                 </button>
                 <button className="btn" onClick={resetConfig} type="button">
                   Reset config
+                </button>
+              </div>
+              <div className="row" style={{ marginTop: 10 }}>
+                <input value={loginOtp} onChange={(e) => setLoginOtp(e.target.value)} placeholder="Code" />
+                <button className="btn btnPrimary" onClick={verifyEmailCode} type="button">
+                  Verify
                 </button>
               </div>
             </>
