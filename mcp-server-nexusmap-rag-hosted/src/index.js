@@ -11,6 +11,14 @@ function env(name, fallback = '') {
   return String(process.env[name] || fallback);
 }
 
+function logEvent(type, data) {
+  try {
+    console.log(JSON.stringify({ type, ts: new Date().toISOString(), ...data }));
+  } catch {
+    // ignore
+  }
+}
+
 const SUPABASE_URL = env('SUPABASE_URL', env('NEXT_PUBLIC_SUPABASE_URL'));
 const SUPABASE_SERVICE_ROLE_KEY = env('SUPABASE_SERVICE_ROLE_KEY');
 const OPENAI_API_KEY = env('OPENAI_API_KEY', '');
@@ -24,11 +32,13 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
 
 async function embedOpenAI({ apiKey, model, input }) {
   if (!apiKey) throw new Error('Missing OpenAI API key');
+  const t0 = Date.now();
   const res = await fetch('https://api.openai.com/v1/embeddings', {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({ model: model || 'text-embedding-3-small', input }),
   });
+  logEvent('openai.embeddings.response', { ms: Date.now() - t0, ok: res.ok, status: res.status });
   const json = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(json?.error?.message || `OpenAI embeddings failed (${res.status})`);
   return (json?.data || []).map((d) => d.embedding);
@@ -36,11 +46,13 @@ async function embedOpenAI({ apiKey, model, input }) {
 
 async function chatOpenAI({ apiKey, model, messages }) {
   if (!apiKey) throw new Error('Missing OpenAI API key');
+  const t0 = Date.now();
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({ model: model || 'gpt-4o-mini', temperature: 0.2, messages }),
   });
+  logEvent('openai.chat.response', { ms: Date.now() - t0, ok: res.ok, status: res.status });
   const json = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(json?.error?.message || `OpenAI chat failed (${res.status})`);
   return String(json?.choices?.[0]?.message?.content || '').trim();
@@ -100,6 +112,20 @@ async function ragQueryScoped(share, args, opts) {
   const openaiApiKey = String(a.openaiApiKey || '').trim() || sessionKey || OPENAI_API_KEY;
   const embeddingModel = a.embeddingModel;
   const chatModel = a.chatModel;
+
+  logEvent('rag.query.start', {
+    hasInlineOpenAiKey: Boolean(String(a.openaiApiKey || '').trim()),
+    hasSessionOpenAiKey: Boolean(sessionKey),
+    hasServerOpenAiKey: Boolean(OPENAI_API_KEY),
+    generateAnswer,
+    topK,
+    embeddingModel: embeddingModel || null,
+    chatModel: chatModel || null,
+    queryLen: String(a.query || '').length,
+    scope: share.scope,
+    hasProjectFromToken: Boolean(share.projectFolderId),
+    hasProjectFromSelection: Boolean(String(opts?.projectFolderId || '').trim()),
+  });
 
   if (!openaiApiKey) {
     throw new Error('OpenAI key required: pass openaiApiKey (sk-...) or call nexusmap_set_openai_key once per session.');
@@ -171,6 +197,7 @@ const sessions = new Map(); // sessionId -> { share, res, openaiApiKey?: string,
 
 app.get('/sse', async (req, res, next) => {
   try {
+    logEvent('mcp.sse.connect', { ua: String(req.headers['user-agent'] || ''), hasAuthHeader: Boolean(req.headers.authorization), hasTokenQuery: Boolean(String(req.query.token || '').trim()) });
     const tokenFromQuery = String(req.query.token || '').trim();
     const auth = String(req.headers.authorization || '');
     const tokenFromAuth = auth.toLowerCase().startsWith('bearer ') ? auth.slice('bearer '.length).trim() : '';
@@ -244,13 +271,26 @@ app.post('/messages', async (req, res) => {
 
   // Allow clients (e.g. Cursor) to attach a per-user OpenAI key as a header,
   // so users don't have to paste it into every tool call.
-  const headerOpenAiKey = String(req.headers['x-openai-api-key'] || '').trim();
+  const headerOpenAiKey = String(
+    req.headers['x-openai-api-key'] ||
+      req.headers['openai-api-key'] ||
+      req.headers['x-openai-key'] ||
+      req.headers['x-api-key'] ||
+      '',
+  ).trim();
   if (headerOpenAiKey) sess.openaiApiKey = headerOpenAiKey;
 
   const msg = req.body;
   const id = msg?.id ?? null;
   const method = String(msg?.method || '');
   const params = msg?.params || {};
+  logEvent('mcp.message', {
+    sessionIdPresent: Boolean(sessionId),
+    method,
+    toolName: method === 'tools/call' ? String(params?.name || '') : null,
+    hasHeaderOpenAiKey: Boolean(headerOpenAiKey),
+    hasSessionOpenAiKey: Boolean(String(sess.openaiApiKey || '').trim()),
+  });
 
   const sendResult = (result) => {
     if (id == null) return;
