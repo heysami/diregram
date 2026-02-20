@@ -12,6 +12,10 @@ permissions:
 jobs:
   build_macos:
     runs-on: macos-latest
+    env:
+      # Production web app URL baked into the desktop bundle.
+      # Desktop uses this to auto-fetch /api/public-config on first launch.
+      VITE_NEXUSMAP_HOSTED_URL: https://diregram.vercel.app
     steps:
       - name: Checkout
         uses: actions/checkout@v4

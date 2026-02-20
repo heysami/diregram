@@ -3,14 +3,30 @@ import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { getCurrent, onOpenUrl } from '@tauri-apps/plugin-deep-link';
 import { open as openExternal } from '@tauri-apps/plugin-shell';
 import { invoke } from '@tauri-apps/api/core';
-import { supabase, getSession } from './lib/supabase';
-import { env } from './lib/env';
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { createSupabaseClient, getSession } from './lib/supabase';
 import { buildAiGuideMarkdown } from './lib/aiGuideContent';
+import { buildEnv } from './lib/env';
+import {
+  clearAppConfig,
+  fetchPublicConfigFromNexusMap,
+  loadAppConfig,
+  saveAppConfig,
+  type AppConfigV1,
+} from './lib/appConfig';
 
 type AppStep = 'signedOut' | 'signedIn';
 type Project = { id: string; name: string };
 
 export function App() {
+  const [config, setConfig] = useState<AppConfigV1 | null>(null);
+  const [supabase, setSupabase] = useState<SupabaseClient | null>(null);
+  const [configHostedUrl, setConfigHostedUrl] = useState<string>(buildEnv.nexusmapHostedUrl || '');
+  const [showAdvancedConfig, setShowAdvancedConfig] = useState<boolean>(false);
+  const [configSupabaseUrl, setConfigSupabaseUrl] = useState<string>('');
+  const [configAnonKey, setConfigAnonKey] = useState<string>('');
+  const [configApiBaseUrl, setConfigApiBaseUrl] = useState<string>(buildEnv.nexusmapHostedUrl || 'http://localhost:3000');
+
   const [step, setStep] = useState<AppStep>('signedOut');
   const [email, setEmail] = useState<string>('');
   const [vaultPath, setVaultPath] = useState<string>('');
@@ -38,18 +54,56 @@ export function App() {
     let unsub: (() => void) | null = null;
 
     const boot = async () => {
-      const session = await getSession();
+      const cfg = await loadAppConfig();
+      if (!cfg) {
+        // Official builds can bake in a hosted URL; auto-fetch config from there.
+        if (buildEnv.nexusmapHostedUrl) {
+          try {
+            setStatus('Connecting to NexusMap…');
+            const pub = await fetchPublicConfigFromNexusMap(buildEnv.nexusmapHostedUrl);
+            const saved = await saveAppConfig({
+              supabaseUrl: pub.supabaseUrl,
+              supabaseAnonKey: pub.supabaseAnonKey,
+              nexusmapApiBaseUrl: pub.nexusmapApiBaseUrl,
+            });
+            setConfig(saved);
+            setConfigHostedUrl(buildEnv.nexusmapHostedUrl);
+            setConfigSupabaseUrl(saved.supabaseUrl);
+            setConfigAnonKey(saved.supabaseAnonKey);
+            setConfigApiBaseUrl(saved.nexusmapApiBaseUrl);
+            const sb = createSupabaseClient(saved);
+            setSupabase(sb);
+            setStatus('');
+          } catch (e: any) {
+            setStatus(`Failed to connect: ${e?.message ?? String(e)}`);
+          }
+          return;
+        }
+
+        setStatus('Enter your hosted NexusMap URL to connect.');
+        return;
+      }
+
+      setConfig(cfg);
+      setConfigSupabaseUrl(cfg.supabaseUrl);
+      setConfigAnonKey(cfg.supabaseAnonKey);
+      setConfigApiBaseUrl(cfg.nexusmapApiBaseUrl);
+
+      const sb = createSupabaseClient(cfg);
+      setSupabase(sb);
+
+      const session = await getSession(sb);
       if (session?.user) {
         setEmail(session.user.email ?? '');
         setStep('signedIn');
-        await refreshProjects();
+        await refreshProjects(sb);
       }
 
       const startUrls = await getCurrent();
-      if (startUrls?.length) await handleOpenUrls(startUrls);
+      if (startUrls?.length) await handleOpenUrls(sb, startUrls);
 
       unsub = await onOpenUrl(async (urls) => {
-        await handleOpenUrls(urls);
+        await handleOpenUrls(sb, urls);
       });
     };
 
@@ -63,7 +117,7 @@ export function App() {
     };
   }, []);
 
-  const handleOpenUrls = async (urls: string[]) => {
+  const handleOpenUrls = async (sb: SupabaseClient, urls: string[]) => {
     const url = urls[0];
     if (!url) return;
 
@@ -74,27 +128,27 @@ export function App() {
       if (!code) return;
 
       setStatus('Completing sign-in…');
-      const { error } = await supabase.auth.exchangeCodeForSession(code);
+      const { error } = await sb.auth.exchangeCodeForSession(code);
       if (error) throw error;
 
-      const session = await getSession();
+      const session = await getSession(sb);
       if (session?.user) {
         setEmail(session.user.email ?? '');
         setStep('signedIn');
         setStatus('Signed in.');
-        await refreshProjects();
+        await refreshProjects(sb);
       }
     } catch (e: any) {
       setStatus(`Sign-in failed: ${e?.message ?? String(e)}`);
     }
   };
 
-  const refreshProjects = async () => {
-    const session = await getSession();
+  const refreshProjects = async (sb: SupabaseClient) => {
+    const session = await getSession(sb);
     if (!session?.user) return;
 
     setStatus('Loading projects…');
-    const { data, error } = await supabase
+    const { data, error } = await sb
       .from('folders')
       .select('id,name')
       .is('parent_id', null)
@@ -112,6 +166,7 @@ export function App() {
   };
 
   const signInWithGitHub = async () => {
+    if (!supabase) return;
     setStatus('Opening browser…');
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider: 'github',
@@ -141,7 +196,8 @@ export function App() {
   };
 
   const createProject = async () => {
-    const session = await getSession();
+    if (!supabase) return;
+    const session = await getSession(supabase);
     if (!session?.user) return;
 
     const name = newProjectName.trim();
@@ -167,11 +223,50 @@ export function App() {
   };
 
   const signOut = async () => {
-    await supabase.auth.signOut();
+    if (supabase) await supabase.auth.signOut();
     setStep('signedOut');
     setEmail('');
     setProjects([]);
     setSelectedProjectId('');
+  };
+
+  const connectHosted = async () => {
+    const base = configHostedUrl.trim();
+    if (!base) return;
+    setStatus('Connecting…');
+    try {
+      const pub = await fetchPublicConfigFromNexusMap(base);
+      const next = await saveAppConfig({
+        supabaseUrl: pub.supabaseUrl,
+        supabaseAnonKey: pub.supabaseAnonKey,
+        nexusmapApiBaseUrl: pub.nexusmapApiBaseUrl,
+      });
+
+      setConfigHostedUrl(base);
+      setConfigSupabaseUrl(next.supabaseUrl);
+      setConfigAnonKey(next.supabaseAnonKey);
+      setConfigApiBaseUrl(next.nexusmapApiBaseUrl);
+      setConfig(next);
+
+      const sb = createSupabaseClient(next);
+      setSupabase(sb);
+      setStatus('Connected.');
+      setTimeout(() => setStatus(''), 800);
+    } catch (e: any) {
+      setStatus(`Connect failed: ${e?.message ?? String(e)}`);
+    }
+  };
+
+  const resetConfig = async () => {
+    await clearAppConfig();
+    setConfig(null);
+    setSupabase(null);
+    setStep('signedOut');
+    setEmail('');
+    setProjects([]);
+    setSelectedProjectId('');
+    setVaultPath('');
+    setStatus('Config cleared. Restart app or set config again.');
   };
 
   const initMapping = async () => {
@@ -189,14 +284,15 @@ export function App() {
 
   const runInitialImport = async () => {
     if (!vaultPath || !selectedProjectId) return;
-    const session = await getSession();
+    if (!supabase || !config) return;
+    const session = await getSession(supabase);
     if (!session?.user) return;
 
     setStatus('Scanning vault + importing…');
     try {
       const auth = {
-        supabase_url: env.supabaseUrl,
-        supabase_anon_key: env.supabaseAnonKey,
+        supabase_url: config.supabaseUrl,
+        supabase_anon_key: config.supabaseAnonKey,
         access_token: session.access_token,
         owner_id: session.user.id,
       };
@@ -219,13 +315,14 @@ export function App() {
 
   const startWatching = async () => {
     if (!vaultPath || !selectedProjectId) return;
-    const session = await getSession();
+    if (!supabase || !config) return;
+    const session = await getSession(supabase);
     if (!session?.user) return;
     setStatus('Starting watcher…');
     try {
       const auth = {
-        supabase_url: env.supabaseUrl,
-        supabase_anon_key: env.supabaseAnonKey,
+        supabase_url: config.supabaseUrl,
+        supabase_anon_key: config.supabaseAnonKey,
         access_token: session.access_token,
         owner_id: session.user.id,
       };
@@ -252,13 +349,14 @@ export function App() {
 
   const pullOnce = async () => {
     if (!vaultPath || !selectedProjectId) return;
-    const session = await getSession();
+    if (!supabase || !config) return;
+    const session = await getSession(supabase);
     if (!session?.user) return;
     setStatus('Pulling remote changes…');
     try {
       const auth = {
-        supabase_url: env.supabaseUrl,
-        supabase_anon_key: env.supabaseAnonKey,
+        supabase_url: config.supabaseUrl,
+        supabase_anon_key: config.supabaseAnonKey,
         access_token: session.access_token,
         owner_id: session.user.id,
       };
@@ -276,11 +374,12 @@ export function App() {
 
   const triggerRagIngest = async () => {
     if (!selectedProjectId) return;
-    const session = await getSession();
+    if (!supabase || !config) return;
+    const session = await getSession(supabase);
     if (!session?.user) return;
     setStatus('Triggering RAG ingest…');
     try {
-      const base = env.nexusmapApiBaseUrl.replace(/\/$/, '');
+      const base = config.nexusmapApiBaseUrl.replace(/\/$/, '');
       const res = await fetch(`${base}/api/rag/ingest-jwt`, {
         method: 'POST',
         headers: {
@@ -300,13 +399,14 @@ export function App() {
 
   const startPulling = async () => {
     if (!vaultPath || !selectedProjectId) return;
-    const session = await getSession();
+    if (!supabase || !config) return;
+    const session = await getSession(supabase);
     if (!session?.user) return;
     setStatus('Starting remote poller…');
     try {
       const auth = {
-        supabase_url: env.supabaseUrl,
-        supabase_anon_key: env.supabaseAnonKey,
+        supabase_url: config.supabaseUrl,
+        supabase_anon_key: config.supabaseAnonKey,
         access_token: session.access_token,
         owner_id: session.user.id,
       };
@@ -378,6 +478,56 @@ export function App() {
         </div>
 
         <div style={{ marginTop: 14 }}>
+          {!config ? (
+            <>
+              <div className="muted" style={{ whiteSpace: 'pre-wrap' }}>
+                Connect to your hosted NexusMap instance.
+              </div>
+              <div className="row" style={{ marginTop: 12 }}>
+                <input
+                  value={configHostedUrl}
+                  onChange={(e) => setConfigHostedUrl(e.target.value)}
+                  placeholder="Hosted NexusMap URL (e.g. https://app.yourdomain.com)"
+                />
+              </div>
+              <div className="row" style={{ marginTop: 12 }}>
+                <button className="btn btnPrimary" onClick={connectHosted} type="button">
+                  Connect
+                </button>
+                <button className="btn" onClick={() => setShowAdvancedConfig((v) => !v)} type="button">
+                  {showAdvancedConfig ? 'Hide advanced' : 'Advanced'}
+                </button>
+              </div>
+
+              {showAdvancedConfig ? (
+                <div style={{ marginTop: 12 }}>
+                  <div className="muted">Advanced (self-host / development)</div>
+                  <div className="row" style={{ marginTop: 8 }}>
+                    <input
+                      value={configSupabaseUrl}
+                      onChange={(e) => setConfigSupabaseUrl(e.target.value)}
+                      placeholder="Supabase URL"
+                    />
+                  </div>
+                  <div className="row" style={{ marginTop: 10 }}>
+                    <input
+                      value={configAnonKey}
+                      onChange={(e) => setConfigAnonKey(e.target.value)}
+                      placeholder="Supabase anon key"
+                    />
+                  </div>
+                  <div className="row" style={{ marginTop: 10 }}>
+                    <input
+                      value={configApiBaseUrl}
+                      onChange={(e) => setConfigApiBaseUrl(e.target.value)}
+                      placeholder="NexusMap API base URL"
+                    />
+                  </div>
+                </div>
+              ) : null}
+            </>
+          ) : null}
+
           {step === 'signedOut' ? (
             <>
               <div className="muted" style={{ whiteSpace: 'pre-wrap' }}>
@@ -386,6 +536,9 @@ export function App() {
               <div className="row" style={{ marginTop: 12 }}>
                 <button className="btn btnPrimary" onClick={signInWithGitHub} type="button">
                   Sign in with GitHub
+                </button>
+                <button className="btn" onClick={resetConfig} type="button">
+                  Reset config
                 </button>
               </div>
             </>
