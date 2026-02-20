@@ -56,11 +56,11 @@ async function resolveShareFromToken(token) {
   if (error) throw new Error(error.message);
   if (!data) throw new Error('Invalid token');
   if (data.revoked_at) throw new Error('Token revoked');
-  const scope = String((data as any).scope || '');
+  const scope = String(data.scope || '');
   if (scope !== 'account' && scope !== 'project') throw new Error('Invalid token scope');
-  const projectFolderId = (data as any).project_folder_id ? String((data as any).project_folder_id) : null;
+  const projectFolderId = data.project_folder_id ? String(data.project_folder_id) : null;
   if (scope === 'project' && !projectFolderId) throw new Error('Project token missing project');
-  return { ownerId: (data as any).owner_id, scope, projectFolderId };
+  return { ownerId: data.owner_id, scope, projectFolderId };
 }
 
 const QueryArgs = z.object({
@@ -358,7 +358,7 @@ app.post('/messages', async (req, res) => {
           .eq('public_id', pid)
           .maybeSingle();
         if (error) throw new Error(error.message);
-        const folderId = (data as any)?.project_folder_id ? String((data as any).project_folder_id) : '';
+        const folderId = data?.project_folder_id ? String(data.project_folder_id) : '';
         if (!folderId) throw new Error('Unknown project');
         sess.activePublicProjectId = pid;
         sendResult({ ok: true });
@@ -377,7 +377,7 @@ app.post('/messages', async (req, res) => {
               .eq('public_id', pid)
               .maybeSingle();
             if (error) throw new Error(error.message);
-            projectFolderId = (data as any)?.project_folder_id ? String((data as any).project_folder_id) : '';
+            projectFolderId = data?.project_folder_id ? String(data.project_folder_id) : '';
           }
         }
         const out = await ragQueryScoped(sess.share, args, { sessionOpenaiApiKey: sess.openaiApiKey, projectFolderId });
