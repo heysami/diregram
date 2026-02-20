@@ -14,6 +14,7 @@ import {
   type AppConfigV1,
 } from './lib/appConfig';
 import { loadRuntimeState, saveRuntimeState } from './lib/runtimeState';
+import { clearOpenAiKey, loadOpenAiKey, saveOpenAiKey } from './lib/openaiKey';
 import { enable as enableAutostart, disable as disableAutostart, isEnabled as isAutostartEnabled } from '@tauri-apps/plugin-autostart';
 
 type AppStep = 'signedOut' | 'signedIn';
@@ -42,6 +43,8 @@ export function App() {
   const [pulling, setPulling] = useState<boolean>(false);
   const [events, setEvents] = useState<Array<{ ts: string; kind: string; path: string; detail: string }>>([]);
   const [launchAtLogin, setLaunchAtLogin] = useState<boolean>(false);
+  const [openAiKey, setOpenAiKey] = useState<string>('');
+  const [openAiKeyDraft, setOpenAiKeyDraft] = useState<string>('');
 
   const joinPath = (a: string, b: string) => {
     const aa = a.replace(/[\\/]+$/, '');
@@ -63,6 +66,13 @@ export function App() {
     let unsub: (() => void) | null = null;
 
     const boot = async () => {
+      try {
+        const k = await loadOpenAiKey();
+        setOpenAiKey(k);
+        setOpenAiKeyDraft(k);
+      } catch {
+        // ignore
+      }
       const cfg = await loadAppConfig();
       if (!cfg) {
         // Official builds can bake in a hosted URL; auto-fetch config from there.
@@ -484,6 +494,10 @@ export function App() {
     const session = await getSession(supabase);
     if (!session?.user) return;
     if (!projects.length) return;
+    if (!openAiKey.trim()) {
+      setStatus('RAG ingest needs an OpenAI API key (set it below).');
+      return;
+    }
     const normalizeBase = (raw: string) => {
       const s = String(raw || '').trim().replace(/\/$/, '');
       if (!s) return '';
@@ -502,6 +516,7 @@ export function App() {
             project_folder_id: p.id,
             access_token: session.access_token,
             api_base_url: base,
+            openai_api_key: openAiKey.trim(),
           },
         });
         okProjects.push(p.name);
@@ -524,6 +539,31 @@ export function App() {
                   }
                 })();
       setStatus(`RAG ingest failed: ${msg || 'unknown error'}`);
+    }
+  };
+
+  const saveKey = async () => {
+    const k = openAiKeyDraft.trim();
+    if (!k) return;
+    try {
+      await saveOpenAiKey(k);
+      setOpenAiKey(k);
+      setStatus('Saved OpenAI API key.');
+      setTimeout(() => setStatus(''), 1200);
+    } catch (e: any) {
+      setStatus(`Failed to save key: ${e?.message ?? String(e)}`);
+    }
+  };
+
+  const clearKey = async () => {
+    try {
+      await clearOpenAiKey();
+      setOpenAiKey('');
+      setOpenAiKeyDraft('');
+      setStatus('Cleared OpenAI API key.');
+      setTimeout(() => setStatus(''), 1200);
+    } catch (e: any) {
+      setStatus(`Failed to clear key: ${e?.message ?? String(e)}`);
     }
   };
 
@@ -685,6 +725,27 @@ export function App() {
                   Choose vault folder
                 </button>
                 <div className="mono">{vaultPath || '(not selected)'}</div>
+              </div>
+
+              <div style={{ marginTop: 14 }}>
+                <div className="muted">OpenAI API key (for RAG reindex)</div>
+                <div className="row" style={{ marginTop: 8 }}>
+                  <input
+                    value={openAiKeyDraft}
+                    onChange={(e) => setOpenAiKeyDraft(e.target.value)}
+                    placeholder="sk-…"
+                    type="password"
+                  />
+                  <button className="btn btnPrimary" onClick={saveKey} type="button" disabled={!openAiKeyDraft.trim()}>
+                    Save
+                  </button>
+                  <button className="btn" onClick={clearKey} type="button" disabled={!openAiKey.trim()}>
+                    Clear
+                  </button>
+                </div>
+                <div className="muted" style={{ marginTop: 6 }}>
+                  Stored locally in Keychain. Never sent to NexusMap except as a request header to generate embeddings.
+                </div>
               </div>
 
               <div style={{ marginTop: 14 }}>

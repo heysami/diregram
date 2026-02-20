@@ -5,6 +5,7 @@ pub struct RagIngestRequest {
   pub project_folder_id: String,
   pub access_token: String,
   pub api_base_url: String,
+  pub openai_api_key: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -35,11 +36,23 @@ pub async fn rag_ingest_jwt(req: RagIngestRequest) -> Result<serde_json::Value, 
   let mut cursor: u32 = 0;
   let chunk_limit: u32 = 48;
   let mut last_json: serde_json::Value = serde_json::json!({});
+  let openai_key = req
+    .openai_api_key
+    .clone()
+    .unwrap_or_default()
+    .trim()
+    .to_string();
+  let has_openai_key = !openai_key.is_empty();
   for _ in 0..10_000u32 {
-    let res = client
+    let mut reqb = client
       .post(url.clone())
       .header("content-type", "application/json")
       .header("authorization", format!("Bearer {}", req.access_token.trim()))
+      ;
+    if has_openai_key {
+      reqb = reqb.header("x-openai-api-key", openai_key.clone());
+    }
+    let res = reqb
       .json(&RagIngestBody {
         project_folder_id: req.project_folder_id.trim().to_string(),
         cursor,
