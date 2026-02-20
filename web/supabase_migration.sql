@@ -21,7 +21,7 @@ create table if not exists public.folders (
   id uuid default uuid_generate_v4() primary key,
   name text not null,
   owner_id uuid references public.profiles(id) not null,
-  parent_id uuid references public.folders(id),
+  parent_id uuid references public.folders(id) on delete cascade,
   access jsonb,
   created_at timestamptz default now()
 );
@@ -29,7 +29,7 @@ create table if not exists public.folders (
 create table if not exists public.files (
   id uuid default uuid_generate_v4() primary key,
   name text not null,
-  folder_id uuid references public.folders(id),
+  folder_id uuid references public.folders(id) on delete cascade,
   owner_id uuid references public.profiles(id) not null,
   -- Document kind: diagram (existing), note, grid, vision
   kind text default 'diagram',
@@ -55,6 +55,18 @@ alter table public.files add column if not exists updated_at timestamptz default
 alter table public.files add column if not exists folder_id uuid references public.folders(id);
 alter table public.folders add column if not exists parent_id uuid references public.folders(id);
 alter table public.folders add column if not exists created_at timestamptz default now();
+
+-- Ensure folder-tree + file-in-folder foreign keys cascade on delete.
+-- Without this, deleting a project folder fails if it has child folders (parent_id references).
+alter table public.folders drop constraint if exists folders_parent_id_fkey;
+alter table public.folders
+  add constraint folders_parent_id_fkey
+  foreign key (parent_id) references public.folders(id) on delete cascade;
+
+alter table public.files drop constraint if exists files_folder_id_fkey;
+alter table public.files
+  add constraint files_folder_id_fkey
+  foreign key (folder_id) references public.folders(id) on delete cascade;
 
 -- 2) Profiles: allow inserting your own profile row
 alter table public.profiles enable row level security;

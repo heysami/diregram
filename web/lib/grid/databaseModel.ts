@@ -50,3 +50,38 @@ export function setDbCellValue(sheet: GridSheetV1, rowId: string, propId: string
   return { ...sheet, database: { ...db, rows: nextRows } };
 }
 
+export function deleteDbRow(sheet: GridSheetV1, rowId: string): GridSheetV1 {
+  const db = sheet.database;
+  const rows = db.rows || [];
+  const nextRows = rows.filter((r) => r.id !== rowId);
+  return { ...sheet, database: { ...db, rows: nextRows } };
+}
+
+export function moveDbRow(sheet: GridSheetV1, rowId: string, dir: 'up' | 'down'): GridSheetV1 {
+  const db = sheet.database;
+  const rows = db.rows || [];
+  const idx = rows.findIndex((r) => r.id === rowId);
+  if (idx < 0) return sheet;
+  const nextIdx = dir === 'up' ? idx - 1 : idx + 1;
+  if (nextIdx < 0 || nextIdx >= rows.length) return sheet;
+  const nextRows = rows.slice();
+  const tmp = nextRows[idx];
+  nextRows[idx] = nextRows[nextIdx];
+  nextRows[nextIdx] = tmp;
+  return { ...sheet, database: { ...db, rows: nextRows } };
+}
+
+export function moveDbProperty(sheet: GridSheetV1, propId: string, dir: 'left' | 'right'): GridSheetV1 {
+  const db = sheet.database;
+  const props = db.properties || [];
+  const idx = props.findIndex((p) => p.id === propId);
+  if (idx < 0) return sheet;
+  const nextIdx = dir === 'left' ? idx - 1 : idx + 1;
+  if (nextIdx < 0 || nextIdx >= props.length) return sheet;
+  const nextProps = props.slice();
+  const tmp = nextProps[idx];
+  nextProps[idx] = nextProps[nextIdx];
+  nextProps[nextIdx] = tmp;
+  return { ...sheet, database: { ...db, properties: nextProps } };
+}
+

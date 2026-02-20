@@ -69,7 +69,7 @@ create table public.folders (
   id uuid default uuid_generate_v4() primary key,
   name text not null,
   owner_id uuid references public.profiles(id) not null,
-  parent_id uuid references public.folders(id),
+  parent_id uuid references public.folders(id) on delete cascade,
   -- Sharing ACL: { "people": [ { "email": "...", "role": "view" | "edit" } ] }
   access jsonb,
   created_at timestamptz default now()
@@ -106,7 +106,7 @@ create policy "Users can delete owned or shared(edit) folders" on public.folders
 create table public.files (
   id uuid default uuid_generate_v4() primary key,
   name text not null,
-  folder_id uuid references public.folders(id),
+  folder_id uuid references public.folders(id) on delete cascade,
   owner_id uuid references public.profiles(id) not null,
   -- Document kind: diagram (existing), note, grid, vision
   kind text default 'diagram',

@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import * as Y from 'yjs';
 import { MessageSquare, Settings2 } from 'lucide-react';
 import type { GridDoc, GridSheetV1 } from '@/lib/gridjson';
@@ -80,6 +80,8 @@ export function GridEditor({
   const sheets = doc.sheets || [];
   const activeSheet = useMemo<GridSheetV1 | null>(() => sheets.find((s) => s.id === doc.activeSheetId) || sheets[0] || null, [sheets, doc.activeSheetId]);
 
+  const hotkeysScopeRef = useRef<HTMLDivElement | null>(null);
+
   const [showSettings, setShowSettings] = useState(false);
   const [showMarkdown, setShowMarkdown] = useState(false);
   const [activeTool, setActiveTool] = useState<'select' | 'comment'>('select');
@@ -95,6 +97,39 @@ export function GridEditor({
   }>({ targetKey: null });
 
   const commentTargetKeysForActiveSheet = useGridCommentTargetKeysForSheet(yDoc ?? null, activeSheet?.id);
+
+  useEffect(() => {
+    if (!onUndo && !onRedo) return;
+
+    const isInScope = (e: KeyboardEvent): boolean => {
+      const scopeEl = hotkeysScopeRef.current;
+      if (!scopeEl) return false;
+      const active = document.activeElement;
+      if (active && scopeEl.contains(active)) return true;
+      const target = e.target as Node | null;
+      if (target && scopeEl.contains(target)) return true;
+      return false;
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const isCmd = e.metaKey || e.ctrlKey;
+      if (!isCmd) return;
+      const k = e.key.toLowerCase();
+      if (k === 'z') {
+        if (!isInScope(e)) return;
+        e.preventDefault();
+        if (e.shiftKey) onRedo?.();
+        else onUndo?.();
+      } else if (k === 'y') {
+        if (!isInScope(e)) return;
+        e.preventDefault();
+        onRedo?.();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown, { capture: true });
+    return () => window.removeEventListener('keydown', handleKeyDown, { capture: true });
+  }, [onUndo, onRedo]);
 
   const markdownViews = useMemo(() => {
     return buildMarkdownDocViews({ rawMarkdown, doc, activeSheet });
@@ -340,7 +375,7 @@ export function GridEditor({
           />
 
           {activeSheet.mode === 'database' ? (
-            <div className="relative flex-1 overflow-hidden">
+            <div ref={hotkeysScopeRef} className="relative flex-1 overflow-hidden">
               <DatabaseView
                 sheet={activeSheet}
                 onChange={(nextSheet) => {
@@ -350,7 +385,7 @@ export function GridEditor({
               />
             </div>
           ) : (
-            <div className="relative flex-1 overflow-hidden">
+            <div ref={hotkeysScopeRef} className="relative flex-1 overflow-hidden">
               <SpreadsheetView
                 doc={doc}
                 fileId={fileId}

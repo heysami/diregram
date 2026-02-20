@@ -1,9 +1,9 @@
 'use client';
 
 import { useMemo } from 'react';
-import { Plus, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Plus, Trash2 } from 'lucide-react';
 import type { GridDatabasePropertyType, GridSheetV1 } from '@/lib/gridjson';
-import { addDbProperty, addDbRow, deleteDbProperty, setDbCellValue } from '@/lib/grid/databaseModel';
+import { addDbProperty, addDbRow, deleteDbProperty, deleteDbRow, moveDbProperty, moveDbRow, setDbCellValue } from '@/lib/grid/databaseModel';
 
 export function DatabaseView({ sheet, onChange }: { sheet: GridSheetV1; onChange: (next: GridSheetV1) => void }) {
   const props = sheet.database.properties || [];
@@ -53,21 +53,43 @@ export function DatabaseView({ sheet, onChange }: { sheet: GridSheetV1; onChange
         <table className="w-full border-collapse text-[11px]">
           <thead>
             <tr>
-              <th className="border border-slate-200 px-2 py-1 text-left w-[90px]">ID</th>
-              {props.map((p) => (
+              <th className="border border-slate-200 px-2 py-1 text-left w-[96px]">#</th>
+              {props.map((p, idx) => (
                 <th key={p.id} className="border border-slate-200 px-2 py-1 text-left min-w-[120px]">
                   <div className="flex items-center justify-between gap-2">
                     <span className="font-semibold">{p.name}</span>
-                    <button
-                      type="button"
-                      className="p-1 text-slate-500 hover:text-red-600 hover:bg-red-50"
-                      title="Delete property"
-                      onClick={() => {
-                        onChange(deleteDbProperty(sheet, p.id));
-                      }}
-                    >
-                      <Trash2 size={12} />
-                    </button>
+                    <div className="flex items-center gap-0.5">
+                      <button
+                        type="button"
+                        className="p-1 text-slate-500 hover:text-slate-800 hover:bg-slate-50 disabled:opacity-30 disabled:hover:bg-transparent"
+                        title="Move property left"
+                        disabled={idx === 0}
+                        onClick={() => onChange(moveDbProperty(sheet, p.id, 'left'))}
+                      >
+                        <ArrowLeft size={12} />
+                      </button>
+                      <button
+                        type="button"
+                        className="p-1 text-slate-500 hover:text-slate-800 hover:bg-slate-50 disabled:opacity-30 disabled:hover:bg-transparent"
+                        title="Move property right"
+                        disabled={idx === props.length - 1}
+                        onClick={() => onChange(moveDbProperty(sheet, p.id, 'right'))}
+                      >
+                        <ArrowRight size={12} />
+                      </button>
+                      <button
+                        type="button"
+                        className="p-1 text-slate-500 hover:text-red-600 hover:bg-red-50"
+                        title="Delete property"
+                        onClick={() => {
+                          const ok = window.confirm('Delete this property? This will remove the column from all rows.');
+                          if (!ok) return;
+                          onChange(deleteDbProperty(sheet, p.id));
+                        }}
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
                   </div>
                   <div className="text-[10px] opacity-60">{p.type}</div>
                 </th>
@@ -75,9 +97,45 @@ export function DatabaseView({ sheet, onChange }: { sheet: GridSheetV1; onChange
             </tr>
           </thead>
           <tbody>
-            {rows.map((r) => (
+            {rows.map((r, rIdx) => (
               <tr key={r.id}>
-                <td className="border border-slate-200 px-2 py-1 font-mono opacity-70">{r.id}</td>
+                <td className="border border-slate-200 px-2 py-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="tabular-nums opacity-80">{rIdx + 1}</span>
+                    <div className="flex items-center gap-0.5">
+                      <button
+                        type="button"
+                        className="p-1 text-slate-500 hover:text-slate-800 hover:bg-slate-50 disabled:opacity-30 disabled:hover:bg-transparent"
+                        title="Move row up"
+                        disabled={rIdx === 0}
+                        onClick={() => onChange(moveDbRow(sheet, r.id, 'up'))}
+                      >
+                        <ArrowUp size={12} />
+                      </button>
+                      <button
+                        type="button"
+                        className="p-1 text-slate-500 hover:text-slate-800 hover:bg-slate-50 disabled:opacity-30 disabled:hover:bg-transparent"
+                        title="Move row down"
+                        disabled={rIdx === rows.length - 1}
+                        onClick={() => onChange(moveDbRow(sheet, r.id, 'down'))}
+                      >
+                        <ArrowDown size={12} />
+                      </button>
+                      <button
+                        type="button"
+                        className="p-1 text-slate-500 hover:text-red-600 hover:bg-red-50"
+                        title="Delete row"
+                        onClick={() => {
+                          const ok = window.confirm('Delete this row?');
+                          if (!ok) return;
+                          onChange(deleteDbRow(sheet, r.id));
+                        }}
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                  </div>
+                </td>
                 {props.map((p) => (
                   <td key={p.id} className="border border-slate-200 px-2 py-1">
                     {p.type === 'checkbox' ? (
