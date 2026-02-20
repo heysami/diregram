@@ -38,7 +38,7 @@ export function DoclingImportPanel({
     setState({ status: 'uploading' });
     try {
       const uploaded = await uploadDoclingInput({ supabase, userId, file });
-      setState({ status: 'processing', ...uploaded });
+      setState({ status: 'processing', inputObjectPath: uploaded.objectPath, jobId: uploaded.jobId, filename: uploaded.filename });
 
       const res = await fetch('/api/docling/convert', {
         method: 'POST',
@@ -57,7 +57,7 @@ export function DoclingImportPanel({
       if (!outputObjectPath) throw new Error('Missing outputObjectPath');
 
       const downloadUrl = await createSignedDoclingFileUrl({ supabase, objectPath: outputObjectPath, expiresInSeconds: 60 * 30 });
-      setState({ status: 'done', inputObjectPath: uploaded.objectPath, outputObjectPath, outputFormat, filename: uploaded.filename, jobId: uploaded.jobId, downloadUrl });
+      setState({ status: 'done', inputObjectPath: uploaded.objectPath, outputObjectPath, outputFormat, filename: uploaded.filename, downloadUrl });
     } catch (e) {
       setState({ status: 'error', message: e instanceof Error ? e.message : 'Conversion failed' });
     }
