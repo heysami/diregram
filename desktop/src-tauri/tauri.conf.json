@@ -1,6 +1,6 @@
 {
   "productName": "NexusMap Sync",
-  "version": "0.1.0",
+  "version": "../package.json",
   "identifier": "com.nexusmap.sync",
   "build": {
     "frontendDist": "../dist",

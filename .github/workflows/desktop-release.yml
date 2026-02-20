@@ -38,6 +38,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            desktop/src-tauri/target/release/bundle/**/*
+            desktop/src-tauri/target/release/bundle/dmg/*.dmg
+            desktop/src-tauri/target/release/bundle/macos/*.app.*
+            desktop/src-tauri/target/release/bundle/macos/*.zip
           generate_release_notes: true
+          fail_on_unmatched_files: false
 
