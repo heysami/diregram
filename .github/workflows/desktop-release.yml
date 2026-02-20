@@ -28,6 +28,80 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # ------------------------------------------------------------
+      # macOS signing + notarization (required to avoid Gatekeeper)
+      #
+      # Required GitHub secrets:
+      # - KEYCHAIN_PASSWORD: password for the temporary CI keychain
+      # - APPLE_CERTIFICATE: base64-encoded .p12 (Developer ID Application)
+      # - APPLE_CERTIFICATE_PASSWORD: password used when exporting the .p12
+      #
+      # Preferred notarization via App Store Connect API key:
+      # - APPLE_API_KEY: Key ID (e.g. ABCD123456)
+      # - APPLE_API_ISSUER: Issuer ID (UUID)
+      # - APPLE_API_KEY_P8: base64-encoded AuthKey_XXXXXX.p8 contents
+      #
+      # Fallback notarization via Apple ID (less ideal):
+      # - APPLE_ID: your Apple ID email
+      # - APPLE_PASSWORD: app-specific password
+      # ------------------------------------------------------------
+      - name: Validate Apple signing secrets
+        env:
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "${KEYCHAIN_PASSWORD:-}" ] || [ -z "${APPLE_CERTIFICATE:-}" ] || [ -z "${APPLE_CERTIFICATE_PASSWORD:-}" ]; then
+            echo "Missing required secrets for macOS signing."
+            echo "Set KEYCHAIN_PASSWORD, APPLE_CERTIFICATE, and APPLE_CERTIFICATE_PASSWORD in GitHub Secrets."
+            exit 1
+          fi
+
+      - name: Import Apple signing certificate
+        env:
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          echo "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security set-keychain-settings -t 3600 -u build.keychain
+          security import certificate.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
+          security find-identity -v -p codesigning build.keychain
+
+      - name: Resolve APPLE_SIGNING_IDENTITY
+        if: ${{ secrets.APPLE_CERTIFICATE != '' }}
+        run: |
+          set -euo pipefail
+          # Prefer Developer ID Application identities for distribution outside the App Store.
+          CERT_INFO=$(security find-identity -v -p codesigning build.keychain | grep "Developer ID Application" | head -n 1 || true)
+          if [ -z "$CERT_INFO" ]; then
+            echo "No 'Developer ID Application' identity found in keychain. Identities:"
+            security find-identity -v -p codesigning build.keychain || true
+            exit 1
+          fi
+          CERT_ID=$(echo "$CERT_INFO" | awk -F'"' '{print $2}')
+          if [ -z "$CERT_ID" ]; then
+            echo "Failed to parse signing identity from: $CERT_INFO"
+            exit 1
+          fi
+          echo "APPLE_SIGNING_IDENTITY=$CERT_ID" >> "$GITHUB_ENV"
+
+      - name: Write App Store Connect API key
+        if: ${{ secrets.APPLE_API_KEY_P8 != '' }}
+        env:
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/apple"
+          echo "$APPLE_API_KEY_P8" | base64 --decode > "$RUNNER_TEMP/apple/AuthKey.p8"
+          echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/apple/AuthKey.p8" >> "$GITHUB_ENV"
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -46,6 +120,18 @@ jobs:
 
       - name: Build Tauri app (macOS)
         working-directory: desktop
+        env:
+          # Signing (required)
+          APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}
+
+          # Notarization (preferred: App Store Connect API key)
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY_PATH: ${{ env.APPLE_API_KEY_PATH }}
+
+          # Notarization fallback (Apple ID)
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
         run: npm run tauri:build -- --target ${{ matrix.target }}
 
       - name: List bundle output
