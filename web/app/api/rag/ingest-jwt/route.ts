@@ -11,6 +11,17 @@ export const dynamic = 'force-dynamic';
 
 type AccessPerson = { email?: string; role?: string };
 
+function withCors(res: NextResponse) {
+  res.headers.set('access-control-allow-origin', '*');
+  res.headers.set('access-control-allow-methods', 'POST,OPTIONS');
+  res.headers.set('access-control-allow-headers', 'content-type,authorization,x-openai-api-key');
+  return res;
+}
+
+export async function OPTIONS() {
+  return withCors(new NextResponse(null, { status: 204 }));
+}
+
 function canEditFolder(folder: { owner_id: string; access: any }, user: { id: string; email: string | null }) {
   if (folder.owner_id === user.id) return true;
   const people = (folder.access?.people || []) as AccessPerson[];
@@ -38,14 +49,14 @@ function getBearerToken(request: Request): string | null {
 export async function POST(request: Request) {
   const body = (await request.json().catch(() => null)) as null | { projectFolderId?: string; openaiApiKey?: string; embeddingModel?: string };
   const projectFolderId = String(body?.projectFolderId || '').trim();
-  if (!projectFolderId) return NextResponse.json({ error: 'Missing projectFolderId' }, { status: 400 });
+  if (!projectFolderId) return withCors(NextResponse.json({ error: 'Missing projectFolderId' }, { status: 400 }));
 
   const jwt = getBearerToken(request);
-  if (!jwt) return NextResponse.json({ error: 'Missing Authorization Bearer token' }, { status: 401 });
+  if (!jwt) return withCors(NextResponse.json({ error: 'Missing Authorization Bearer token' }, { status: 401 }));
 
   const url = String(process.env.NEXT_PUBLIC_SUPABASE_URL || '').trim();
   const anon = String(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '').trim();
-  if (!url || !anon) return NextResponse.json({ error: 'Server missing Supabase public env' }, { status: 500 });
+  if (!url || !anon) return withCors(NextResponse.json({ error: 'Server missing Supabase public env' }, { status: 500 }));
 
   const userClient = createClient(url, anon, {
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
@@ -53,9 +64,9 @@ export async function POST(request: Request) {
   });
 
   const { data: userData, error: userErr } = await userClient.auth.getUser();
-  if (userErr) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (userErr) return withCors(NextResponse.json({ error: 'Unauthorized' }, { status: 401 }));
   const requester = userData.user ? { id: userData.user.id, email: userData.user.email ?? null } : null;
-  if (!requester) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (!requester) return withCors(NextResponse.json({ error: 'Unauthorized' }, { status: 401 }));
 
   const openaiApiKey = String(request.headers.get('x-openai-api-key') || body?.openaiApiKey || '').trim() || null;
   const embeddingModel = String(body?.embeddingModel || '').trim() || undefined;
@@ -67,15 +78,15 @@ export async function POST(request: Request) {
     .select('id,owner_id,access,parent_id')
     .eq('id', projectFolderId)
     .maybeSingle();
-  if (folderErr) return NextResponse.json({ error: folderErr.message }, { status: 500 });
-  if (!folder) return NextResponse.json({ error: 'Project not found' }, { status: 404 });
+  if (folderErr) return withCors(NextResponse.json({ error: folderErr.message }, { status: 500 }));
+  if (!folder) return withCors(NextResponse.json({ error: 'Project not found' }, { status: 404 }));
 
   if (!canEditFolder(folder as any, requester)) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    return withCors(NextResponse.json({ error: 'Forbidden' }, { status: 403 }));
   }
 
   const ownerId = String((folder as any).owner_id || '').trim();
-  if (!ownerId) return NextResponse.json({ error: 'Project owner not found' }, { status: 500 });
+  if (!ownerId) return withCors(NextResponse.json({ error: 'Project owner not found' }, { status: 500 }));
 
   const exp = await exportKgAndVectorsForProject({
     supabaseMode: true,
@@ -120,7 +131,7 @@ export async function POST(request: Request) {
       data: r,
     }));
     const { error } = await admin.from('kg_entities').upsert(rows, { onConflict: 'owner_id,id' });
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    if (error) return withCors(NextResponse.json({ error: error.message }, { status: 500 }));
   }
 
   for (const batch of chunkArray(edgeRecords, 500)) {
@@ -134,7 +145,7 @@ export async function POST(request: Request) {
       data: r,
     }));
     const { error } = await admin.from('kg_edges').upsert(rows, { onConflict: 'owner_id,id' });
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    if (error) return withCors(NextResponse.json({ error: error.message }, { status: 500 }));
   }
 
   const texts = chunkRecords.map((c: any) => String(c.text || '').slice(0, 50_000));
@@ -167,20 +178,22 @@ export async function POST(request: Request) {
       } as any,
     }));
     const { error } = await admin.from('rag_chunks').upsert(rows, { onConflict: 'owner_id,id' });
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    if (error) return withCors(NextResponse.json({ error: error.message }, { status: 500 }));
   }
 
-  return NextResponse.json({
-    ok: true,
-    projectFolderId,
-    ownerId,
-    publicProjectId: publicId,
-    stats: {
-      files: exp.stats.files,
-      entities: entityRecords.length,
-      edges: edgeRecords.length,
-      chunks: chunkRecords.length,
-    },
-  });
+  return withCors(
+    NextResponse.json({
+      ok: true,
+      projectFolderId,
+      ownerId,
+      publicProjectId: publicId,
+      stats: {
+        files: exp.stats.files,
+        entities: entityRecords.length,
+        edges: edgeRecords.length,
+        chunks: chunkRecords.length,
+      },
+    }),
+  );
 }
 

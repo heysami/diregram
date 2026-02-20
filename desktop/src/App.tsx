@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { getCurrent, onOpenUrl } from '@tauri-apps/plugin-deep-link';
-import { open as openExternal } from '@tauri-apps/plugin-shell';
 import { invoke } from '@tauri-apps/api/core';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createSupabaseClient, getSession } from './lib/supabase';
@@ -29,6 +28,7 @@ export function App() {
 
   const [step, setStep] = useState<AppStep>('signedOut');
   const [email, setEmail] = useState<string>('');
+  const [loginEmail, setLoginEmail] = useState<string>('');
   const [vaultPath, setVaultPath] = useState<string>('');
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string>('');
@@ -121,15 +121,27 @@ export function App() {
     const url = urls[0];
     if (!url) return;
 
-    // Expected: nexusmap://auth/callback?code=...
     try {
       const parsed = new URL(url);
-      const code = parsed.searchParams.get('code');
-      if (!code) return;
-
       setStatus('Completing sign-in…');
-      const { error } = await sb.auth.exchangeCodeForSession(code);
-      if (error) throw error;
+
+      const code = parsed.searchParams.get('code');
+      if (code) {
+        const { error } = await sb.auth.exchangeCodeForSession(code);
+        if (error) throw error;
+      } else {
+        // Magic link may return tokens in the fragment.
+        const hash = String(parsed.hash || '').replace(/^#/, '');
+        const params = new URLSearchParams(hash);
+        const access_token = params.get('access_token');
+        const refresh_token = params.get('refresh_token');
+        if (access_token && refresh_token) {
+          const { error } = await sb.auth.setSession({ access_token, refresh_token });
+          if (error) throw error;
+        } else {
+          return;
+        }
+      }
 
       const session = await getSession(sb);
       if (session?.user) {
@@ -165,25 +177,22 @@ export function App() {
     setStatus('');
   };
 
-  const signInWithGitHub = async () => {
+  const signInWithEmailMagicLink = async () => {
     if (!supabase) return;
-    setStatus('Opening browser…');
-    const { data, error } = await supabase.auth.signInWithOAuth({
-      provider: 'github',
-      options: { redirectTo: 'nexusmap://auth/callback', skipBrowserRedirect: true },
+    const e = loginEmail.trim();
+    if (!e) return;
+    setStatus('Sending magic link…');
+    const { error } = await supabase.auth.signInWithOtp({
+      email: e,
+      options: {
+        emailRedirectTo: 'nexusmap://auth/callback',
+      },
     });
     if (error) {
       setStatus(`Sign-in error: ${error.message}`);
       return;
     }
-    if (data?.url) {
-      try {
-        await openExternal(data.url);
-        setStatus('Browser opened. Finish auth and you’ll be redirected back.');
-      } catch {
-        setStatus(`Open this URL in your browser: ${data.url}`);
-      }
-    }
+    setStatus('Magic link sent. Check your email and click the link.');
   };
 
   const pickVaultFolder = async () => {
@@ -534,8 +543,9 @@ export function App() {
                 {deepLinkHelp}
               </div>
               <div className="row" style={{ marginTop: 12 }}>
-                <button className="btn btnPrimary" onClick={signInWithGitHub} type="button">
-                  Sign in with GitHub
+                <input value={loginEmail} onChange={(e) => setLoginEmail(e.target.value)} placeholder="Email for magic link" />
+                <button className="btn btnPrimary" onClick={signInWithEmailMagicLink} type="button">
+                  Send magic link
                 </button>
                 <button className="btn" onClick={resetConfig} type="button">
                   Reset config

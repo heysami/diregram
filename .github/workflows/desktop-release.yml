@@ -11,6 +11,14 @@ permissions:
 
 jobs:
   build_macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            dmgSuffix: aarch64
+          - target: x86_64-apple-darwin
+            dmgSuffix: x86_64
     runs-on: macos-latest
     env:
       # Production web app URL baked into the desktop bundle.
@@ -29,6 +37,8 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
 
       - name: Install desktop deps
         working-directory: desktop
@@ -36,7 +46,7 @@ jobs:
 
       - name: Build Tauri app (macOS)
         working-directory: desktop
-        run: npm run tauri:build
+        run: npm run tauri:build -- --target ${{ matrix.target }}
 
       - name: Upload artifacts to GitHub Release
         uses: softprops/action-gh-release@v2
