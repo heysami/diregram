@@ -14,14 +14,9 @@ import { loadGridDoc } from '@/lib/gridjson';
 import { buildNoteEmbedCommentTargetKey } from '@/lib/note-comments';
 import { dispatchNoteOpenCommentTarget } from '@/components/note/comments/noteCommentEvents';
 import { useHasCommentThread } from '@/components/note/comments/useHasCommentThread';
+import { parseJsonish } from '@/lib/jsonish';
 
-function safeJsonParse(s: string): unknown | null {
-  try {
-    return JSON.parse(s);
-  } catch {
-    return null;
-  }
-}
+const tryParseJsonish = parseJsonish;
 
 function safeJsonPretty(v: unknown): string {
   try {
@@ -64,7 +59,7 @@ export const NexusTableNode = Node.create({
     return ReactNodeViewRenderer(({ editor, node, getPos }) => {
       const yDoc = this.options.yDoc as Y.Doc | null;
       const raw = String((node.attrs as any)?.raw || '');
-      const parsed = safeJsonParse(raw) as any;
+      const parsed = tryParseJsonish(raw) as any;
       const spec = parsed && typeof parsed === 'object' ? (parsed as any) : null;
 
       const { configured, ready, supabase, user } = useAuth();
@@ -101,20 +96,23 @@ export const NexusTableNode = Node.create({
       };
 
       const setMode = (next: 'intersection' | 'union') => {
-        const nextSpec = { ...(spec || {}), mode: next, sources: Array.isArray(spec?.sources) ? spec.sources : [] };
+        const nextSpec: any = { ...(spec || {}), mode: next, sources: Array.isArray(spec?.sources) ? spec.sources : [] };
+        if (!nextSpec.id) nextSpec.id = `table-${crypto.randomUUID()}`;
         setRawAttr(safeJsonPretty(nextSpec));
       };
 
       const removeSourceAt = (idx: number) => {
         const nextSources = sources.filter((_, i) => i !== idx);
-        const nextSpec = { ...(spec || {}), sources: nextSources, mode };
+        const nextSpec: any = { ...(spec || {}), sources: nextSources, mode };
+        if (!nextSpec.id) nextSpec.id = `table-${crypto.randomUUID()}`;
         setRawAttr(safeJsonPretty(nextSpec));
       };
 
       const [addFileId, setAddFileId] = useState<string>('');
       const [addSheetId, setAddSheetId] = useState<string>('');
       const [addTableId, setAddTableId] = useState<string>('');
-      const [gridMeta, setGridMeta] = useState<{ sheets: Array<{ id: string; name: string; tables: string[] }> } | null>(null);
+      const [addScope, setAddScope] = useState<'table' | 'sheet'>('table');
+      const [gridMeta, setGridMeta] = useState<{ sheets: Array<{ id: string; name: string; mode: string; tables: string[] }> } | null>(null);
 
       useEffect(() => {
         let cancelled = false;
@@ -136,6 +134,7 @@ export const NexusTableNode = Node.create({
             const sheets = (loaded.doc.sheets || []).map((s: any) => ({
               id: String(s.id || ''),
               name: String(s.name || 'Sheet'),
+              mode: String(s.mode || 'spreadsheet'),
               tables: Array.isArray(s.grid?.tables) ? (s.grid.tables as any[]).map((t) => String(t.id || '')).filter(Boolean) : [],
             }));
             if (!cancelled) setGridMeta({ sheets });
@@ -144,6 +143,8 @@ export const NexusTableNode = Node.create({
               const firstTable = sheets[0]?.tables?.[0] || '';
               setAddSheetId((cur) => cur || firstSheet);
               setAddTableId((cur) => cur || firstTable);
+              const hasTables = Boolean(firstTable);
+              setAddScope((cur) => (cur === 'sheet' || !hasTables ? 'sheet' : 'table'));
             }
           } catch {
             if (!cancelled) setGridMeta(null);
@@ -156,16 +157,21 @@ export const NexusTableNode = Node.create({
       }, [addFileId, supabaseMode, ready, supabase]);
 
       const addSource = () => {
-        if (!addFileId.trim() || !addSheetId.trim() || !addTableId.trim()) return;
+        if (!addFileId.trim() || !addSheetId.trim()) return;
+        if (addScope === 'table' && !addTableId.trim()) return;
         const nextSources = [
           ...sources,
-          { type: 'gridTable', fileId: addFileId.trim(), sheetId: addSheetId.trim(), tableId: addTableId.trim() },
+          addScope === 'sheet'
+            ? { type: 'gridSheet', fileId: addFileId.trim(), sheetId: addSheetId.trim() }
+            : { type: 'gridTable', fileId: addFileId.trim(), sheetId: addSheetId.trim(), tableId: addTableId.trim() },
         ];
-        const nextSpec = { ...(spec || {}), sources: nextSources, mode };
+        const nextSpec: any = { ...(spec || {}), sources: nextSources, mode };
+        if (!nextSpec.id) nextSpec.id = `table-${crypto.randomUUID()}`;
         setRawAttr(safeJsonPretty(nextSpec));
         setAddFileId('');
         setAddSheetId('');
         setAddTableId('');
+        setAddScope('table');
         setShowSources(false);
       };
 
@@ -235,7 +241,8 @@ export const NexusTableNode = Node.create({
                 {sources.map((s: any, idx: number) => (
                   <div key={`${idx}:${s?.fileId || ''}:${s?.sheetId || ''}:${s?.tableId || ''}`} className="flex items-center gap-2">
                     <div className="flex-1 text-[11px] font-mono text-slate-700 truncate">
-                      {String(s?.fileId || '')} / {String(s?.sheetId || '')} / {String(s?.tableId || '')}
+                      {String(s?.fileId || '')} / {String(s?.sheetId || '')}{' '}
+                      {String(s?.type || '') === 'gridSheet' ? <span className="opacity-70">(whole sheet)</span> : ` / ${String(s?.tableId || '')}`}
                     </div>
                     <button type="button" className="mac-btn h-7" onClick={() => removeSourceAt(idx)} title="Remove source">
                       Remove
@@ -279,6 +286,8 @@ export const NexusTableNode = Node.create({
                       const sheet = gridMeta?.sheets.find((s) => s.id === next) || null;
                       const first = sheet?.tables?.[0] || '';
                       setAddTableId(first);
+                      const hasTables = Boolean(first);
+                      setAddScope((cur) => (cur === 'sheet' || !hasTables ? 'sheet' : 'table'));
                     }}
                     disabled={!gridMeta}
                   >
@@ -291,20 +300,52 @@ export const NexusTableNode = Node.create({
                   </select>
                 </div>
                 <div>
-                  <div className="text-[11px] opacity-70 mb-1">table</div>
-                  <select
-                    className="mac-field h-8 w-full"
-                    value={addTableId}
-                    onChange={(e) => setAddTableId(e.target.value)}
-                    disabled={!gridMeta || !addSheetId}
-                  >
-                    <option value="">{gridMeta ? 'Select…' : 'Loading…'}</option>
-                    {(gridMeta?.sheets.find((s) => s.id === addSheetId)?.tables || []).map((t) => (
-                      <option key={t} value={t}>
-                        {t}
-                      </option>
-                    ))}
-                  </select>
+                  <div className="text-[11px] opacity-70 mb-1">source</div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      className={`mac-btn h-8 ${addScope === 'table' ? 'mac-btn--primary' : ''}`}
+                      onClick={() => setAddScope('table')}
+                      disabled={!gridMeta || !(gridMeta?.sheets.find((s) => s.id === addSheetId)?.tables || []).length}
+                      title="Use a named table region (if present)"
+                    >
+                      Table
+                    </button>
+                    <button
+                      type="button"
+                      className={`mac-btn h-8 ${addScope === 'sheet' ? 'mac-btn--primary' : ''}`}
+                      onClick={() => setAddScope('sheet')}
+                      disabled={!gridMeta || !addSheetId}
+                      title="Embed the whole sheet (recommended for Database sheets)"
+                    >
+                      Whole sheet
+                    </button>
+                  </div>
+                  {addScope === 'table' ? (
+                    <select
+                      className="mac-field h-8 w-full mt-2"
+                      value={addTableId}
+                      onChange={(e) => setAddTableId(e.target.value)}
+                      disabled={!gridMeta || !addSheetId}
+                    >
+                      <option value="">{gridMeta ? 'Select…' : 'Loading…'}</option>
+                      {(gridMeta?.sheets.find((s) => s.id === addSheetId)?.tables || []).map((t) => (
+                        <option key={t} value={t}>
+                          {t}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <div className="mt-2 text-[11px] text-slate-600">
+                      {(() => {
+                        const s = gridMeta?.sheets.find((x) => x.id === addSheetId) || null;
+                        const m = String(s?.mode || '');
+                        return m === 'database'
+                          ? 'Database sheet: embeds properties + rows.'
+                          : 'Spreadsheet sheet: embeds a bounded view of the grid.';
+                      })()}
+                    </div>
+                  )}
                 </div>
               </div>
               {gridMeta ? (
@@ -343,7 +384,7 @@ export const NexusTableNode = Node.create({
                   type="button"
                   className="mac-btn mac-btn--primary h-7"
                   onClick={() => {
-                    const next = safeJsonParse(rawDraft);
+                    const next = tryParseJsonish(rawDraft);
                     if (!next) return;
                     setRawAttr(safeJsonPretty(next));
                     setShowRaw(false);

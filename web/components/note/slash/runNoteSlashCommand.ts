@@ -173,7 +173,7 @@ export function runNoteSlashCommand(opts: {
     const raw = JSON.stringify({ id: `table-${crypto.randomUUID()}`, mode: 'intersection', sources: [] }, null, 2);
     ok = insertOrReplaceBlock({ type: 'nexusTable', attrs: { raw } });
   } else if (cmd === 'test') {
-    const raw = JSON.stringify({ id: `test-${crypto.randomUUID()}`, testId: '' }, null, 2);
+    const raw = JSON.stringify({ id: `test-${crypto.randomUUID()}`, testFileId: '' }, null, 2);
     ok = insertOrReplaceBlock({ type: 'nexusTest', attrs: { raw } });
   } else if (cmd === 'noteLink') {
     try {

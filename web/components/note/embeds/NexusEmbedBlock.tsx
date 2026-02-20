@@ -8,9 +8,11 @@ import { useRemoteNexusDoc } from '@/hooks/use-remote-nexus-doc';
 import { SystemFlowEditor } from '@/components/SystemFlowEditor';
 import { NexusCanvas } from '@/components/NexusCanvas';
 import { DataObjectsCanvas } from '@/components/DataObjectsCanvas';
-import { parseNexusMarkdown } from '@/lib/nexus-parser';
 import { buildNoteEmbedCommentTargetKey } from '@/lib/note-comments';
 import { loadVisionDoc } from '@/lib/visionjson';
+import { SwimlaneFlowEmbedPreview } from '@/components/note/embeds/SwimlaneFlowEmbedPreview';
+import { ProcessFlowEmbedPreview } from '@/components/note/embeds/ProcessFlowEmbedPreview';
+import { useParsedNexusDoc } from '@/components/note/embeds/useParsedNexusDoc';
 
 export type NexusEmbedSpec =
   | {
@@ -19,6 +21,24 @@ export type NexusEmbedSpec =
       fileId?: string;
       /** System flow id, e.g. "systemflow-1" */
       ref: string;
+    }
+  | {
+      id: string;
+      /** Swimlane (Flow tab) embed. */
+      kind: 'flowTab';
+      fileId?: string;
+      /** Flow tab id, e.g. "flowtab-1" */
+      fid: string;
+      /** Root node id (parsed, e.g. "node-12") */
+      rootId: string;
+    }
+  | {
+      id: string;
+      /** Main-canvas process flow embed. */
+      kind: 'processFlow';
+      fileId?: string;
+      /** Root process node id (parsed, e.g. "node-45") */
+      rootProcessNodeId: string;
     }
   | {
       id: string;
@@ -73,6 +93,8 @@ export function NexusEmbedBlock({
   const remote = useRemoteNexusDoc({ fileId, supabaseMode, ready, supabase: supabase || null });
   const targetDoc = fileId ? remote.doc : hostDoc;
 
+  const { roots, nodeById, processFlowModeNodes, getProcessRunningNumber } = useParsedNexusDoc(targetDoc || null);
+
   const [activeVariantState, setActiveVariantState] = useState<Record<string, Record<string, string>>>({});
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(() => new Set());
@@ -125,6 +147,7 @@ export function NexusEmbedBlock({
               activeTool="select"
               showComments={false}
               showAnnotations={false}
+              embedded
             />
           </div>
         </div>
@@ -132,7 +155,27 @@ export function NexusEmbedBlock({
     );
   }
 
+  if (spec.kind === 'flowTab') {
+    const fid = String((spec as any)?.fid || '').trim();
+    const rootId = String((spec as any)?.rootId || '').trim();
+    return wrap(<SwimlaneFlowEmbedPreview doc={targetDoc} fid={fid} rootId={rootId} />);
+  }
+
+  if (spec.kind === 'processFlow') {
+    const rootProcessNodeId = String((spec as any)?.rootProcessNodeId || '').trim();
+    return wrap(<ProcessFlowEmbedPreview doc={targetDoc} rootProcessNodeId={rootProcessNodeId} />);
+  }
+
   if (spec.kind === 'canvas') {
+    // Back-compat: older "Flow" embeds were stored as canvas + rootFocusId pointing to a Flow tab root.
+    if (spec.rootFocusId) {
+      const n: any = nodeById.get(spec.rootFocusId) || null;
+      const meta = (n?.metadata || {}) as any;
+      if (meta?.flowTab) {
+        const fid = String(meta?.fid || '').trim() || String(spec.rootFocusId);
+        return wrap(<SwimlaneFlowEmbedPreview doc={targetDoc} fid={fid} rootId={String(spec.rootFocusId)} />);
+      }
+    }
     return wrap(
       <div className="my-4 rounded-lg border border-slate-200 bg-white overflow-hidden">
         <div className="px-3 py-2 border-b bg-slate-50 text-[11px] font-semibold text-slate-700">Canvas (read-only)</div>
@@ -151,10 +194,12 @@ export function NexusEmbedBlock({
               expandedNodes={expandedNodes}
               onExpandedNodesChange={setExpandedNodes}
               getRunningNumber={() => undefined}
-              getProcessRunningNumber={() => undefined}
+              getProcessRunningNumber={getProcessRunningNumber}
               showComments={false}
               showAnnotations={false}
               rootFocusId={spec.rootFocusId}
+              processFlowModeNodes={processFlowModeNodes}
+              hideShowFlowToggle
             />
           </div>
         </div>
@@ -163,7 +208,6 @@ export function NexusEmbedBlock({
   }
 
   if (spec.kind === 'dataObjects') {
-    const roots = parseNexusMarkdown(targetDoc.getText('nexus').toString());
     return wrap(
       <div className="my-4 rounded-lg border border-slate-200 bg-white overflow-hidden">
         <div className="px-3 py-2 border-b bg-slate-50 text-[11px] font-semibold text-slate-700">Data Objects (read-only)</div>

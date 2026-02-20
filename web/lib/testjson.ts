@@ -31,16 +31,16 @@ function coerceDoc(x: unknown): TestDoc | null {
   if (!x || typeof x !== 'object') return null;
   const r = x as JsonObject;
   if (r.version !== 1) return null;
-  const name = typeof (r as any).name === 'string' ? String((r as any).name) : '';
-  const sourceFileId = typeof (r as any).sourceFileId === 'string' ? String((r as any).sourceFileId) : '';
-  const flowRootId = typeof (r as any).flowRootId === 'string' ? String((r as any).flowRootId) : '';
-  const flowNodeId = typeof (r as any).flowNodeId === 'string' ? String((r as any).flowNodeId) : '';
+  const name = typeof r['name'] === 'string' ? String(r['name']) : '';
+  const sourceFileId = typeof r['sourceFileId'] === 'string' ? String(r['sourceFileId']) : '';
+  const flowRootId = typeof r['flowRootId'] === 'string' ? String(r['flowRootId']) : '';
+  const flowNodeId = typeof r['flowNodeId'] === 'string' ? String(r['flowNodeId']) : '';
   if (!name.trim()) return null;
   if (!sourceFileId.trim()) return null;
   if (!flowRootId.trim()) return null;
   if (!flowNodeId.trim()) return null;
-  const createdAt = typeof (r as any).createdAt === 'number' && Number.isFinite((r as any).createdAt) ? Number((r as any).createdAt) : undefined;
-  const updatedAt = typeof (r as any).updatedAt === 'string' ? String((r as any).updatedAt) : undefined;
+  const createdAt = typeof r['createdAt'] === 'number' && Number.isFinite(r['createdAt']) ? Number(r['createdAt']) : undefined;
+  const updatedAt = typeof r['updatedAt'] === 'string' ? String(r['updatedAt']) : undefined;
   return {
     version: 1,
     name: name.trim(),
@@ -58,13 +58,10 @@ function getTestJsonFullBlockRegex(): RegExp {
 
 export function extractTestJsonPayload(markdown: string): string | null {
   const text = normalize(markdown);
-  const start = text.indexOf('```testjson');
-  if (start < 0) return null;
-  const afterFenceNl = text.indexOf('\n', start);
-  if (afterFenceNl < 0) return null;
-  const endFence = text.indexOf('\n```', afterFenceNl + 1);
-  if (endFence < 0) return null;
-  const payload = text.slice(afterFenceNl + 1, endFence).trim();
+  // Support indented fences and trailing spaces: many editors nest blocks under list items.
+  const m = text.match(/^[ \t]*```testjson[^\n]*\n([\s\S]*?)\n[ \t]*```/m);
+  if (!m) return null;
+  const payload = String(m[1] || '').trim();
   return payload || null;
 }
 

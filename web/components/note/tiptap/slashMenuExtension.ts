@@ -2,6 +2,7 @@
 
 import { Extension } from '@tiptap/core';
 import { Plugin, PluginKey } from '@tiptap/pm/state';
+import { NOTE_SLASH_EVENT } from '@/components/note/slash/constants';
 
 export const SlashMenuExtension = Extension.create({
   name: 'slashMenu',
@@ -19,7 +20,7 @@ export const SlashMenuExtension = Extension.create({
               const pos = sel.from;
               const coords = view.coordsAtPos(pos);
               window.dispatchEvent(
-                new CustomEvent('note:slash', {
+                new CustomEvent(NOTE_SLASH_EVENT, {
                   detail: { x: coords.left, y: coords.bottom, pos },
                 }),
               );

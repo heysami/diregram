@@ -77,6 +77,9 @@ export function useNoteEditor(opts: {
           class: [
             'min-h-[70vh] outline-none focus:outline-none',
             'max-w-none',
+            // Scroll buffers so first/last line can sit ~mid-viewport (Notion-like).
+            'pt-[max(50vh,240px)]',
+            'pb-[max(50vh,240px)]',
             // Typography-like spacing
             '[&_p]:my-2 [&_p]:leading-relaxed',
             '[&_h1]:mt-6 [&_h1]:mb-3 [&_h1]:text-3xl [&_h1]:font-bold [&_h1]:tracking-tight',

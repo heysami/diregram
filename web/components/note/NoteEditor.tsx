@@ -110,6 +110,7 @@ export function NoteEditor({
   }, []);
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  const didInitScrollPaddingRef = useRef(false);
   const didHydrateRef = useRef(false);
   const [hydrated, setHydrated] = useState(false);
   const exportTimerRef = useRef<number | null>(null);
@@ -440,6 +441,30 @@ export function NoteEditor({
   }, [editor, editor?.state.doc]);
 
   const [activeHeadingIdx, setActiveHeadingIdx] = useState<number>(-1);
+  // We use a large top padding on the ProseMirror root so "scroll to heading" can center even near the top.
+  // To avoid showing a huge blank area on initial load, start the scroll position at the padding amount.
+  useEffect(() => {
+    if (!editor) return;
+    if (editorViewReadyTick <= 0) return;
+    const root = scrollRef.current;
+    if (!root) return;
+    if (didInitScrollPaddingRef.current) return;
+    if (root.scrollTop > 0) {
+      didInitScrollPaddingRef.current = true;
+      return;
+    }
+    try {
+      const dom = editor.view.dom as HTMLElement | null;
+      if (!dom) return;
+      const ptRaw = window.getComputedStyle(dom).paddingTop || '0px';
+      const pt = Number.parseFloat(ptRaw) || 0;
+      if (pt > 0) root.scrollTop = pt;
+    } catch {
+      // ignore
+    } finally {
+      didInitScrollPaddingRef.current = true;
+    }
+  }, [editor, editorViewReadyTick]);
   useEffect(() => {
     if (!editor) return;
     const root = scrollRef.current;
@@ -477,9 +502,30 @@ export function NoteEditor({
     editor.commands.setTextSelection(pos);
     editor.commands.focus();
     try {
-      const hs = Array.from(editor.view.dom.querySelectorAll('h1,h2,h3,h4,h5,h6')) as HTMLElement[];
-      const el = hs[idx] || null;
-      el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      // Defer to next frame so our centering wins over any selection auto-scroll.
+      window.requestAnimationFrame(() => {
+        try {
+          const hs = Array.from(editor.view.dom.querySelectorAll('h1,h2,h3,h4,h5,h6')) as HTMLElement[];
+          const el = hs[idx] || null;
+          const root = scrollRef.current;
+          if (!el) return;
+          if (!root) {
+            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            return;
+          }
+
+          const elRect = el.getBoundingClientRect();
+          const desiredCenterY = (window.innerHeight || 0) / 2;
+          const currentCenterY = elRect.top + elRect.height / 2;
+          const delta = currentCenterY - desiredCenterY;
+
+          const maxTop = Math.max(0, root.scrollHeight - root.clientHeight);
+          const nextTop = Math.min(maxTop, Math.max(0, root.scrollTop + delta));
+          root.scrollTo({ top: nextTop, behavior: 'smooth' });
+        } catch {
+          // ignore
+        }
+      });
     } catch {
       // ignore
     }
@@ -1021,7 +1067,8 @@ export function NoteEditor({
         open={slash.menu.open}
         x={slash.menu.x}
         y={slash.menu.y}
-        items={slashItems}
+        query={slash.query}
+        items={slash.visibleItems}
         index={slash.index}
         debugText={slash.debugText}
         errorText={slash.errorText}

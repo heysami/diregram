@@ -225,8 +225,26 @@ export const NexusEmbedNode = Node.create({
             files={files}
             loadingFiles={loading}
             initialFileId={fileId}
-            initialKind={(embedKind === 'systemflow' ? 'systemflow' : embedKind === 'dataObjects' ? 'dataObjects' : 'canvas') as any}
-            initialRootFocusId={typeof spec?.rootFocusId === 'string' ? spec.rootFocusId : undefined}
+            initialKind={
+              (embedKind === 'systemflow'
+                ? 'systemflow'
+                : embedKind === 'dataObjects'
+                  ? 'dataObjects'
+                  : embedKind === 'flowTab'
+                    ? 'flowTab'
+                    : embedKind === 'processFlow'
+                      ? 'processFlow'
+                      : 'canvas') as any
+            }
+            initialRootFocusId={
+              typeof spec?.rootFocusId === 'string'
+                ? spec.rootFocusId
+                : typeof (spec as any)?.rootId === 'string'
+                  ? String((spec as any).rootId)
+                  : typeof (spec as any)?.rootProcessNodeId === 'string'
+                    ? String((spec as any).rootProcessNodeId)
+                    : undefined
+            }
             initialSystemFlowRef={typeof spec?.ref === 'string' ? spec.ref : undefined}
             onClose={() => setShowLinkModal(false)}
             onApply={(res) => {
@@ -239,16 +257,41 @@ export const NexusEmbedNode = Node.create({
                 base.kind = 'systemflow';
                 base.ref = res.ref;
                 delete base.rootFocusId;
+                delete (base as any).fid;
+                delete (base as any).rootId;
+                delete (base as any).rootProcessNodeId;
+                delete base.cardId;
+              } else if (res.kind === 'flowTab') {
+                base.kind = 'flowTab';
+                (base as any).fid = res.fid;
+                (base as any).rootId = res.rootId;
+                delete base.ref;
+                delete base.rootFocusId;
+                delete (base as any).rootProcessNodeId;
+                delete base.cardId;
+              } else if (res.kind === 'processFlow') {
+                base.kind = 'processFlow';
+                (base as any).rootProcessNodeId = res.rootProcessNodeId;
+                delete base.ref;
+                delete (base as any).fid;
+                delete (base as any).rootId;
+                delete base.rootFocusId;
                 delete base.cardId;
               } else if (res.kind === 'dataObjects') {
                 base.kind = 'dataObjects';
                 delete base.ref;
                 delete base.rootFocusId;
+                delete (base as any).fid;
+                delete (base as any).rootId;
+                delete (base as any).rootProcessNodeId;
                 delete base.cardId;
               } else {
-                // canvas or flow subtree are both rendered via NexusCanvas
+                // canvas
                 base.kind = 'canvas';
                 delete base.ref;
+                delete (base as any).fid;
+                delete (base as any).rootId;
+                delete (base as any).rootProcessNodeId;
                 delete base.cardId;
                 if ((res as any).rootFocusId) base.rootFocusId = (res as any).rootFocusId;
                 else delete base.rootFocusId;

@@ -739,3 +739,41 @@ html[data-theme="mac3"] select:focus {
 .animate-shake {
   animation: shake 0.4s ease-in-out;
 }
+
+.ProseMirror [data-type="taskList"],
+[data-type="taskList"] {
+  list-style: none;
+  padding-left: 0 !important;
+  margin-left: 0 !important;
+}
+
+/* Runtime evidence: our TaskItem <li> uses data-checked but NOT data-type="taskItem".
+   So style task items by scoping to the taskList container. */
+.ProseMirror ul[data-type="taskList"] > li,
+ul[data-type="taskList"] > li {
+  list-style: none !important;
+  display: flex !important;
+  flex-direction: row !important;
+  flex-wrap: nowrap !important;
+  align-items: flex-start !important;
+  gap: 0.5rem !important;
+}
+
+.ProseMirror ul[data-type="taskList"] > li > label,
+ul[data-type="taskList"] > li > label {
+  margin-top: 3px !important;
+  flex: 0 0 auto !important;
+  display: flex !important;
+  align-items: flex-start !important;
+}
+
+.ProseMirror ul[data-type="taskList"] > li > div,
+ul[data-type="taskList"] > li > div {
+  flex: 1 1 auto !important;
+  min-width: 0 !important;
+}
+
+.ProseMirror ul[data-type="taskList"] > li p,
+ul[data-type="taskList"] > li p {
+  margin: 0 !important;
+}

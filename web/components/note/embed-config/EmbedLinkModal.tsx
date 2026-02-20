@@ -6,13 +6,14 @@ import { WorkspaceFilePicker } from '@/components/note/embed-config/WorkspaceFil
 import { useFileMarkdown } from '@/components/note/embed-config/useFileMarkdown';
 import { buildDiagramIndexFromMarkdown } from '@/components/note/embed-config/diagramIndex';
 
-export type EmbedLinkKind = 'canvas' | 'flowSubtree' | 'systemflow' | 'dataObjects';
+export type EmbedLinkKind = 'canvas' | 'flowTab' | 'processFlow' | 'systemflow' | 'dataObjects';
 
 export type EmbedLinkResult =
   | { kind: 'canvas'; fileId: string | null; rootFocusId?: string }
   | { kind: 'systemflow'; fileId: string | null; ref: string }
   | { kind: 'dataObjects'; fileId: string | null }
-  | { kind: 'flowSubtree'; fileId: string | null; rootFocusId: string };
+  | { kind: 'flowTab'; fileId: string | null; fid: string; rootId: string }
+  | { kind: 'processFlow'; fileId: string | null; rootProcessNodeId: string };
 
 export function EmbedLinkModal({
   open,
@@ -40,6 +41,8 @@ export function EmbedLinkModal({
   const [kind, setKind] = useState<EmbedLinkKind>(initialKind);
   const [rootFocusId, setRootFocusId] = useState<string>(initialRootFocusId || '');
   const [systemFlowRef, setSystemFlowRef] = useState<string>(initialSystemFlowRef || '');
+  const [flowTabRootId, setFlowTabRootId] = useState<string>('');
+  const [processFlowRootId, setProcessFlowRootId] = useState<string>('');
 
   // Require selecting a diagram file before configuring the embed.
   useEffect(() => {
@@ -47,6 +50,15 @@ export function EmbedLinkModal({
     if (!fileId) setShowPicker(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+
+  // Best-effort: seed the correct picker based on the initial spec.
+  useEffect(() => {
+    if (!open) return;
+    const seed = String(initialRootFocusId || '').trim();
+    if (!seed) return;
+    if (kind === 'flowTab' && !flowTabRootId) setFlowTabRootId(seed);
+    if (kind === 'processFlow' && !processFlowRootId) setProcessFlowRootId(seed);
+  }, [open, kind, initialRootFocusId, flowTabRootId, processFlowRootId]);
 
   const { markdown, loading: loadingMd } = useFileMarkdown(fileId);
   const idx = useMemo(() => buildDiagramIndexFromMarkdown(markdown), [markdown]);
@@ -71,10 +83,19 @@ export function EmbedLinkModal({
       onApply({ kind: 'dataObjects', fileId });
       return;
     }
-    if (kind === 'flowSubtree') {
-      const rid = rootFocusId.trim();
+    if (kind === 'flowTab') {
+      const rid = flowTabRootId.trim();
       if (!rid) return;
-      onApply({ kind: 'flowSubtree', fileId, rootFocusId: rid });
+      const rec = idx.flowRoots.find((r) => r.id === rid) || null;
+      const fid = String(rec?.fid || '').trim();
+      if (!fid) return;
+      onApply({ kind: 'flowTab', fileId, fid, rootId: rid });
+      return;
+    }
+    if (kind === 'processFlow') {
+      const rid = processFlowRootId.trim();
+      if (!rid) return;
+      onApply({ kind: 'processFlow', fileId, rootProcessNodeId: rid });
       return;
     }
     // canvas
@@ -118,11 +139,19 @@ export function EmbedLinkModal({
             </button>
             <button
               type="button"
-              className={`mac-btn h-7 ${kind === 'flowSubtree' ? 'mac-btn--primary' : ''}`}
-              onClick={() => setKind('flowSubtree')}
-              title="Pick a Flow tab root and embed just that subtree"
+              className={`mac-btn h-7 ${kind === 'flowTab' ? 'mac-btn--primary' : ''}`}
+              onClick={() => setKind('flowTab')}
+              title="Embed a Flow tab swimlane"
             >
-              Flow
+              Swimlane flow
+            </button>
+            <button
+              type="button"
+              className={`mac-btn h-7 ${kind === 'processFlow' ? 'mac-btn--primary' : ''}`}
+              onClick={() => setKind('processFlow')}
+              title="Embed a main-canvas #flow# process tree"
+            >
+              Process flow
             </button>
             <button
               type="button"
@@ -184,10 +213,10 @@ export function EmbedLinkModal({
             </div>
           ) : null}
 
-          {kind === 'flowSubtree' ? (
+          {kind === 'flowTab' ? (
             <div>
-              <div className="text-xs font-semibold mb-2">Pick a flow root</div>
-              <select className="mac-field h-8 w-full" value={rootFocusId} onChange={(e) => setRootFocusId(e.target.value)}>
+              <div className="text-xs font-semibold mb-2">Pick a swimlane flow</div>
+              <select className="mac-field h-8 w-full" value={flowTabRootId} onChange={(e) => setFlowTabRootId(e.target.value)}>
                 <option value="">Select…</option>
                 {idx.flowRoots.map((r) => (
                   <option key={r.id} value={r.id}>
@@ -196,6 +225,21 @@ export function EmbedLinkModal({
                 ))}
               </select>
               {idx.flowRoots.length === 0 ? <div className="mt-2 text-xs text-slate-500">No flow roots found.</div> : null}
+            </div>
+          ) : null}
+
+          {kind === 'processFlow' ? (
+            <div>
+              <div className="text-xs font-semibold mb-2">Pick a process flow root</div>
+              <select className="mac-field h-8 w-full" value={processFlowRootId} onChange={(e) => setProcessFlowRootId(e.target.value)}>
+                <option value="">Select…</option>
+                {idx.processFlowRoots.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.label}
+                  </option>
+                ))}
+              </select>
+              {idx.processFlowRoots.length === 0 ? <div className="mt-2 text-xs text-slate-500">No process flows found.</div> : null}
             </div>
           ) : null}
 

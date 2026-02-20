@@ -37,6 +37,7 @@ export function SystemFlowEditor({
   activeTool,
   showComments,
   showAnnotations,
+  embedded = false,
   onOpenComments,
   presence,
   templateScope,
@@ -52,6 +53,8 @@ export function SystemFlowEditor({
   activeTool: ToolType;
   showComments: boolean;
   showAnnotations: boolean;
+  /** When true, hides editor chrome (toolstrip/right panel/template actions). */
+  embedded?: boolean;
   onOpenComments?: (info: { targetKey: string; targetLabel?: string; scrollToThreadId?: string }) => void;
   presence?: PresenceController | null;
   templateScope?: 'project' | 'account' | 'global';
@@ -744,27 +747,29 @@ export function SystemFlowEditor({
 
   return (
     <div className="absolute inset-0 flex flex-col">
-      <div className="mac-toolstrip justify-between">
-        <div />
+      {!embedded ? (
+        <div className="mac-toolstrip justify-between">
+          <div />
 
-        <div className="flex items-center gap-2 text-xs">
-          <div className="mac-double-outline px-2 py-1">
-            Grid: <span className="font-semibold">{state.gridWidth}</span>×<span className="font-semibold">{state.gridHeight}</span>
+          <div className="flex items-center gap-2 text-xs">
+            <div className="mac-double-outline px-2 py-1">
+              Grid: <span className="font-semibold">{state.gridWidth}</span>×<span className="font-semibold">{state.gridHeight}</span>
+            </div>
+            <button type="button" className="mac-btn" onClick={() => commitGridSize(+1, 0)} title="Add column">
+              +Col
+            </button>
+            <button type="button" className="mac-btn" onClick={() => commitGridSize(-1, 0)} title="Remove column">
+              -Col
+            </button>
+            <button type="button" className="mac-btn" onClick={() => commitGridSize(0, +1)} title="Add row">
+              +Row
+            </button>
+            <button type="button" className="mac-btn" onClick={() => commitGridSize(0, -1)} title="Remove row">
+              -Row
+            </button>
           </div>
-          <button type="button" className="mac-btn" onClick={() => commitGridSize(+1, 0)} title="Add column">
-            +Col
-          </button>
-          <button type="button" className="mac-btn" onClick={() => commitGridSize(-1, 0)} title="Remove column">
-            -Col
-          </button>
-          <button type="button" className="mac-btn" onClick={() => commitGridSize(0, +1)} title="Add row">
-            +Row
-          </button>
-          <button type="button" className="mac-btn" onClick={() => commitGridSize(0, -1)} title="Remove row">
-            -Row
-          </button>
         </div>
-      </div>
+      ) : null}
 
       <div className="flex-1 relative overflow-hidden">
         <div
@@ -1308,18 +1313,19 @@ export function SystemFlowEditor({
         </div>
 
         {/* Floating right panel (compact) */}
-        <div className="absolute right-4 top-4 pointer-events-none">
-          <div
-            className="mac-window w-[260px] overflow-hidden pointer-events-auto"
-            data-safe-panel="right"
-            data-safe-panel-view="systemFlow"
-          >
-            <div className="mac-titlebar">
-              <div className="mac-title">
-                {selectedBox ? 'Box' : selectedLink ? 'Link' : selectedZone ? 'Zone' : steps.length ? 'Steps' : 'System Flow'}
+        {!embedded ? (
+          <div className="absolute right-4 top-4 pointer-events-none">
+            <div
+              className="mac-window w-[260px] overflow-hidden pointer-events-auto"
+              data-safe-panel="right"
+              data-safe-panel-view="systemFlow"
+            >
+              <div className="mac-titlebar">
+                <div className="mac-title">
+                  {selectedBox ? 'Box' : selectedLink ? 'Link' : selectedZone ? 'Zone' : steps.length ? 'Steps' : 'System Flow'}
+                </div>
               </div>
-            </div>
-            <div className="p-3 overflow-auto" style={{ maxHeight: selectedBox || selectedLink ? '70vh' : '240px' }}>
+              <div className="p-3 overflow-auto" style={{ maxHeight: selectedBox || selectedLink ? '70vh' : '240px' }}>
               {mode === 'link' ? (
                 <div className="text-xs text-slate-600">
                   Click a <span className="font-semibold">source</span> box, then a <span className="font-semibold">target</span> box to create an L-shaped link.
@@ -1623,52 +1629,57 @@ export function SystemFlowEditor({
                   )}
                 </div>
               )}
+              </div>
             </div>
           </div>
-        </div>
+        ) : null}
 
-        <InsertFromTemplateModal
-          open={insertFromTemplateOpen}
-          title="Insert system flow box"
-          files={templateFiles || []}
-          loadMarkdown={loadTemplateMarkdown || (async () => '')}
-          accept={{ targetKind: 'diagram', mode: 'appendFragment', fragmentKind: 'systemFlowBox' }}
-          scope={
-            templateScope && onTemplateScopeChange
-              ? {
-                  value: templateScope,
-                  options: [
-                    { id: 'project', label: 'This project' },
-                    { id: 'account', label: 'Account' },
-                    ...(globalTemplatesEnabled ? [{ id: 'global', label: 'Global' }] : []),
-                  ],
-                  onChange: (next) => onTemplateScopeChange(next as any),
-                }
-              : undefined
-          }
-          onClose={() => setInsertFromTemplateOpen(false)}
-          onInsert={async ({ content }) => {
-            const tpl = parseSystemFlowBoxTemplate(content);
-            insertBoxFromTemplate(tpl);
-          }}
-        />
+        {!embedded ? (
+          <InsertFromTemplateModal
+            open={insertFromTemplateOpen}
+            title="Insert system flow box"
+            files={templateFiles || []}
+            loadMarkdown={loadTemplateMarkdown || (async () => '')}
+            accept={{ targetKind: 'diagram', mode: 'appendFragment', fragmentKind: 'systemFlowBox' }}
+            scope={
+              templateScope && onTemplateScopeChange
+                ? {
+                    value: templateScope,
+                    options: [
+                      { id: 'project', label: 'This project' },
+                      { id: 'account', label: 'Account' },
+                      ...(globalTemplatesEnabled ? [{ id: 'global', label: 'Global' }] : []),
+                    ],
+                    onChange: (next) => onTemplateScopeChange(next as any),
+                  }
+                : undefined
+            }
+            onClose={() => setInsertFromTemplateOpen(false)}
+            onInsert={async ({ content }) => {
+              const tpl = parseSystemFlowBoxTemplate(content);
+              insertBoxFromTemplate(tpl);
+            }}
+          />
+        ) : null}
 
-        <SaveTemplateModal
-          open={saveTemplateOpen}
-          title="Save template"
-          defaultName={pendingTemplateDefaultName}
-          defaultScope="project"
-          onClose={() => setSaveTemplateOpen(false)}
-          onSave={async ({ name, scope }) => {
-            if (!onSaveTemplateFile) throw new Error('Template saving unavailable.');
-            if (!pendingTemplatePayload || !pendingTemplateHeaderBase) throw new Error('No template content to save.');
-            const header: NexusTemplateHeader = { ...pendingTemplateHeaderBase, name };
-            const content = upsertTemplateHeader(pendingTemplatePayload, header);
-            await onSaveTemplateFile({ name, content, scope });
-            setPendingTemplatePayload(null);
-            setPendingTemplateHeaderBase(null);
-          }}
-        />
+        {!embedded ? (
+          <SaveTemplateModal
+            open={saveTemplateOpen}
+            title="Save template"
+            defaultName={pendingTemplateDefaultName}
+            defaultScope="project"
+            onClose={() => setSaveTemplateOpen(false)}
+            onSave={async ({ name, scope }) => {
+              if (!onSaveTemplateFile) throw new Error('Template saving unavailable.');
+              if (!pendingTemplatePayload || !pendingTemplateHeaderBase) throw new Error('No template content to save.');
+              const header: NexusTemplateHeader = { ...pendingTemplateHeaderBase, name };
+              const content = upsertTemplateHeader(pendingTemplatePayload, header);
+              await onSaveTemplateFile({ name, content, scope });
+              setPendingTemplatePayload(null);
+              setPendingTemplateHeaderBase(null);
+            }}
+          />
+        ) : null}
       </div>
     </div>
   );
