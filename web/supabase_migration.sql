@@ -135,6 +135,11 @@ create policy "Users can update owned or shared(edit) folders" on public.folders
   using (auth.uid() = owner_id or public.access_can_edit(access))
   with check (auth.uid() = owner_id or public.access_can_edit(access));
 
+drop policy if exists "Users can delete owned or shared(edit) folders" on public.folders;
+create policy "Users can delete owned or shared(edit) folders" on public.folders
+  for delete
+  using (auth.uid() = owner_id or public.access_can_edit(access));
+
 -- 5) Files (Maps): ensure metadata + access column + RLS policies
 alter table public.files add column if not exists room_name text;
 alter table public.files add column if not exists last_opened_at timestamptz;

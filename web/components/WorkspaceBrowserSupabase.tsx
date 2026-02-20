@@ -437,8 +437,13 @@ export function WorkspaceBrowserSupabase() {
     const { count, error: cntErr } = await supabase.from('files').select('id', { count: 'exact', head: true }).eq('folder_id', folderId);
     if (cntErr) return showToast(cntErr.message);
     if ((count || 0) > 0) return;
-    const { error: delErr } = await supabase.from('folders').delete().eq('id', folderId);
+    const { data, error: delErr } = await supabase.from('folders').delete().eq('id', folderId).select('id');
     if (delErr) return showToast(delErr.message);
+    const deletedCount = Array.isArray(data) ? data.length : data ? 1 : 0;
+    if (deletedCount <= 0) {
+      showToast('Could not delete (insufficient permission).');
+      return;
+    }
     setFolders((prev) => prev.filter((f) => f.id !== folderId));
     setFiles((prev) => prev.filter((f) => f.folder_id !== folderId));
     showToast('Deleted');
