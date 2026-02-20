@@ -1,0 +1,1106 @@
+use std::collections::HashMap;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::sync::{mpsc, Mutex};
+
+use chrono::{DateTime, Utc};
+use notify::{RecursiveMode, Watcher};
+use once_cell::sync::Lazy;
+use reqwest::header::{HeaderMap, HeaderValue};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use walkdir::WalkDir;
+
+static WATCH_STATE: Lazy<Mutex<Option<WatchState>>> = Lazy::new(|| Mutex::new(None));
+static PULL_STATE: Lazy<Mutex<Option<PullState>>> = Lazy::new(|| Mutex::new(None));
+
+struct WatchState {
+  _watcher: notify::RecommendedWatcher,
+  stop_tx: mpsc::Sender<()>,
+}
+
+struct PullState {
+  stop_tx: mpsc::Sender<()>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SyncMappingV1 {
+  pub version: u32,
+  pub vault_path: String,
+  pub project_folder_id: String,
+  pub created_at: String,
+  pub updated_at: String,
+  #[serde(default)]
+  pub last_pull_at: String,
+  /// Relative folder path (posix-style) -> supabase folder UUID.
+  pub folders: HashMap<String, String>,
+  /// Relative file path (posix-style) -> remote mapping.
+  pub files: HashMap<String, FileMappingV1>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct FileMappingV1 {
+  pub file_id: String,
+  pub folder_id: String,
+  pub kind: String,
+  pub local_hash: String,
+  pub remote_updated_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SupabaseAuth {
+  pub supabase_url: String,
+  pub supabase_anon_key: String,
+  pub access_token: String,
+  pub owner_id: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct SyncSummary {
+  pub folders_created: u32,
+  pub folders_reused: u32,
+  pub files_created: u32,
+  pub files_updated: u32,
+  pub files_skipped: u32,
+  pub errors: Vec<String>,
+}
+
+fn now_iso() -> String {
+  DateTime::<Utc>::from(Utc::now()).to_rfc3339()
+}
+
+fn nexusmap_dir(vault_path: &str) -> PathBuf {
+  Path::new(vault_path).join(".nexusmap")
+}
+
+fn mapping_path(vault_path: &str) -> PathBuf {
+  nexusmap_dir(vault_path).join("sync.json")
+}
+
+fn events_path(vault_path: &str) -> PathBuf {
+  nexusmap_dir(vault_path).join("events.jsonl")
+}
+
+fn trash_dir(vault_path: &str) -> PathBuf {
+  nexusmap_dir(vault_path).join("trash")
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SyncEvent {
+  pub ts: String,
+  pub kind: String,
+  pub path: String,
+  pub detail: String,
+}
+
+fn append_event(vault_path: &str, ev: &SyncEvent) -> Result<(), String> {
+  fs::create_dir_all(nexusmap_dir(vault_path)).map_err(|e| e.to_string())?;
+  let p = events_path(vault_path);
+  let mut f = OpenOptions::new()
+    .create(true)
+    .append(true)
+    .open(&p)
+    .map_err(|e| e.to_string())?;
+  let line = serde_json::to_string(ev).map_err(|e| e.to_string())?;
+  writeln!(f, "{}", line).map_err(|e| e.to_string())
+}
+
+fn read_events(vault_path: &str, limit: usize) -> Result<Vec<SyncEvent>, String> {
+  let p = events_path(vault_path);
+  if !p.exists() {
+    return Ok(vec![]);
+  }
+  let text = fs::read_to_string(&p).map_err(|e| e.to_string())?;
+  let mut out: Vec<SyncEvent> = Vec::new();
+  for line in text.lines().rev().take(limit) {
+    if let Ok(ev) = serde_json::from_str::<SyncEvent>(line) {
+      out.push(ev);
+    }
+  }
+  out.reverse();
+  Ok(out)
+}
+
+fn read_mapping(vault_path: &str) -> Result<Option<SyncMappingV1>, String> {
+  let p = mapping_path(vault_path);
+  if !p.exists() {
+    return Ok(None);
+  }
+  let text = fs::read_to_string(&p).map_err(|e| e.to_string())?;
+  let m: SyncMappingV1 = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+  Ok(Some(m))
+}
+
+fn write_mapping(vault_path: &str, mapping: &SyncMappingV1) -> Result<(), String> {
+  let dir = nexusmap_dir(vault_path);
+  fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+  let p = mapping_path(vault_path);
+  let text = serde_json::to_string_pretty(mapping).map_err(|e| e.to_string())?;
+  fs::write(&p, text).map_err(|e| e.to_string())
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+  let mut hasher = Sha256::new();
+  hasher.update(bytes);
+  let out = hasher.finalize();
+  format!("{:x}", out)
+}
+
+fn to_rel_posix(root: &Path, p: &Path) -> Option<String> {
+  let rel = p.strip_prefix(root).ok()?;
+  let s = rel
+    .components()
+    .map(|c| c.as_os_str().to_string_lossy().to_string())
+    .collect::<Vec<_>>()
+    .join("/");
+  Some(s)
+}
+
+fn detect_kind(markdown: &str) -> String {
+  // Default: note (portable).
+  // If a nexus-doc header exists, honor its `kind` field.
+  if let Some(start) = markdown.find("```nexus-doc") {
+    let after_start = &markdown[start + "```nexus-doc".len()..];
+    if let Some(end) = after_start.find("\n```") {
+      let json_text = after_start[..end].trim();
+      if let Ok(v) = serde_json::from_str::<serde_json::Value>(json_text) {
+        if let Some(kind) = v.get("kind").and_then(|k| k.as_str()) {
+          return kind.to_string();
+        }
+      }
+    }
+  }
+
+  "note".to_string()
+}
+
+fn supabase_headers(auth: &SupabaseAuth) -> Result<HeaderMap, String> {
+  let mut h = HeaderMap::new();
+  h.insert("apikey", HeaderValue::from_str(&auth.supabase_anon_key).map_err(|e| e.to_string())?);
+  h.insert(
+    "Authorization",
+    HeaderValue::from_str(&format!("Bearer {}", auth.access_token)).map_err(|e| e.to_string())?,
+  );
+  Ok(h)
+}
+
+fn rest_base(auth: &SupabaseAuth) -> String {
+  format!("{}/rest/v1", auth.supabase_url.trim_end_matches('/'))
+}
+
+#[derive(Debug, Deserialize)]
+struct FolderRow {
+  id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct FileRow {
+  id: String,
+  updated_at: Option<String>,
+}
+
+async fn find_folder_id(client: &reqwest::Client, auth: &SupabaseAuth, parent_id: Option<&str>, name: &str) -> Result<Option<String>, String> {
+  let mut url = reqwest::Url::parse(&format!("{}/folders", rest_base(auth))).map_err(|e| e.to_string())?;
+  {
+    let mut q = url.query_pairs_mut();
+    q.append_pair("select", "id");
+    q.append_pair("name", &format!("eq.{}", name));
+    match parent_id {
+      Some(pid) => q.append_pair("parent_id", &format!("eq.{}", pid)),
+      None => q.append_pair("parent_id", "is.null"),
+    };
+    q.append_pair("limit", "1");
+  }
+
+  let res = client
+    .get(url)
+    .headers(supabase_headers(auth)?)
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+
+  if !res.status().is_success() {
+    return Err(format!("folder lookup failed: HTTP {}", res.status()));
+  }
+
+  let rows: Vec<FolderRow> = res.json().await.map_err(|e| e.to_string())?;
+  Ok(rows.into_iter().next().map(|r| r.id))
+}
+
+async fn create_folder(client: &reqwest::Client, auth: &SupabaseAuth, parent_id: Option<&str>, name: &str) -> Result<String, String> {
+  let url = format!("{}/folders", rest_base(auth));
+  let body = serde_json::json!({
+    "name": name,
+    "owner_id": auth.owner_id,
+    "parent_id": parent_id
+  });
+
+  let res = client
+    .post(url)
+    .headers(supabase_headers(auth)?)
+    .header("Prefer", "return=representation")
+    .json(&body)
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+
+  if !res.status().is_success() {
+    return Err(format!("folder create failed: HTTP {}", res.status()));
+  }
+
+  let rows: Vec<FolderRow> = res.json().await.map_err(|e| e.to_string())?;
+  rows
+    .into_iter()
+    .next()
+    .map(|r| r.id)
+    .ok_or_else(|| "folder create: empty response".to_string())
+}
+
+async fn ensure_folder_path(
+  client: &reqwest::Client,
+  auth: &SupabaseAuth,
+  mapping: &mut SyncMappingV1,
+  summary: &mut SyncSummary,
+  rel_folder_path: &str,
+) -> Result<String, String> {
+  if rel_folder_path.trim().is_empty() {
+    return Ok(mapping.project_folder_id.clone());
+  }
+
+  let mut parent_id = mapping.project_folder_id.clone();
+  let mut current_rel = String::new();
+
+  for seg in rel_folder_path.split('/').filter(|s| !s.is_empty()) {
+    let next_rel = if current_rel.is_empty() {
+      seg.to_string()
+    } else {
+      format!("{}/{}", current_rel, seg)
+    };
+
+    if let Some(id) = mapping.folders.get(&next_rel) {
+      parent_id = id.clone();
+      current_rel = next_rel;
+      continue;
+    }
+
+    if let Some(found) = find_folder_id(client, auth, Some(&parent_id), seg).await? {
+      mapping.folders.insert(next_rel.clone(), found.clone());
+      summary.folders_reused += 1;
+      parent_id = found;
+      current_rel = next_rel;
+      continue;
+    }
+
+    let created = create_folder(client, auth, Some(&parent_id), seg).await?;
+    mapping.folders.insert(next_rel.clone(), created.clone());
+    summary.folders_created += 1;
+    parent_id = created;
+    current_rel = next_rel;
+  }
+
+  Ok(parent_id)
+}
+
+async fn find_file_id(client: &reqwest::Client, auth: &SupabaseAuth, folder_id: &str, name: &str) -> Result<Option<String>, String> {
+  let mut url = reqwest::Url::parse(&format!("{}/files", rest_base(auth))).map_err(|e| e.to_string())?;
+  {
+    let mut q = url.query_pairs_mut();
+    q.append_pair("select", "id");
+    q.append_pair("folder_id", &format!("eq.{}", folder_id));
+    q.append_pair("name", &format!("eq.{}", name));
+    q.append_pair("limit", "1");
+  }
+
+  let res = client
+    .get(url)
+    .headers(supabase_headers(auth)?)
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+
+  if !res.status().is_success() {
+    return Err(format!("file lookup failed: HTTP {}", res.status()));
+  }
+
+  let rows: Vec<FileRow> = res.json().await.map_err(|e| e.to_string())?;
+  Ok(rows.into_iter().next().map(|r| r.id))
+}
+
+async fn create_file(
+  client: &reqwest::Client,
+  auth: &SupabaseAuth,
+  folder_id: &str,
+  name: &str,
+  kind: &str,
+  content: &str,
+  updated_at: &str,
+) -> Result<FileRow, String> {
+  let url = format!("{}/files", rest_base(auth));
+  let body = serde_json::json!({
+    "name": name,
+    "folder_id": folder_id,
+    "owner_id": auth.owner_id,
+    "kind": kind,
+    "content": content,
+    "updated_at": updated_at
+  });
+
+  let res = client
+    .post(url)
+    .headers(supabase_headers(auth)?)
+    .header("Prefer", "return=representation")
+    .json(&body)
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+
+  if !res.status().is_success() {
+    return Err(format!("file create failed: HTTP {}", res.status()));
+  }
+
+  let rows: Vec<FileRow> = res.json().await.map_err(|e| e.to_string())?;
+  rows
+    .into_iter()
+    .next()
+    .ok_or_else(|| "file create: empty response".to_string())
+}
+
+async fn update_file(
+  client: &reqwest::Client,
+  auth: &SupabaseAuth,
+  file_id: &str,
+  kind: &str,
+  content: &str,
+  updated_at: &str,
+) -> Result<FileRow, String> {
+  let mut url = reqwest::Url::parse(&format!("{}/files", rest_base(auth))).map_err(|e| e.to_string())?;
+  url
+    .query_pairs_mut()
+    .append_pair("id", &format!("eq.{}", file_id));
+
+  let body = serde_json::json!({
+    "kind": kind,
+    "content": content,
+    "updated_at": updated_at
+  });
+
+  let res = client
+    .patch(url)
+    .headers(supabase_headers(auth)?)
+    .header("Prefer", "return=representation")
+    .json(&body)
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+
+  if !res.status().is_success() {
+    return Err(format!("file update failed: HTTP {}", res.status()));
+  }
+
+  let rows: Vec<FileRow> = res.json().await.map_err(|e| e.to_string())?;
+  rows
+    .into_iter()
+    .next()
+    .ok_or_else(|| "file update: empty response".to_string())
+}
+
+async fn delete_file(client: &reqwest::Client, auth: &SupabaseAuth, file_id: &str) -> Result<(), String> {
+  let mut url = reqwest::Url::parse(&format!("{}/files", rest_base(auth))).map_err(|e| e.to_string())?;
+  url
+    .query_pairs_mut()
+    .append_pair("id", &format!("eq.{}", file_id));
+
+  let res = client
+    .delete(url)
+    .headers(supabase_headers(auth)?)
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+
+  if !res.status().is_success() {
+    return Err(format!("file delete failed: HTTP {}", res.status()));
+  }
+  Ok(())
+}
+
+#[derive(Debug, Deserialize)]
+struct RemoteFileBackupRow {
+  id: String,
+  name: String,
+  content: Option<String>,
+}
+
+async fn fetch_file_backup(client: &reqwest::Client, auth: &SupabaseAuth, file_id: &str) -> Result<Option<RemoteFileBackupRow>, String> {
+  let mut url = reqwest::Url::parse(&format!("{}/files", rest_base(auth))).map_err(|e| e.to_string())?;
+  {
+    let mut q = url.query_pairs_mut();
+    q.append_pair("select", "id,name,content");
+    q.append_pair("id", &format!("eq.{}", file_id));
+    q.append_pair("limit", "1");
+  }
+  let res = client
+    .get(url)
+    .headers(supabase_headers(auth)?)
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+  if !res.status().is_success() {
+    return Err(format!("file backup fetch failed: HTTP {}", res.status()));
+  }
+  let rows: Vec<RemoteFileBackupRow> = res.json().await.map_err(|e| e.to_string())?;
+  Ok(rows.into_iter().next())
+}
+
+#[tauri::command]
+pub async fn sync_init(vault_path: String, project_folder_id: String) -> Result<SyncMappingV1, String> {
+  if vault_path.trim().is_empty() {
+    return Err("vault_path is required".to_string());
+  }
+  if project_folder_id.trim().is_empty() {
+    return Err("project_folder_id is required".to_string());
+  }
+
+  if let Some(existing) = read_mapping(&vault_path)? {
+    if existing.project_folder_id != project_folder_id {
+      return Err("This vault is already linked to a different NexusMap project. Remove .nexusmap/sync.json to relink.".to_string());
+    }
+    return Ok(existing);
+  }
+
+  let now = now_iso();
+  let mut folders = HashMap::new();
+  folders.insert("".to_string(), project_folder_id.clone());
+  let mapping = SyncMappingV1 {
+    version: 1,
+    vault_path: vault_path.clone(),
+    project_folder_id,
+    created_at: now.clone(),
+    updated_at: now,
+    last_pull_at: String::new(),
+    folders,
+    files: HashMap::new(),
+  };
+
+  write_mapping(&vault_path, &mapping)?;
+  Ok(mapping)
+}
+
+#[tauri::command]
+pub async fn sync_initial_import(vault_path: String, project_folder_id: String, auth: SupabaseAuth) -> Result<SyncSummary, String> {
+  let root = Path::new(&vault_path);
+  if !root.exists() {
+    return Err("vault_path does not exist".to_string());
+  }
+
+  let mut mapping = match read_mapping(&vault_path)? {
+    Some(m) => m,
+    None => sync_init(vault_path.clone(), project_folder_id.clone()).await?,
+  };
+  if mapping.project_folder_id != project_folder_id {
+    return Err("mapping project_folder_id mismatch".to_string());
+  }
+
+  let client = reqwest::Client::new();
+  let mut summary = SyncSummary::default();
+  let updated_at = now_iso();
+
+  // Ensure root mapping exists.
+  mapping.folders.insert("".to_string(), project_folder_id.clone());
+
+  for entry in WalkDir::new(root)
+    .follow_links(false)
+    .into_iter()
+    .filter_map(Result::ok)
+  {
+    let p = entry.path();
+    if p == root {
+      continue;
+    }
+
+    // Ignore internal folder
+    if p.components().any(|c| c.as_os_str() == ".nexusmap") {
+      continue;
+    }
+
+    let rel = match to_rel_posix(root, p) {
+      Some(r) => r,
+      None => continue,
+    };
+
+    if entry.file_type().is_dir() {
+      let _ = ensure_folder_path(&client, &auth, &mut mapping, &mut summary, &rel).await?;
+      continue;
+    }
+
+    // Only markdown files
+    if p.extension().and_then(|e| e.to_str()).unwrap_or("") != "md" {
+      continue;
+    }
+
+    let bytes = fs::read(p).map_err(|e| e.to_string())?;
+    let local_hash = sha256_hex(&bytes);
+    let content = String::from_utf8_lossy(&bytes).to_string();
+    let kind = detect_kind(&content);
+
+    // Determine remote folder id.
+    let parent_rel = Path::new(&rel)
+      .parent()
+      .and_then(|p| p.to_str())
+      .unwrap_or("")
+      .to_string();
+    let parent_rel = if parent_rel == "." { "".to_string() } else { parent_rel };
+    let folder_id = ensure_folder_path(&client, &auth, &mut mapping, &mut summary, &parent_rel).await?;
+
+    if let Some(prev) = mapping.files.get(&rel) {
+      if prev.local_hash == local_hash {
+        summary.files_skipped += 1;
+        continue;
+      }
+      let row = update_file(&client, &auth, &prev.file_id, &kind, &content, &updated_at).await?;
+      mapping.files.insert(
+        rel.clone(),
+        FileMappingV1 {
+          file_id: prev.file_id.clone(),
+          folder_id: folder_id.clone(),
+          kind,
+          local_hash,
+          remote_updated_at: row.updated_at.unwrap_or_else(|| updated_at.clone()),
+        },
+      );
+      summary.files_updated += 1;
+      continue;
+    }
+
+    // Try reuse an existing remote row with same name in the same folder.
+    let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("Untitled.md");
+    let file_id = match find_file_id(&client, &auth, &folder_id, name).await? {
+      Some(id) => id,
+      None => {
+        let row = create_file(&client, &auth, &folder_id, name, &kind, &content, &updated_at).await?;
+        summary.files_created += 1;
+        mapping.files.insert(
+          rel.clone(),
+          FileMappingV1 {
+            file_id: row.id.clone(),
+            folder_id: folder_id.clone(),
+            kind,
+            local_hash,
+            remote_updated_at: row.updated_at.unwrap_or_else(|| updated_at.clone()),
+          },
+        );
+        continue;
+      }
+    };
+
+    let row = update_file(&client, &auth, &file_id, &kind, &content, &updated_at).await?;
+    summary.files_updated += 1;
+    mapping.files.insert(
+      rel.clone(),
+      FileMappingV1 {
+        file_id: file_id.clone(),
+        folder_id: folder_id.clone(),
+        kind,
+        local_hash,
+        remote_updated_at: row.updated_at.unwrap_or_else(|| updated_at.clone()),
+      },
+    );
+  }
+
+  mapping.updated_at = now_iso();
+  write_mapping(&vault_path, &mapping)?;
+  Ok(summary)
+}
+
+async fn sync_one_path(vault_path: &str, project_folder_id: &str, auth: &SupabaseAuth, abs_path: &Path) -> Result<(), String> {
+  let root = Path::new(vault_path);
+  if !abs_path.starts_with(root) {
+    return Ok(());
+  }
+  if abs_path.components().any(|c| c.as_os_str() == ".nexusmap") {
+    return Ok(());
+  }
+
+  let rel = match to_rel_posix(root, abs_path) {
+    Some(r) => r,
+    None => return Ok(()),
+  };
+
+  let client = reqwest::Client::new();
+  let mut summary = SyncSummary::default();
+  let updated_at = now_iso();
+
+  let mut mapping = match read_mapping(vault_path)? {
+    Some(m) => m,
+    None => sync_init(vault_path.to_string(), project_folder_id.to_string()).await?,
+  };
+  if mapping.project_folder_id != project_folder_id {
+    return Err("mapping project_folder_id mismatch".to_string());
+  }
+  mapping.folders.insert("".to_string(), project_folder_id.to_string());
+
+  if abs_path.exists() && abs_path.is_dir() {
+    let _ = ensure_folder_path(&client, auth, &mut mapping, &mut summary, &rel).await?;
+    mapping.updated_at = now_iso();
+    write_mapping(vault_path, &mapping)?;
+    return Ok(());
+  }
+
+  // Deleted file
+  if !abs_path.exists() {
+    if let Some(prev) = mapping.files.remove(&rel) {
+      let ts = Utc::now().format("%Y-%m-%dT%H%M%SZ").to_string();
+      if let Ok(Some(bk)) = fetch_file_backup(&client, auth, &prev.file_id).await {
+        let trash_path = trash_dir(vault_path).join(&ts).join(&rel);
+        if let Some(parent) = trash_path.parent() {
+          let _ = fs::create_dir_all(parent);
+        }
+        let _ = fs::write(&trash_path, bk.content.unwrap_or_default());
+      }
+      let _ = append_event(
+        vault_path,
+        &SyncEvent {
+          ts: now_iso(),
+          kind: "delete".to_string(),
+          path: rel.clone(),
+          detail: format!("Deleted remote file_id={}", prev.file_id),
+        },
+      );
+      let _ = delete_file(&client, auth, &prev.file_id).await;
+      mapping.updated_at = now_iso();
+      write_mapping(vault_path, &mapping)?;
+    }
+    return Ok(());
+  }
+
+  // Only markdown files
+  if abs_path.extension().and_then(|e| e.to_str()).unwrap_or("") != "md" {
+    return Ok(());
+  }
+
+  let bytes = fs::read(abs_path).map_err(|e| e.to_string())?;
+  let local_hash = sha256_hex(&bytes);
+  let content = String::from_utf8_lossy(&bytes).to_string();
+  let kind = detect_kind(&content);
+
+  let parent_rel = Path::new(&rel)
+    .parent()
+    .and_then(|p| p.to_str())
+    .unwrap_or("")
+    .to_string();
+  let parent_rel = if parent_rel == "." { "".to_string() } else { parent_rel };
+  let folder_id = ensure_folder_path(&client, auth, &mut mapping, &mut summary, &parent_rel).await?;
+
+  if let Some(prev) = mapping.files.get(&rel) {
+    if prev.local_hash == local_hash {
+      return Ok(());
+    }
+    let row = update_file(&client, auth, &prev.file_id, &kind, &content, &updated_at).await?;
+    mapping.files.insert(
+      rel.clone(),
+      FileMappingV1 {
+        file_id: prev.file_id.clone(),
+        folder_id,
+        kind,
+        local_hash,
+        remote_updated_at: row.updated_at.unwrap_or_else(|| updated_at.clone()),
+      },
+    );
+    mapping.updated_at = now_iso();
+    write_mapping(vault_path, &mapping)?;
+    return Ok(());
+  }
+
+  // Insert or reuse remote file
+  let name = abs_path.file_name().and_then(|n| n.to_str()).unwrap_or("Untitled.md");
+  let file_id = match find_file_id(&client, auth, &folder_id, name).await? {
+    Some(id) => id,
+    None => {
+      let row = create_file(&client, auth, &folder_id, name, &kind, &content, &updated_at).await?;
+      mapping.files.insert(
+        rel.clone(),
+        FileMappingV1 {
+          file_id: row.id.clone(),
+          folder_id,
+          kind,
+          local_hash,
+          remote_updated_at: row.updated_at.unwrap_or_else(|| updated_at.clone()),
+        },
+      );
+      mapping.updated_at = now_iso();
+      write_mapping(vault_path, &mapping)?;
+      return Ok(());
+    }
+  };
+
+  let row = update_file(&client, auth, &file_id, &kind, &content, &updated_at).await?;
+  mapping.files.insert(
+    rel.clone(),
+    FileMappingV1 {
+      file_id: file_id.clone(),
+      folder_id,
+      kind,
+      local_hash,
+      remote_updated_at: row.updated_at.unwrap_or_else(|| updated_at.clone()),
+    },
+  );
+  mapping.updated_at = now_iso();
+  write_mapping(vault_path, &mapping)?;
+  Ok(())
+}
+
+#[tauri::command]
+pub async fn sync_watch_start(vault_path: String, project_folder_id: String, auth: SupabaseAuth) -> Result<(), String> {
+  let mut guard = WATCH_STATE.lock().map_err(|_| "watch state lock poisoned".to_string())?;
+  if guard.is_some() {
+    return Err("sync watcher already running".to_string());
+  }
+
+  let (evt_tx, evt_rx) = mpsc::channel::<Result<notify::Event, notify::Error>>();
+  let (stop_tx, stop_rx) = mpsc::channel::<()>();
+
+  let mut watcher = notify::recommended_watcher(move |res| {
+    let _ = evt_tx.send(res);
+  })
+  .map_err(|e| e.to_string())?;
+
+  watcher
+    .watch(Path::new(&vault_path), RecursiveMode::Recursive)
+    .map_err(|e| e.to_string())?;
+
+  let vault_path2 = vault_path.clone();
+  let project_folder_id2 = project_folder_id.clone();
+  let auth2 = auth.clone();
+
+  std::thread::spawn(move || {
+    loop {
+      if stop_rx.try_recv().is_ok() {
+        break;
+      }
+
+      match evt_rx.recv_timeout(std::time::Duration::from_millis(400)) {
+        Ok(Ok(event)) => {
+          for p in event.paths {
+            let _ = tauri::async_runtime::block_on(sync_one_path(
+              &vault_path2,
+              &project_folder_id2,
+              &auth2,
+              &p,
+            ));
+          }
+        }
+        Ok(Err(_e)) => {
+          // ignore watcher errors for now
+        }
+        Err(mpsc::RecvTimeoutError::Timeout) => {}
+        Err(mpsc::RecvTimeoutError::Disconnected) => break,
+      }
+    }
+  });
+
+  *guard = Some(WatchState { _watcher: watcher, stop_tx });
+  Ok(())
+}
+
+#[tauri::command]
+pub async fn sync_watch_stop() -> Result<(), String> {
+  let mut guard = WATCH_STATE.lock().map_err(|_| "watch state lock poisoned".to_string())?;
+  if let Some(st) = guard.take() {
+    let _ = st.stop_tx.send(());
+  }
+  Ok(())
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct FolderNode {
+  id: String,
+  parent_id: Option<String>,
+  name: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct RemoteFileRow {
+  id: String,
+  name: String,
+  folder_id: Option<String>,
+  content: Option<String>,
+  updated_at: Option<String>,
+  kind: Option<String>,
+}
+
+async fn fetch_all_folders(client: &reqwest::Client, auth: &SupabaseAuth) -> Result<Vec<FolderNode>, String> {
+  let mut url = reqwest::Url::parse(&format!("{}/folders", rest_base(auth))).map_err(|e| e.to_string())?;
+  {
+    let mut q = url.query_pairs_mut();
+    q.append_pair("select", "id,parent_id,name");
+    q.append_pair("limit", "10000");
+  }
+  let res = client
+    .get(url)
+    .headers(supabase_headers(auth)?)
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+  if !res.status().is_success() {
+    return Err(format!("folders fetch failed: HTTP {}", res.status()));
+  }
+  let rows: Vec<FolderNode> = res.json().await.map_err(|e| e.to_string())?;
+  Ok(rows)
+}
+
+fn compute_subtree_folder_ids(project_folder_id: &str, folders: &[FolderNode]) -> Vec<String> {
+  let mut children: HashMap<String, Vec<String>> = HashMap::new();
+  for f in folders {
+    if let Some(pid) = &f.parent_id {
+      children.entry(pid.clone()).or_default().push(f.id.clone());
+    }
+  }
+
+  let mut out = vec![project_folder_id.to_string()];
+  let mut i = 0usize;
+  while i < out.len() {
+    let cur = out[i].clone();
+    if let Some(ch) = children.get(&cur) {
+      for id in ch {
+        out.push(id.clone());
+      }
+    }
+    i += 1;
+  }
+  out
+}
+
+fn folder_rel_from_tree(project_folder_id: &str, folder_id: &str, folders_by_id: &HashMap<String, FolderNode>) -> Option<String> {
+  if folder_id == project_folder_id {
+    return Some(String::new());
+  }
+  let mut parts: Vec<String> = Vec::new();
+  let mut cur = folder_id.to_string();
+  for _ in 0..64 {
+    let node = folders_by_id.get(&cur)?;
+    parts.push(node.name.clone());
+    if let Some(pid) = &node.parent_id {
+      if pid == project_folder_id {
+        break;
+      }
+      cur = pid.clone();
+    } else {
+      return None;
+    }
+  }
+  parts.reverse();
+  Some(parts.join("/"))
+}
+
+fn reverse_file_map(mapping: &SyncMappingV1) -> HashMap<String, String> {
+  let mut out = HashMap::new();
+  for (rel, fm) in &mapping.files {
+    out.insert(fm.file_id.clone(), rel.clone());
+  }
+  out
+}
+
+async fn fetch_files_updated_since(
+  client: &reqwest::Client,
+  auth: &SupabaseAuth,
+  folder_ids: &[String],
+  since_iso: &str,
+) -> Result<Vec<RemoteFileRow>, String> {
+  let mut out: Vec<RemoteFileRow> = Vec::new();
+  let chunk_size = 40usize;
+  let base = rest_base(auth);
+
+  for chunk in folder_ids.chunks(chunk_size) {
+    let list = chunk.join(",");
+    let mut url = reqwest::Url::parse(&format!("{}/files", base)).map_err(|e| e.to_string())?;
+    {
+      let mut q = url.query_pairs_mut();
+      q.append_pair("select", "id,name,folder_id,content,updated_at,kind");
+      q.append_pair("folder_id", &format!("in.({})", list));
+      q.append_pair("updated_at", &format!("gt.{}", since_iso));
+      q.append_pair("limit", "10000");
+    }
+    let res = client
+      .get(url)
+      .headers(supabase_headers(auth)?)
+      .send()
+      .await
+      .map_err(|e| e.to_string())?;
+    if !res.status().is_success() {
+      return Err(format!("files fetch failed: HTTP {}", res.status()));
+    }
+    let mut rows: Vec<RemoteFileRow> = res.json().await.map_err(|e| e.to_string())?;
+    out.append(&mut rows);
+  }
+  Ok(out)
+}
+
+#[tauri::command]
+pub async fn sync_pull_once(vault_path: String, project_folder_id: String, auth: SupabaseAuth) -> Result<SyncSummary, String> {
+  let root = Path::new(&vault_path);
+  if !root.exists() {
+    return Err("vault_path does not exist".to_string());
+  }
+
+  let client = reqwest::Client::new();
+  let mut mapping = match read_mapping(&vault_path)? {
+    Some(m) => m,
+    None => sync_init(vault_path.clone(), project_folder_id.clone()).await?,
+  };
+  if mapping.project_folder_id != project_folder_id {
+    return Err("mapping project_folder_id mismatch".to_string());
+  }
+
+  let since = if mapping.last_pull_at.trim().is_empty() {
+    "1970-01-01T00:00:00Z".to_string()
+  } else {
+    mapping.last_pull_at.clone()
+  };
+
+  let folders = fetch_all_folders(&client, &auth).await?;
+  let folders_by_id: HashMap<String, FolderNode> = folders.into_iter().map(|f| (f.id.clone(), f)).collect();
+  let folder_vec: Vec<FolderNode> = folders_by_id.values().cloned().collect();
+  let folder_ids = compute_subtree_folder_ids(&project_folder_id, &folder_vec);
+  let remote_files = fetch_files_updated_since(&client, &auth, &folder_ids, &since).await?;
+
+  let mut summary = SyncSummary::default();
+  let by_file_id = reverse_file_map(&mapping);
+
+  for rf in remote_files {
+    let remote_updated_at = rf.updated_at.clone().unwrap_or_else(|| now_iso());
+    let remote_content = rf.content.clone().unwrap_or_default();
+    let remote_kind = rf.kind.clone().unwrap_or_else(|| "note".to_string());
+
+    let folder_id = rf.folder_id.clone().unwrap_or(project_folder_id.clone());
+    let folder_rel = mapping
+      .folders
+      .iter()
+      .find_map(|(rel, id)| if id == &folder_id { Some(rel.clone()) } else { None })
+      .or_else(|| folder_rel_from_tree(&project_folder_id, &folder_id, &folders_by_id))
+      .unwrap_or_default();
+
+    let target_dir = if folder_rel.is_empty() { root.to_path_buf() } else { root.join(&folder_rel) };
+    if let Err(e) = fs::create_dir_all(&target_dir) {
+      summary.errors.push(e.to_string());
+      continue;
+    }
+
+    let rel_path = by_file_id.get(&rf.id).cloned().unwrap_or_else(|| {
+      if folder_rel.is_empty() {
+        rf.name.clone()
+      } else {
+        format!("{}/{}", folder_rel, rf.name)
+      }
+    });
+
+    let abs_path = root.join(&rel_path);
+    let local_bytes = fs::read(&abs_path).ok();
+    let local_hash = local_bytes.as_ref().map(|b| sha256_hex(b)).unwrap_or_default();
+
+    let prev = mapping.files.get(&rel_path).cloned();
+    let prev_local_hash = prev.as_ref().map(|m| m.local_hash.clone()).unwrap_or_default();
+    let prev_remote_updated = prev.as_ref().map(|m| m.remote_updated_at.clone()).unwrap_or_default();
+
+    let local_modified = !prev_local_hash.is_empty() && local_hash != prev_local_hash;
+    let remote_newer = !prev_remote_updated.is_empty() && remote_updated_at > prev_remote_updated;
+
+    if local_modified && remote_newer {
+      // Conflict: write remote to a sibling conflict file.
+      let ts = Utc::now().format("%Y-%m-%dT%H%M%SZ").to_string();
+      let stem = abs_path.file_stem().and_then(|s| s.to_str()).unwrap_or("conflict");
+      let ext = abs_path.extension().and_then(|e| e.to_str()).unwrap_or("md");
+      let conflict_name = format!("{stem} (conflict from NexusMap {ts}).{ext}");
+      let conflict_path = abs_path.with_file_name(conflict_name);
+      if let Err(e) = fs::write(&conflict_path, &remote_content) {
+        summary.errors.push(e.to_string());
+      }
+      let _ = append_event(
+        &vault_path,
+        &SyncEvent {
+          ts: now_iso(),
+          kind: "conflict".to_string(),
+          path: rel_path.clone(),
+          detail: format!("Remote update would overwrite local edits. Wrote {}", conflict_path.display()),
+        },
+      );
+      continue;
+    }
+
+    if let Err(e) = fs::write(&abs_path, &remote_content) {
+      summary.errors.push(e.to_string());
+      continue;
+    }
+
+    let next_hash = sha256_hex(remote_content.as_bytes());
+    mapping.files.insert(
+      rel_path.clone(),
+      FileMappingV1 {
+        file_id: rf.id.clone(),
+        folder_id: folder_id.clone(),
+        kind: remote_kind,
+        local_hash: next_hash,
+        remote_updated_at,
+      },
+    );
+  }
+
+  mapping.last_pull_at = now_iso();
+  mapping.updated_at = now_iso();
+  write_mapping(&vault_path, &mapping)?;
+  Ok(summary)
+}
+
+#[tauri::command]
+pub async fn sync_pull_start(vault_path: String, project_folder_id: String, auth: SupabaseAuth, interval_ms: Option<u64>) -> Result<(), String> {
+  let mut guard = PULL_STATE.lock().map_err(|_| "pull state lock poisoned".to_string())?;
+  if guard.is_some() {
+    return Err("remote poller already running".to_string());
+  }
+  let (stop_tx, stop_rx) = mpsc::channel::<()>();
+  let interval = interval_ms.unwrap_or(5000);
+
+  std::thread::spawn(move || loop {
+    if stop_rx.try_recv().is_ok() {
+      break;
+    }
+    let _ = tauri::async_runtime::block_on(sync_pull_once(vault_path.clone(), project_folder_id.clone(), auth.clone()));
+    std::thread::sleep(std::time::Duration::from_millis(interval));
+  });
+
+  *guard = Some(PullState { stop_tx });
+  Ok(())
+}
+
+#[tauri::command]
+pub async fn sync_pull_stop() -> Result<(), String> {
+  let mut guard = PULL_STATE.lock().map_err(|_| "pull state lock poisoned".to_string())?;
+  if let Some(st) = guard.take() {
+    let _ = st.stop_tx.send(());
+  }
+  Ok(())
+}
+
+#[tauri::command]
+pub async fn sync_read_events(vault_path: String, limit: Option<u32>) -> Result<Vec<SyncEvent>, String> {
+  read_events(&vault_path, limit.unwrap_or(50) as usize)
+}
+
+#[tauri::command]
+pub async fn vault_write_text_file(vault_path: String, relative_path: String, content: String) -> Result<(), String> {
+  let root = Path::new(&vault_path);
+  if !root.exists() {
+    return Err("vault_path does not exist".to_string());
+  }
+
+  let rel = Path::new(&relative_path);
+  if rel.is_absolute() || rel.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+    return Err("relative_path must stay within the vault".to_string());
+  }
+
+  let target = root.join(rel);
+  if let Some(parent) = target.parent() {
+    fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+  }
+  fs::write(&target, content).map_err(|e| e.to_string())
+}
+

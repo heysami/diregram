@@ -52,13 +52,18 @@ export default function Home() {
               </div>
               <div className="pt-1">
                 {!signedIn ? (
-                  <button
-                    type="button"
-                    className="mac-btn mac-btn--primary"
-                    onClick={() => router.push(`/login?next=${encodeURIComponent('/workspace')}`)}
-                  >
-                    Sign in to start
-                  </button>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <button
+                      type="button"
+                      className="mac-btn mac-btn--primary"
+                      onClick={() => router.push(`/login?next=${encodeURIComponent('/workspace')}`)}
+                    >
+                      Sign in to start
+                    </button>
+                    <button type="button" className="mac-btn" onClick={() => router.push('/download')}>
+                      Download desktop app (macOS)
+                    </button>
+                  </div>
                 ) : (
                   <div className="flex items-center gap-2 flex-wrap">
                     <button type="button" className="mac-btn mac-btn--primary" onClick={() => router.push('/workspace')}>
@@ -66,6 +71,9 @@ export default function Home() {
                     </button>
                     <button type="button" className="mac-btn" onClick={() => router.push('/templates/global')}>
                       Browse global templates
+                    </button>
+                    <button type="button" className="mac-btn" onClick={() => router.push('/download')}>
+                      Download desktop app (macOS)
                     </button>
                   </div>
                 )}

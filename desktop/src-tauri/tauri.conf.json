@@ -1,0 +1,37 @@
+{
+  "productName": "NexusMap Sync",
+  "version": "0.1.0",
+  "identifier": "com.nexusmap.sync",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "NexusMap Sync",
+        "width": 980,
+        "height": 680,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "capabilities": ["main-capability"]
+    }
+  },
+  "plugins": {
+    "dialog": {},
+    "deep-link": {
+      "desktop": {
+        "schemes": ["nexusmap"]
+      }
+    }
+  },
+  "bundle": {
+    "active": true
+  }
+}
+
