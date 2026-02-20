@@ -45,8 +45,28 @@ jobs:
       # - APPLE_ID: your Apple ID email
       # - APPLE_PASSWORD: app-specific password
       # ------------------------------------------------------------
+      - name: Detect signing + notarization mode
+        id: signing_mode
+        env:
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          set -euo pipefail
+          enabled=true
+          if [ -z "${KEYCHAIN_PASSWORD:-}" ] || [ -z "${APPLE_CERTIFICATE:-}" ] || [ -z "${APPLE_CERTIFICATE_PASSWORD:-}" ]; then
+            enabled=false
+          fi
+          has_api_key_p8=false
+          if [ -n "${APPLE_API_KEY_P8:-}" ]; then
+            has_api_key_p8=true
+          fi
+          echo "enabled=$enabled" >> "$GITHUB_OUTPUT"
+          echo "has_api_key_p8=$has_api_key_p8" >> "$GITHUB_OUTPUT"
+
       - name: Import Apple signing certificate
-        if: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_CERTIFICATE_PASSWORD != '' && secrets.KEYCHAIN_PASSWORD != '' }}
+        if: ${{ steps.signing_mode.outputs.enabled == 'true' }}
         env:
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
@@ -63,7 +83,7 @@ jobs:
           security find-identity -v -p codesigning build.keychain
 
       - name: Resolve APPLE_SIGNING_IDENTITY
-        if: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_CERTIFICATE_PASSWORD != '' && secrets.KEYCHAIN_PASSWORD != '' }}
+        if: ${{ steps.signing_mode.outputs.enabled == 'true' }}
         run: |
           set -euo pipefail
           # Prefer Developer ID Application identities for distribution outside the App Store.
@@ -81,7 +101,7 @@ jobs:
           echo "APPLE_SIGNING_IDENTITY=$CERT_ID" >> "$GITHUB_ENV"
 
       - name: Write App Store Connect API key
-        if: ${{ secrets.APPLE_API_KEY_P8 != '' }}
+        if: ${{ steps.signing_mode.outputs.has_api_key_p8 == 'true' }}
         env:
           APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
         run: |
@@ -107,12 +127,12 @@ jobs:
         run: npm ci
 
       - name: Build Tauri app (macOS) — unsigned (temporary)
-        if: ${{ secrets.APPLE_CERTIFICATE == '' || secrets.APPLE_CERTIFICATE_PASSWORD == '' || secrets.KEYCHAIN_PASSWORD == '' }}
+        if: ${{ steps.signing_mode.outputs.enabled != 'true' }}
         working-directory: desktop
         run: npm run tauri:build -- --target ${{ matrix.target }}
 
       - name: Build Tauri app (macOS) — signed + notarized
-        if: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_CERTIFICATE_PASSWORD != '' && secrets.KEYCHAIN_PASSWORD != '' }}
+        if: ${{ steps.signing_mode.outputs.enabled == 'true' }}
         working-directory: desktop
         env:
           # Signing (required)
