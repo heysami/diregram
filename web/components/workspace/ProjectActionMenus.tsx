@@ -99,7 +99,7 @@ export function ProjectActionMenus({
   onExportKg,
   onEditProject,
 }: {
-  projectTab: 'files' | 'templates';
+  projectTab: 'files' | 'templates' | 'import';
   canEdit: boolean;
   onNewMap: () => void;
   onNewFromTemplate: () => void;

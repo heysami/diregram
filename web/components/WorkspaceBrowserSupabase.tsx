@@ -23,6 +23,7 @@ import { downloadProjectBundleZip, exportProjectBundleZip } from '@/lib/export-b
 import { exportKgAndVectorsForProject } from '@/lib/kg-vector-export';
 import { ProjectActionMenus } from '@/components/workspace/ProjectActionMenus';
 import { SemanticKgViewerModal } from '@/components/kg/SemanticKgViewerModal';
+import { DoclingImportPanel } from '@/components/docling/DoclingImportPanel';
 
 type DbFolder = {
   id: string;
@@ -128,7 +129,7 @@ export function WorkspaceBrowserSupabase() {
   const [toast, setToast] = useState<string | null>(null);
   const toastTimerRef = useRef<number | null>(null);
   const [newFromTemplateOpen, setNewFromTemplateOpen] = useState(false);
-  const [projectTab, setProjectTab] = useState<'files' | 'templates'>('files');
+  const [projectTab, setProjectTab] = useState<'files' | 'templates' | 'import'>('files');
   const [templateScope, setTemplateScope] = useState<'project' | 'account' | 'global'>('project');
   const [templatesFolderId, setTemplatesFolderId] = useState<string | null>(null);
   const [templateFiles, setTemplateFiles] = useState<DbFile[]>([]);
@@ -826,6 +827,14 @@ export function WorkspaceBrowserSupabase() {
                   >
                     Templates
                   </button>
+                  <button
+                    type="button"
+                    className={`mac-btn h-8 ${projectTab === 'import' ? 'mac-btn--primary' : ''}`}
+                    onClick={() => setProjectTab('import')}
+                    title="Import / convert sources"
+                  >
+                    Import
+                  </button>
                 </div>
                 {projectTab === 'templates' ? (
                   <select
@@ -984,6 +993,10 @@ export function WorkspaceBrowserSupabase() {
 
           <div className="grid gap-2">
             {(() => {
+              if (projectTab === 'import') {
+                return <DoclingImportPanel supabase={supabase} userId={userId} />;
+              }
+
               if (projectTab === 'templates' && templateScope === 'global') {
                 const visible = globalTemplateFiles;
                 if (visible.length === 0) {
