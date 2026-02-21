@@ -135,11 +135,16 @@ export function SystemFlowEditor({
   const resizeStartRef = useRef<{ clientX: number; clientY: number; startW: number; startH: number } | null>(null);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const draftDuringInteractionRef = useRef<SystemFlowState | null>(null);
   const didMutateDuringInteractionRef = useRef(false);
   const scaleRef = useRef<number>(1);
   const [scale, setScale] = useState<number>(1);
+  const didUserAdjustViewRef = useRef(false);
+  const [pan, setPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const panRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const panDragRef = useRef<{ startX: number; startY: number; startPanX: number; startPanY: number; moved: boolean } | null>(null);
 
   // Live-load on markdown changes (collab / undo)
   useEffect(() => {
@@ -226,13 +231,62 @@ export function SystemFlowEditor({
       const sx = availableW / gridPixelSize.w;
       const sy = availableH / gridPixelSize.h;
       const next = clamp(Math.min(sx, sy), 0.25, 2);
-      scaleRef.current = next;
-      setScale(next);
+      if (!didUserAdjustViewRef.current) {
+        scaleRef.current = next;
+        setScale(next);
+        setPan({ x: 0, y: 0 });
+        panRef.current = { x: 0, y: 0 };
+      }
     };
 
     update();
     window.addEventListener('resize', update);
     return () => window.removeEventListener('resize', update);
+  }, [gridPixelSize.h, gridPixelSize.w]);
+
+  const setScaleWithAnchor = useCallback(
+    (nextScaleRaw: number, anchor?: { clientX: number; clientY: number }) => {
+      const nextScale = clamp(nextScaleRaw, 0.25, 3);
+      const prevScale = scaleRef.current || 1;
+      if (nextScale === prevScale) return;
+
+      didUserAdjustViewRef.current = true;
+
+      if (anchor && wrapperRef.current) {
+        const wr = wrapperRef.current.getBoundingClientRect();
+        const ox = anchor.clientX - wr.left;
+        const oy = anchor.clientY - wr.top;
+        const ux = ox / prevScale;
+        const uy = oy / prevScale;
+        const nx = ux * nextScale;
+        const ny = uy * nextScale;
+        const dx = ox - nx;
+        const dy = oy - ny;
+        const nextPan = { x: panRef.current.x + dx, y: panRef.current.y + dy };
+        panRef.current = nextPan;
+        setPan(nextPan);
+      }
+
+      scaleRef.current = nextScale;
+      setScale(nextScale);
+    },
+    [],
+  );
+
+  const resetViewToFit = useCallback(() => {
+    didUserAdjustViewRef.current = false;
+    const vp = viewportRef.current;
+    if (!vp) return;
+    const r = vp.getBoundingClientRect();
+    const availableW = Math.max(1, r.width);
+    const availableH = Math.max(1, r.height);
+    const sx = availableW / gridPixelSize.w;
+    const sy = availableH / gridPixelSize.h;
+    const next = clamp(Math.min(sx, sy), 0.25, 2);
+    scaleRef.current = next;
+    setScale(next);
+    setPan({ x: 0, y: 0 });
+    panRef.current = { x: 0, y: 0 };
   }, [gridPixelSize.h, gridPixelSize.w]);
 
   const findFirstEmptyCell = useCallback((): { x: number; y: number } | null => {
@@ -753,6 +807,28 @@ export function SystemFlowEditor({
 
           <div className="flex items-center gap-2 text-xs">
             <div className="mac-double-outline px-2 py-1">
+              Zoom: <span className="font-semibold">{Math.round(scale * 100)}%</span>
+            </div>
+            <button
+              type="button"
+              className="mac-btn"
+              onClick={() => setScaleWithAnchor((scaleRef.current || 1) * 1.1)}
+              title="Zoom in"
+            >
+              +
+            </button>
+            <button
+              type="button"
+              className="mac-btn"
+              onClick={() => setScaleWithAnchor((scaleRef.current || 1) / 1.1)}
+              title="Zoom out"
+            >
+              −
+            </button>
+            <button type="button" className="mac-btn" onClick={resetViewToFit} title="Fit to view">
+              Fit
+            </button>
+            <div className="mac-double-outline px-2 py-1">
               Grid: <span className="font-semibold">{state.gridWidth}</span>×<span className="font-semibold">{state.gridHeight}</span>
             </div>
             <button type="button" className="mac-btn" onClick={() => commitGridSize(+1, 0)} title="Add column">
@@ -775,6 +851,25 @@ export function SystemFlowEditor({
         <div
           ref={viewportRef}
           className="absolute inset-0 p-4 overflow-hidden"
+          onWheel={(e) => {
+            // Zoom with trackpad pinch (ctrlKey) or cmd+wheel.
+            if (e.ctrlKey || e.metaKey) {
+              e.preventDefault();
+              const dir = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+              setScaleWithAnchor((scaleRef.current || 1) * dir, { clientX: e.clientX, clientY: e.clientY });
+              return;
+            }
+
+            // Trackpad two-finger pan (wheel delta). Keep it consistent with other canvases.
+            // Note: we pan the wrapper in screen-space (px), so use raw deltas.
+            if (Math.abs(e.deltaX) + Math.abs(e.deltaY) > 0) {
+              e.preventDefault();
+              didUserAdjustViewRef.current = true;
+              const next = { x: panRef.current.x - e.deltaX, y: panRef.current.y - e.deltaY };
+              panRef.current = next;
+              setPan(next);
+            }
+          }}
           onMouseDown={(e) => {
             // Clicking outside the grid container deselects (brings back Steps list).
             const grid = containerRef.current;
@@ -784,9 +879,12 @@ export function SystemFlowEditor({
         >
           <div className="w-full h-full flex items-center justify-center">
             <div
+              ref={wrapperRef}
               style={{
                 width: gridPixelSize.w * scale,
                 height: gridPixelSize.h * scale,
+                transform: `translate(${pan.x}px, ${pan.y}px)`,
+                willChange: 'transform',
               }}
             >
               <div
@@ -824,7 +922,39 @@ export function SystemFlowEditor({
                     const el = t as HTMLElement;
                     if (el.closest('[data-sf-interactive="1"]')) return;
                   }
-                  onCanvasClick();
+                  if (e.button !== 0) return;
+
+                  // Drag empty space to pan; click without drag deselects.
+                  panDragRef.current = {
+                    startX: e.clientX,
+                    startY: e.clientY,
+                    startPanX: panRef.current.x,
+                    startPanY: panRef.current.y,
+                    moved: false,
+                  };
+
+                  const onMove = (ev: MouseEvent) => {
+                    const cur = panDragRef.current;
+                    if (!cur) return;
+                    const dx = ev.clientX - cur.startX;
+                    const dy = ev.clientY - cur.startY;
+                    if (!cur.moved && Math.abs(dx) + Math.abs(dy) > 2) cur.moved = true;
+                    if (cur.moved) didUserAdjustViewRef.current = true;
+                    const next = { x: cur.startPanX + dx, y: cur.startPanY + dy };
+                    panRef.current = next;
+                    setPan(next);
+                  };
+
+                  const onUp = () => {
+                    const cur = panDragRef.current;
+                    panDragRef.current = null;
+                    window.removeEventListener('mousemove', onMove);
+                    window.removeEventListener('mouseup', onUp);
+                    if (cur && !cur.moved) onCanvasClick();
+                  };
+
+                  window.addEventListener('mousemove', onMove);
+                  window.addEventListener('mouseup', onUp);
                 }}
                 onClick={(e) => {
                   // Prevent any bubbling click from clearing selection after a box/link mouseDown selects it.

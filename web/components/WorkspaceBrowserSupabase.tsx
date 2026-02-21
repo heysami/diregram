@@ -24,6 +24,7 @@ import { exportKgAndVectorsForProject } from '@/lib/kg-vector-export';
 import { ProjectActionMenus } from '@/components/workspace/ProjectActionMenus';
 import { SemanticKgViewerModal } from '@/components/kg/SemanticKgViewerModal';
 import { DoclingImportPanel } from '@/components/docling/DoclingImportPanel';
+import { ImportMermaidModal } from '@/components/mermaid/ImportMermaidModal';
 import { MarkdownDocModal } from '@/components/grid/MarkdownDocModal';
 import { downloadTextFile } from '@/lib/client-download';
 
@@ -141,6 +142,7 @@ export function WorkspaceBrowserSupabase() {
   const [toast, setToast] = useState<string | null>(null);
   const toastTimerRef = useRef<number | null>(null);
   const [newFromTemplateOpen, setNewFromTemplateOpen] = useState(false);
+  const [importMermaidOpen, setImportMermaidOpen] = useState(false);
   const [projectTab, setProjectTab] = useState<'files' | 'templates' | 'import'>('files');
   const [templateScope, setTemplateScope] = useState<'project' | 'account' | 'global'>('project');
   const [templatesFolderId, setTemplatesFolderId] = useState<string | null>(null);
@@ -528,6 +530,34 @@ export function WorkspaceBrowserSupabase() {
     openFile(file);
   };
 
+  const createDiagramFileWithContent = async (
+    folderId: string,
+    res: { name: string; content: string; layoutDirection?: LayoutDirection },
+  ) => {
+    if (!supabase || !userId) return;
+    const defaultLayout: LayoutDirection = await fetchProfileDefaultLayoutDirection(supabase, userId);
+    const layout_direction = res.layoutDirection || defaultLayout;
+    const roomName = `file-${crypto.randomUUID()}`;
+    const { data, error: err } = await supabase
+      .from('files')
+      .insert({
+        name: res.name,
+        owner_id: userId,
+        folder_id: folderId,
+        room_name: roomName,
+        last_opened_at: nowIso(),
+        layout_direction,
+        kind: 'diagram',
+        content: res.content,
+      })
+      .select('id,name,owner_id,folder_id,room_name,last_opened_at,updated_at,access,layout_direction,kind')
+      .single();
+    if (err) throw err;
+    const file = data as unknown as DbFile;
+    setFiles((prev) => [file, ...prev]);
+    await openFile(file);
+  };
+
   const createGridFile = async (folderId: string) => {
     if (!supabase || !userId) return;
     const defaultLayout: LayoutDirection = await fetchProfileDefaultLayoutDirection(supabase, userId);
@@ -885,9 +915,9 @@ export function WorkspaceBrowserSupabase() {
                     type="button"
                     className={`mac-btn h-8 ${projectTab === 'import' ? 'mac-btn--primary' : ''}`}
                     onClick={() => setProjectTab('import')}
-                    title="Import / convert sources"
+                    title="Additional resources (import / convert)"
                   >
-                    Import
+                    Additional resources
                   </button>
                 </div>
                 {projectTab === 'templates' ? (
@@ -910,6 +940,7 @@ export function WorkspaceBrowserSupabase() {
                 canEdit={effectiveCanEditFolder(activeFolder, userId, userEmail)}
                 onNewMap={() => createFile(activeFolder.id)}
                 onNewFromTemplate={() => setNewFromTemplateOpen(true)}
+                onImportMermaidDiagram={() => setImportMermaidOpen(true)}
                 onNewGrid={() => createGridFile(activeFolder.id)}
                 onNewNote={() => createNoteFile(activeFolder.id)}
                 onNewVision={() => createVisionFile(activeFolder.id)}
@@ -1038,6 +1069,18 @@ export function WorkspaceBrowserSupabase() {
             }}
           />
 
+          <ImportMermaidModal
+            open={importMermaidOpen}
+            onClose={() => setImportMermaidOpen(false)}
+            onCreate={async ({ name, content, mermaidType }) => {
+              await createDiagramFileWithContent(activeFolder.id, {
+                name,
+                content,
+                layoutDirection: mermaidType === 'journey' ? 'horizontal' : undefined,
+              });
+            }}
+          />
+
           <SemanticKgViewerModal
             open={kgViewerOpen}
             onClose={() => setKgViewerOpen(false)}
@@ -1056,7 +1099,7 @@ export function WorkspaceBrowserSupabase() {
                       projectFolderId={activeFolder.id}
                       onSavedResource={() => {
                         reloadResources();
-                        showToast('Saved to resources');
+                        showToast('Saved to additional resources');
                       }}
                     />
 

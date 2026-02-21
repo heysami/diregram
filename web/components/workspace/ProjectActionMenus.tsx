@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { ChevronDown, Copy, Eye, FileText, FlaskConical, Network, Package, Pencil, Plus, Share2, Table } from 'lucide-react';
+import { ChevronDown, Copy, Eye, FileCode, FileText, FlaskConical, Network, Package, Pencil, Plus, Share2, Table } from 'lucide-react';
 import { AiUsageHelpModal } from '@/components/workspace/AiUsageHelpModal';
 
 type MenuItem = {
@@ -88,6 +88,7 @@ export function ProjectActionMenus({
   canEdit,
   onNewMap,
   onNewFromTemplate,
+  onImportMermaidDiagram,
   onNewGrid,
   onNewNote,
   onNewVision,
@@ -104,6 +105,7 @@ export function ProjectActionMenus({
   canEdit: boolean;
   onNewMap: () => void;
   onNewFromTemplate: () => void;
+  onImportMermaidDiagram: () => void | Promise<void>;
   onNewGrid: () => void;
   onNewNote: () => void;
   onNewVision: () => void;
@@ -156,6 +158,7 @@ export function ProjectActionMenus({
         items={[
           { id: 'new-map', label: 'Map', icon: <Network size={14} />, onClick: onNewMap },
           { id: 'new-from-template', label: 'From template…', icon: <Copy size={14} />, onClick: onNewFromTemplate },
+          { id: 'import-mermaid', label: 'Import Mermaid diagram…', icon: <FileCode size={14} />, onClick: onImportMermaidDiagram },
           { id: 'sep-1', label: '────────', disabled: true, onClick: () => {} },
           { id: 'new-grid', label: 'Grid', icon: <Table size={14} />, onClick: onNewGrid },
           { id: 'new-note', label: 'Note', icon: <FileText size={14} />, onClick: onNewNote },

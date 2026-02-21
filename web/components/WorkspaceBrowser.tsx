@@ -35,6 +35,7 @@ import { makeStarterTestMarkdown } from '@/lib/test-starter';
 import type { DocKind } from '@/lib/doc-kinds';
 import { NewFromTemplateModal } from '@/components/templates/NewFromTemplateModal';
 import { ProjectActionMenus } from '@/components/workspace/ProjectActionMenus';
+import { ImportMermaidModal } from '@/components/mermaid/ImportMermaidModal';
 import { downloadProjectBundleZip, exportProjectBundleZip } from '@/lib/export-bundle';
 import { exportKgAndVectorsForProject } from '@/lib/kg-vector-export';
 import { SemanticKgViewerModal } from '@/components/kg/SemanticKgViewerModal';
@@ -81,6 +82,7 @@ export function WorkspaceBrowser() {
   const [toast, setToast] = useState<string | null>(null);
   const toastTimerRef = useRef<number | null>(null);
   const [newFromTemplateOpen, setNewFromTemplateOpen] = useState(false);
+  const [importMermaidOpen, setImportMermaidOpen] = useState(false);
   const [projectTab, setProjectTab] = useState<'files' | 'templates'>('files');
   const [templateScope, setTemplateScope] = useState<'project' | 'account'>('project');
   const [kgViewerOpen, setKgViewerOpen] = useState(false);
@@ -360,6 +362,7 @@ export function WorkspaceBrowser() {
                   if (!canEditActiveFolder) return;
                   setNewFromTemplateOpen(true);
                 }}
+                onImportMermaidDiagram={() => setImportMermaidOpen(true)}
                 onNewGrid={() => {
                   if (!canEditActiveFolder) return;
                   setStore((prev) => {
@@ -460,6 +463,19 @@ export function WorkspaceBrowser() {
               const safeKind: DocKind = normalizeKind(kind);
               setStore((prev) => {
                 const { store: next, file } = createLocalFile(prev, name, activeFolder.id, safeKind);
+                saveFileSnapshot(file.id, content);
+                queueMicrotask(() => openFile(file.id));
+                return next;
+              });
+            }}
+          />
+
+          <ImportMermaidModal
+            open={importMermaidOpen}
+            onClose={() => setImportMermaidOpen(false)}
+            onCreate={async ({ name, content }) => {
+              setStore((prev) => {
+                const { store: next, file } = createLocalFile(prev, name, activeFolder.id, 'diagram');
                 saveFileSnapshot(file.id, content);
                 queueMicrotask(() => openFile(file.id));
                 return next;

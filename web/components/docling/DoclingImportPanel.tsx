@@ -146,8 +146,8 @@ export function DoclingImportPanel({
   return (
     <div className="mac-window mac-double-outline p-5 space-y-4 max-w-[760px]">
       <div className="space-y-1">
-        <div className="text-sm font-bold tracking-tight">Import / Convert (Docling)</div>
-        <div className="text-xs opacity-70">Upload a document, convert it, and save the markdown as an Additional Resource in this project.</div>
+        <div className="text-sm font-bold tracking-tight">Additional resources (Docling)</div>
+        <div className="text-xs opacity-70">Upload a document, convert it, and save the markdown as an additional resource in this project.</div>
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
@@ -213,7 +213,7 @@ export function DoclingImportPanel({
             Output: <span className="font-mono">{state.outputObjectPath}</span>
           </div>
           {state.savedResourceId ? (
-            <div className="text-xs opacity-80">Saved to Additional resources.</div>
+            <div className="text-xs opacity-80">Saved to additional resources.</div>
           ) : (
             <div className="flex items-center gap-2">
               <a
