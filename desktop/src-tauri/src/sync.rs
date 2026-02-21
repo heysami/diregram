@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -79,7 +79,9 @@ pub struct SyncSummary {
   pub folders_reused: u32,
   pub files_created: u32,
   pub files_updated: u32,
+  pub files_deleted: u32,
   pub files_skipped: u32,
+  pub resources_deleted: u32,
   pub errors: Vec<String>,
 }
 
@@ -101,6 +103,26 @@ fn events_path(vault_path: &str) -> PathBuf {
 
 fn trash_dir(vault_path: &str) -> PathBuf {
   nexusmap_dir(vault_path).join("trash")
+}
+
+fn archive_file_to_trash(vault_path: &str, rel_path: &str) -> Result<Option<PathBuf>, String> {
+  let src = Path::new(vault_path).join(rel_path);
+  if !src.exists() {
+    return Ok(None);
+  }
+  let meta = fs::metadata(&src).map_err(|e| e.to_string())?;
+  if !meta.is_file() {
+    return Ok(None);
+  }
+
+  let ts = Utc::now().format("%Y-%m-%dT%H%M%SZ").to_string();
+  let dst = trash_dir(vault_path).join(&ts).join(rel_path);
+  if let Some(parent) = dst.parent() {
+    fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+  }
+  fs::copy(&src, &dst).map_err(|e| e.to_string())?;
+  fs::remove_file(&src).map_err(|e| e.to_string())?;
+  Ok(Some(dst))
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -975,6 +997,11 @@ struct RemoteFileRow {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+struct RemoteIdRow {
+  id: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
 struct RemoteResourceRow {
   id: String,
   name: String,
@@ -1144,6 +1171,58 @@ async fn fetch_files_updated_since(
   Ok(out)
 }
 
+async fn fetch_file_ids_in_folders(
+  client: &reqwest::Client,
+  auth: &mut SupabaseAuth,
+  folder_ids: &[String],
+) -> Result<HashSet<String>, String> {
+  let mut out: HashSet<String> = HashSet::new();
+  let chunk_size = 40usize;
+  let base = rest_base(auth);
+
+  for chunk in folder_ids.chunks(chunk_size) {
+    let list = chunk.join(",");
+    let page_limit = 1000usize;
+    let mut offset = 0usize;
+    for _ in 0..1000 {
+      let mut url = reqwest::Url::parse(&format!("{}/files", base)).map_err(|e| e.to_string())?;
+      {
+        let mut q = url.query_pairs_mut();
+        q.append_pair("select", "id");
+        q.append_pair("folder_id", &format!("in.({})", list));
+        q.append_pair("limit", &page_limit.to_string());
+        q.append_pair("offset", &offset.to_string());
+      }
+      let rows = send_with_refresh(
+        client,
+        auth,
+        || client.get(url.clone()),
+        |res| {
+          Box::pin(async move {
+            if !res.status().is_success() {
+              return Err(format!("files list fetch failed: HTTP {}", res.status()));
+            }
+            let rows: Vec<RemoteIdRow> = res.json().await.map_err(|e| e.to_string())?;
+            Ok(rows)
+          })
+        },
+      )
+      .await?;
+
+      let got = rows.len();
+      for r in rows {
+        out.insert(r.id);
+      }
+      if got < page_limit {
+        break;
+      }
+      offset += page_limit;
+    }
+  }
+
+  Ok(out)
+}
+
 async fn fetch_resources_updated_since(
   client: &reqwest::Client,
   auth: &mut SupabaseAuth,
@@ -1175,6 +1254,52 @@ async fn fetch_resources_updated_since(
     },
   )
   .await
+}
+
+async fn fetch_resource_ids_for_project(
+  client: &reqwest::Client,
+  auth: &mut SupabaseAuth,
+  project_folder_id: &str,
+) -> Result<HashSet<String>, String> {
+  let base = rest_base(auth);
+  let mut out: HashSet<String> = HashSet::new();
+  let page_limit = 1000usize;
+  let mut offset = 0usize;
+  for _ in 0..1000 {
+    let mut url = reqwest::Url::parse(&format!("{}/project_resources", base)).map_err(|e| e.to_string())?;
+    {
+      let mut q = url.query_pairs_mut();
+      q.append_pair("select", "id");
+      q.append_pair("project_folder_id", &format!("eq.{}", project_folder_id));
+      q.append_pair("limit", &page_limit.to_string());
+      q.append_pair("offset", &offset.to_string());
+    }
+    let rows = send_with_refresh(
+      client,
+      auth,
+      || client.get(url.clone()),
+      |res| {
+        Box::pin(async move {
+          if !res.status().is_success() {
+            return Err(format!("project_resources list fetch failed: HTTP {}", res.status()));
+          }
+          let rows: Vec<RemoteIdRow> = res.json().await.map_err(|e| e.to_string())?;
+          Ok(rows)
+        })
+      },
+    )
+    .await?;
+
+    let got = rows.len();
+    for r in rows {
+      out.insert(r.id);
+    }
+    if got < page_limit {
+      break;
+    }
+    offset += page_limit;
+  }
+  Ok(out)
 }
 
 async fn fetch_one_rag_project(
@@ -1359,7 +1484,9 @@ pub async fn sync_pull_once(vault_path: String, project_folder_id: String, auth:
   let folders_by_id: HashMap<String, FolderNode> = folders.into_iter().map(|f| (f.id.clone(), f)).collect();
   let folder_vec: Vec<FolderNode> = folders_by_id.values().cloned().collect();
   let folder_ids = compute_subtree_folder_ids(&project_folder_id, &folder_vec);
+  let remote_file_ids = fetch_file_ids_in_folders(&client, &mut auth, &folder_ids).await?;
   let remote_files = fetch_files_updated_since(&client, &mut auth, &folder_ids, &since).await?;
+  let remote_resource_ids = fetch_resource_ids_for_project(&client, &mut auth, &project_folder_id).await?;
   let remote_resources = fetch_resources_updated_since(&client, &mut auth, &project_folder_id, &since).await?;
 
   let mut summary = SyncSummary::default();
@@ -1514,6 +1641,49 @@ pub async fn sync_pull_once(vault_path: String, project_folder_id: String, auth:
     );
   }
 
+  // Reconcile remote deletions (safe: archive local to `.nexusmap/trash/...`).
+  let mut to_remove_files: Vec<String> = Vec::new();
+  for (rel, fm) in &mapping.files {
+    if !remote_file_ids.contains(&fm.file_id) {
+      to_remove_files.push(rel.clone());
+    }
+  }
+  for rel in to_remove_files {
+    let _ = archive_file_to_trash(&vault_path, &rel);
+    mapping.files.remove(&rel);
+    summary.files_deleted += 1;
+    let _ = append_event(
+      &vault_path,
+      &SyncEvent {
+        ts: now_iso(),
+        kind: "pull_delete".to_string(),
+        path: rel.clone(),
+        detail: "Remote file was deleted; archived local copy to .nexusmap/trash/".to_string(),
+      },
+    );
+  }
+
+  let mut to_remove_resources: Vec<String> = Vec::new();
+  for (rel, rm) in &mapping.resources {
+    if !remote_resource_ids.contains(&rm.resource_id) {
+      to_remove_resources.push(rel.clone());
+    }
+  }
+  for rel in to_remove_resources {
+    let _ = archive_file_to_trash(&vault_path, &rel);
+    mapping.resources.remove(&rel);
+    summary.resources_deleted += 1;
+    let _ = append_event(
+      &vault_path,
+      &SyncEvent {
+        ts: now_iso(),
+        kind: "pull_delete".to_string(),
+        path: rel.clone(),
+        detail: "Remote resource was deleted; archived local copy to .nexusmap/trash/".to_string(),
+      },
+    );
+  }
+
   // Export RAG/KG into vault if KB updated since last export.
   // This keeps `rag/` in sync even if the KB was rebuilt from the web app.
   if let Ok(Some(rag_updated_at)) =
@@ -1532,9 +1702,11 @@ pub async fn sync_pull_once(vault_path: String, project_folder_id: String, auth:
       kind: "pull".to_string(),
       path: String::new(),
       detail: format!(
-        "Pulled. Files created: {}, updated: {}. Conflicts: {}. Errors: {}.",
+        "Pulled. Files created: {}, updated: {}, deleted: {}. Resources deleted: {}. Conflicts: {}. Errors: {}.",
         summary.files_created,
         summary.files_updated,
+        summary.files_deleted,
+        summary.resources_deleted,
         conflicts,
         summary.errors.len()
       ),
