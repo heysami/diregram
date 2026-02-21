@@ -126,8 +126,8 @@ export function convertArchitectureDiagram(src: string): { title: string; kind: 
     .filter((z) => z.boxKeys.length > 0);
 
   const sfid = 'systemflow-1';
-  const sf = makeSystemFlowState({ sfid, title: 'System flow (architecture)', boxes, links, zones });
+  const sf = makeSystemFlowState({ sfid, title: 'Tech flow (architecture)', boxes, links, zones });
   const md = renderNodeLines([sf.rootLine]).markdown + makeSeparatorAndBlocks(sf.blocks);
-  return { title: 'System flow (architecture)', kind: 'diagram', markdown: md };
+  return { title: 'Tech flow (architecture)', kind: 'diagram', markdown: md };
 }
 

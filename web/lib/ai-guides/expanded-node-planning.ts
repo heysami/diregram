@@ -1,5 +1,5 @@
 export const EXPANDED_NODE_PLANNING_PROMPT = `===============================================================================
-EXPANDED NODE PARKING LOT TEMPLATE (separate file; optional staging; NOT NexusMap import)
+EXPANDED NODE PARKING LOT TEMPLATE (separate file; optional staging; NOT Diregram import)
 ===============================================================================
 
 Goal
@@ -10,9 +10,9 @@ When expanded-grid generation is too heavy to do perfectly in one shot, use this
 Then use the Expanded Nodes post-generation checklist to finish the actual expanded grids properly.
 
 Output format (MUST)
-- Output a SINGLE markdown file (this file is NOT the NexusMap tree format).
+- Output a SINGLE markdown file (this file is NOT the Diregram tree format).
 - Use normal markdown headings/lists freely.
-- Do NOT include NexusMap registries or JSON blocks unless they are short examples.
+- Do NOT include Diregram registries or JSON blocks unless they are short examples.
 
 1) Screen inventory (by portal/surface) (MUST)
 Create a table per surface (public / portal / admin / partner) listing:
@@ -48,7 +48,7 @@ Include 2–3 tiny examples of grid node patterns:
 - A wizard layout (uiTabs used as steps)
 - A collapsible layout (uiSections)
 
-Do NOT attempt to generate the full NexusMap markdown here.
+Do NOT attempt to generate the full Diregram markdown here.
 This is an optional “put aside first” parking lot used when you cannot reliably generate all expanded grids yet.
 `;
 

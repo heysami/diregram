@@ -7,9 +7,9 @@ export default function DownloadPage() {
     <main className="mac-desktop min-h-screen flex flex-col">
       <div className="mx-auto w-full max-w-[860px] px-6 py-12 sm:py-16 space-y-6">
         <div className="space-y-2">
-          <h1 className="text-[26px] leading-tight font-bold tracking-tight">Download NexusMap Sync (macOS)</h1>
+          <h1 className="text-[26px] leading-tight font-bold tracking-tight">Download Diregram Sync (macOS)</h1>
           <div className="text-sm opacity-80">
-            NexusMap Sync keeps a local Markdown vault (Obsidian / OneDrive folder) bidirectionally synced with your Diregram account.
+            Diregram Sync keeps a local Markdown vault (Obsidian / OneDrive folder) bidirectionally synced with your Diregram account.
           </div>
         </div>
 
@@ -34,9 +34,9 @@ export default function DownloadPage() {
             <div>- Paste your OpenAI API key if you want “Reindex (RAG)” to work (stored locally in Keychain).</div>
             <div>
               - Choose your vault folder. Sync starts automatically and pulls all your Diregram projects into{' '}
-              <span className="font-semibold">`NexusMap/&lt;ProjectName&gt;__/…`</span>.
+              <span className="font-semibold">`Diregram/&lt;ProjectName&gt;__/…`</span>.
             </div>
-            <div>- The app also writes a full AI workflow bundle into `NexusMap AI/`.</div>
+            <div>- The app also writes a full AI workflow bundle into `Diregram AI/`.</div>
           </div>
         </div>
 
@@ -44,8 +44,8 @@ export default function DownloadPage() {
           <div className="text-[14px] font-bold tracking-tight">3) Sync behavior</div>
           <div className="text-xs opacity-85 space-y-2">
             <div>- Sync runs continuously (push + pull) even if you close the window (it hides to the tray).</div>
-            <div>- Conflicts create a separate “(conflict from NexusMap …).md” file and are listed in “View events”.</div>
-            <div>- Deletions archive the last remote copy under `.nexusmap/trash/`.</div>
+            <div>- Conflicts create a separate “(conflict from Diregram …).md” file and are listed in “View events”.</div>
+            <div>- Deletions archive the last remote copy under `.diregram/trash/`.</div>
             <div>
               - Docling imports (additional resources) are synced into <span className="font-semibold">`resources/`</span> (Docling under
               `resources/docling/`).
@@ -64,7 +64,7 @@ export default function DownloadPage() {
             </div>
             <div>
               - Temporary workaround (developer/testing only): run{' '}
-              <span className="font-semibold">`xattr -dr com.apple.quarantine "/Applications/NexusMap Sync.app"`</span>.
+              <span className="font-semibold">`xattr -dr com.apple.quarantine "/Applications/Diregram Sync.app"`</span>.
             </div>
           </div>
         </div>

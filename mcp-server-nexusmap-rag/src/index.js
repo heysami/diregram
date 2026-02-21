@@ -6,8 +6,8 @@ function env(name, fallback = '') {
   return String(process.env[name] || fallback);
 }
 
-const DEFAULT_BASE_URL = env('NEXUSMAP_BASE_URL', 'http://localhost:3000');
-const DEFAULT_RAG_API_KEY = env('NEXUSMAP_RAG_API_KEY', '');
+const DEFAULT_BASE_URL = env('DIREGRAM_BASE_URL', 'http://localhost:3000');
+const DEFAULT_RAG_API_KEY = env('DIREGRAM_RAG_API_KEY', '');
 
 async function postJson(url, body, headers = {}) {
   const res = await fetch(url, {
@@ -25,7 +25,7 @@ async function postJson(url, body, headers = {}) {
 
 const server = new Server(
   {
-    name: 'nexusmap-rag',
+    name: 'diregram-rag',
     version: '0.1.0',
   },
   {
@@ -39,11 +39,11 @@ server.setRequestHandler('tools/list', async () => {
   return {
     tools: [
       {
-        name: 'nexusmap_rag_ingest',
-        description: 'Build/update NexusMap project knowledge base (vectors + KG).',
+        name: 'diregram_rag_ingest',
+        description: 'Build/update Diregram project knowledge base (vectors + KG).',
         inputSchema: z
           .object({
-            baseUrl: z.string().optional().describe('NexusMap base URL (default: env NEXUSMAP_BASE_URL or http://localhost:3000)'),
+            baseUrl: z.string().optional().describe('Diregram base URL (default: env DIREGRAM_BASE_URL or http://localhost:3000)'),
             projectFolderId: z.string().describe('Supabase folders.id (project root folder UUID)'),
             ragApiKey: z.string().optional().describe('If set, sent as Authorization Bearer to /api/rag/ingest'),
             openaiApiKey: z
@@ -54,11 +54,11 @@ server.setRequestHandler('tools/list', async () => {
           .strict(),
       },
       {
-        name: 'nexusmap_rag_query',
-        description: 'Query NexusMap RAG and optionally generate an answer.',
+        name: 'diregram_rag_query',
+        description: 'Query Diregram RAG and optionally generate an answer.',
         inputSchema: z
           .object({
-            baseUrl: z.string().optional().describe('NexusMap base URL (default: env NEXUSMAP_BASE_URL or http://localhost:3000)'),
+            baseUrl: z.string().optional().describe('Diregram base URL (default: env DIREGRAM_BASE_URL or http://localhost:3000)'),
             query: z.string().describe('User question'),
             projectFolderId: z.string().optional().describe('Optional: limit search to a project folder UUID'),
             ownerId: z.string().optional().describe('Optional: owner UUID (recommended for server-to-server)'),
@@ -80,7 +80,7 @@ server.setRequestHandler('tools/call', async (req) => {
   const name = req.params?.name;
   const args = req.params?.arguments || {};
 
-  if (name === 'nexusmap_rag_ingest') {
+  if (name === 'diregram_rag_ingest') {
     const baseUrl = String(args.baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, '');
     const projectFolderId = String(args.projectFolderId || '').trim();
     const ragApiKey = String(args.ragApiKey || DEFAULT_RAG_API_KEY).trim();
@@ -95,7 +95,7 @@ server.setRequestHandler('tools/call', async (req) => {
     return { content: [{ type: 'text', text: JSON.stringify(out, null, 2) }] };
   }
 
-  if (name === 'nexusmap_rag_query') {
+  if (name === 'diregram_rag_query') {
     const baseUrl = String(args.baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, '');
     const query = String(args.query || '').trim();
     const projectFolderId = args.projectFolderId ? String(args.projectFolderId).trim() : null;

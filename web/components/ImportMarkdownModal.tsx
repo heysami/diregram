@@ -6,7 +6,7 @@ import { Clipboard, X, AlertTriangle } from 'lucide-react';
 import { validateNexusMarkdownImport } from '@/lib/markdown-import-validator';
 import { normalizeMarkdownNewlines } from '@/lib/markdown-normalize';
 
-const AI_PROMPT = `You are generating a SINGLE markdown document for the NexusMap app.
+const AI_PROMPT = `You are generating a SINGLE markdown document for the Diregram app.
 
 This app’s “source of truth” is markdown text, but not everything is expressed as line syntax:
 - The TREE is expressed by indentation (2 spaces per level) and a few inline markers.
@@ -25,7 +25,7 @@ SECTION 0 — HARD RULES (do not break these)
   - Do NOT use markdown headings in the tree area (no "#", "##", "###").
   - Do NOT use markdown lists in the tree area (no leading "-", "*", "1.").
   - Do NOT use markdown emphasis/links expecting rendering — the app will treat it as literal text.
-  - If you accidentally output headings/bullets, NexusMap will interpret them as node titles and your structure will be wrong.
+  - If you accidentally output headings/bullets, Diregram will interpret them as node titles and your structure will be wrong.
 - Below the "---" separator you MAY use headings/sections as normal documentation text (this area is not part of the node tree).
 - Fenced code blocks below '---' must be valid JSON.
   You requested “generate everything”, so do NOT omit metadata blocks; instead generate minimal valid JSON using safe defaults, and keep all links consistent.
@@ -37,7 +37,7 @@ SECTION 1 — HOW NODES ARE PARSED (core tree)
 - Parent/child relationships are determined ONLY by indentation.
 - A single file MAY contain multiple top-level roots (multiple indentation-0 nodes). There is NO structural requirement to have exactly one root.
   - Recommendation (not required): use one product root for coherence, but multiple roots are allowed (e.g. multiple separate diagrams in one file).
-- IDs: NexusMap currently generates node ids from the ORIGINAL markdown line index:
+- IDs: Diregram currently generates node ids from the ORIGINAL markdown line index:
   node-0, node-1, node-2, ...
   This means IDs can change if lines are inserted/removed above.
   Some advanced metadata (swimlane placement, process-node-type) references node ids directly, so those are FRAGILE.
@@ -266,13 +266,13 @@ Onboarding Journey #flowtab# <!-- fid:flowtab-1 -->
 IMPORTANT:
 - node ids are derived from markdown line index; if you add/remove lines above, update placement keys.
 
-4.4 System Flow tab (system/integration layout)
+4.4 Tech Flow tab (system/integration layout)
 --------------------------------
 Purpose:
-- A grid-based “system flow” workspace for integration/system-level diagrams.
+- A grid-based “tech flow” workspace for integration/system-level diagrams.
 - Similar left navigation as Flow tab, but the right side is a full-screen grid editor (not the main canvas engine).
 
-When MUST you use System Flow? (technical diagrams)
+When MUST you use Tech Flow? (technical diagrams)
 - If the intent is a technical diagram like:
   - sequence diagram
   - use case diagram
@@ -280,14 +280,14 @@ When MUST you use System Flow? (technical diagrams)
   - integration diagram
   - system context diagram
   - service interactions / message flows
-  then you MUST model it as a **System Flow** (not the main canvas nodes, and not Flowtab swimlanes).
+  then you MUST model it as a **Tech Flow** (not the main canvas nodes, and not Flowtab swimlanes).
 
-How to mark a System Flow root node in the TREE:
+How to mark a Tech Flow root node in the TREE:
 - Add #systemflow# and a stable sfid:
   Payments Pipeline #systemflow# <!-- sfid:systemflow-1 -->
 
-How System Flow layout is persisted (NON-NODE markdown sectioning):
-- All System Flow editor data is stored below '---' in a fenced code block:
+How Tech Flow layout is persisted (NON-NODE markdown sectioning):
+- All Tech Flow editor data is stored below '---' in a fenced code block:
   \`\`\`systemflow-systemflow-1
   { ... JSON ... }
   \`\`\`
@@ -296,7 +296,7 @@ How System Flow layout is persisted (NON-NODE markdown sectioning):
 Modeling workflow (2 passes) (MUST; matches how teams actually work)
 1) Architecture / system context (first pass):
 - Start from the system architecture diagram (high-level boxes + groupings).
-- MUST include at least ONE architecture System Flow diagram in the document.
+- MUST include at least ONE architecture Tech Flow diagram in the document.
 - This architecture diagram is the merge target for multiple sequences (see below).
 - Reuse the SAME actors/portals/surfaces you already defined in IA:
   - applicant portal / staff-admin portal / partner portal / public site
@@ -308,7 +308,7 @@ Modeling workflow (2 passes) (MUST; matches how teams actually work)
 - Keep the first pass mostly about ownership boundaries and module grouping (not message order).
 
 2) Sequence / interaction flow (second pass):
-- Rule (MUST): 1 sequence diagram = 1 System Flow root (treat it like a “swimlane document” for that scenario).
+- Rule (MUST): 1 sequence diagram = 1 Tech Flow root (treat it like a “swimlane document” for that scenario).
   - Create a new #systemflow# root for EACH integration scenario (Payments auth, Identity verify, File upload pipeline, etc.).
   - Do NOT cram multiple unrelated sequences into one systemflow; it becomes unreadable and un-auditable.
 - After the architecture is grouped, add message links between modules for the sequence diagram.
@@ -812,12 +812,12 @@ const AI_PROMPT_ADDON = `=======================================================
 PROMPT ADD-ON — FLOW + SWIMLANE + REGISTRY RELIABILITY (append to base prompt)
 ===============================================================================
 
-Generate a complete NexusMap markdown document for [PLATFORM_NAME].
+Generate a complete Diregram markdown document for [PLATFORM_NAME].
 
 ===============================================================================
 QUALITY PLAYBOOK (NON-NEGOTIABLE; add-only guidance)
 ===============================================================================
-Core principle: NexusMap is a multi-model document. Import-ready is not enough; it must be conceptually correct.
+Core principle: Diregram is a multi-model document. Import-ready is not enough; it must be conceptually correct.
 Your output combines distinct modeling layers — DO NOT blur them:
 - Main canvas tree (non-#flow#, non-#flowtab#) = sitemap / navigation / information architecture (IA)
 - Process flows (#flow#) = step-by-step behavior (decisions, validations, outcomes)
@@ -1311,7 +1311,7 @@ const POST_GENERATION_VERIFICATION_CHECKLIST = `Post-Generation Verification Che
   → lineIndex matches actual hub node
 
 8) Final Import Test
-☐ Import into NexusMap app
+☐ Import into Diregram app
   → Check validation report for errors/warnings
 
 9) Data Object Coverage + Orphan Detection
@@ -1508,16 +1508,16 @@ E) Completeness Summary (counts; do not shrink scope to pass)
   → AVOID deleting content just to satisfy validation
 `;
 
-// Repo-local verifier script (context-agnostic; checks NexusMap markdown format + linkage rules only).
+// Repo-local verifier script (context-agnostic; checks Diregram markdown format + linkage rules only).
 export const PYTHON_MARKDOWN_VERIFIER_SCRIPT = String.raw`#!/usr/bin/env python3
 """
-NexusMap markdown verifier (repo-local sanity checks)
+Diregram markdown verifier (repo-local sanity checks)
 
 Usage:
-  python3 verify_nexusmap.py /absolute/path/to/file.md
+  python3 verify_diregram.py /absolute/path/to/file.md
 
 Purpose:
-  - Context-agnostic verification of NexusMap markdown FORMAT + LINKAGE integrity.
+  - Context-agnostic verification of Diregram markdown FORMAT + LINKAGE integrity.
   - Mirrors the highest-signal checks from the app's import validator and the post-generation checklist.
 
 What it checks (high-signal):
@@ -1630,7 +1630,7 @@ def node_title_from_tree_line(line: str) -> str:
 
 def main() -> None:
     if len(sys.argv) != 2:
-        print("Usage: python3 verify_nexusmap.py /absolute/path/to/file.md")
+        print("Usage: python3 verify_diregram.py /absolute/path/to/file.md")
         raise SystemExit(2)
 
     path = Path(sys.argv[1])

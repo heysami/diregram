@@ -223,7 +223,7 @@ export function Toolbar({
           label="Annotation"
         />
 
-        {/* System Flow quick add tools (optional) */}
+        {/* Tech Flow quick add tools (optional) */}
         {systemFlowTools ? (
           <>
             <div className="mac-sep" />

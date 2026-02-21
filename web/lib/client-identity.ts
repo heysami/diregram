@@ -5,7 +5,7 @@ export type ClientIdentity = {
   badgeClass: string;
 };
 
-const STORAGE_KEY = 'nexusmap.identity.v1';
+const STORAGE_KEY = 'diregram.identity.v1';
 
 function pickBadgeClass(seed: string): string {
   const options = ['mac-fill--dots-1', 'mac-fill--dots-2', 'mac-fill--hatch', 'mac-fill--hatch2', 'mac-fill--checker'];

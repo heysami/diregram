@@ -1,15 +1,15 @@
-export const POST_GEN_CHECKLIST_SYSTEM_FLOW = `Post-Generation Checklist — System Flow (system/integration diagrams)
+export const POST_GEN_CHECKLIST_SYSTEM_FLOW = `Post-Generation Checklist — Tech Flow (system/integration diagrams)
 
 Goal:
   - Ensure #systemflow roots and \`\`\`systemflow-<sfid>\`\`\` blocks are present, valid JSON, and render as intended.
   - Ensure architecture grouping (zones) and sequence ordering (links.order) are coherent.
 
 ☐ Minimum diagrams gate (MUST):
-  → There MUST be at least ONE architecture System Flow diagram (module inventory + zones).
-  → Each sequence diagram MUST be its own System Flow root (1 sequence = 1 systemflow root).
+  → There MUST be at least ONE architecture Tech Flow diagram (module inventory + zones).
+  → Each sequence diagram MUST be its own Tech Flow root (1 sequence = 1 systemflow root).
 
 ☐ Root anchor correctness (MUST):
-  → Tree contains a System Flow root line:
+  → Tree contains a Tech Flow root line:
     - includes #systemflow#
     - includes <!-- sfid:systemflow-N --> with a stable sfid
 
@@ -46,7 +46,7 @@ Goal:
     - dashStyle:"dashed" used for async/background where appropriate
 
 ☐ Anti-patterns (AVOID):
-  - Encoding sequence as main-canvas #flow# nodes (use System Flow for technical diagrams).
+  - Encoding sequence as main-canvas #flow# nodes (use Tech Flow for technical diagrams).
   - Putting multiple unrelated sequences into one systemflow (hard to audit; violates 1 sequence = 1 systemflow root).
   - Unlabeled links (hard to audit).
   - No zones at all for a large architecture diagram (becomes unreadable).

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-NexusMap markdown verifier (repo-local)
+Diregram markdown verifier (repo-local)
 
 Usage:
-  python3 verify_nexusmap.py /absolute/path/to/file.md
+  python3 verify_diregram.py /absolute/path/to/file.md
 
 Scope:
-  - Context-agnostic checks for NexusMap markdown FORMAT + LINKAGE integrity.
+  - Context-agnostic checks for Diregram markdown FORMAT + LINKAGE integrity.
   - Focuses on machine-checkable rules used by the app importer, plus strict tag/actor rules.
 
 Exit codes:
@@ -153,7 +153,7 @@ def expected_actor_for_lane_label(label: str) -> Optional[str]:
 
 def main() -> None:
     if len(sys.argv) != 2:
-        print("Usage: python3 verify_nexusmap.py /absolute/path/to/file.md")
+        print("Usage: python3 verify_diregram.py /absolute/path/to/file.md")
         raise SystemExit(2)
 
     path = Path(sys.argv[1])

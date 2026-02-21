@@ -6,7 +6,7 @@ import { makeSystemFlowState } from '../systemflow';
 export function convertSequenceDiagram(src: string): { title: string; kind: 'diagram'; markdown: string } | { error: string } {
   const lines = normalizeNewlines(src).split('\n');
   const titleLine = lines.find((l) => l.trim().toLowerCase().startsWith('title '));
-  const title = titleLine ? safeSingleLine(titleLine.trim().slice(6)) : 'System flow (sequence)';
+  const title = titleLine ? safeSingleLine(titleLine.trim().slice(6)) : 'Tech flow (sequence)';
 
   type Part = { name: string; kind: string; boxKey: string; icon?: string };
   const parts: Part[] = [];

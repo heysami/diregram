@@ -3,7 +3,7 @@ export type NexusInternalClipboardKind = 'diagramSubtree' | 'gridRange' | 'noteR
 export type NexusInternalClipboardEnvelopeV1 = {
   version: 1;
   kind: NexusInternalClipboardKind;
-  /** NexusMap file id (diagram/note/grid/vision file) that produced this copy/cut. */
+  /** Diregram file id (diagram/note/grid/vision file) that produced this copy/cut. */
   fileId: string;
   /** Epoch ms when copied (best-effort). */
   ts: number;
@@ -15,7 +15,7 @@ export type NexusInternalClipboardEnvelopeV1 = {
   payload: unknown;
 };
 
-export const NEXUS_INTERNAL_CLIPBOARD_MIME = 'application/x-nexusmap-internal+json';
+export const NEXUS_INTERNAL_CLIPBOARD_MIME = 'application/x-diregram-internal+json';
 
 type AnyClipboardEvent = ClipboardEvent | { clipboardData: DataTransfer | null } | null | undefined;
 

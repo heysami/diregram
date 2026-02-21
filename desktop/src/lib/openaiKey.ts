@@ -1,6 +1,6 @@
 import { secureStorage } from './secureStorage';
 
-const KEY = 'nexusmap.sync.openai_api_key.v1';
+const KEY = 'diregram.sync.openai_api_key.v1';
 
 export async function loadOpenAiKey(): Promise<string> {
   const raw = await secureStorage.getItem(KEY);

@@ -1,6 +1,6 @@
-# NexusMap Markdown File Formats: Grid, Note, Vision
+# Diregram Markdown File Formats: Grid, Note, Vision
 
-This document describes **how NexusMap represents the `grid`, `note`, and `vision` file types in Markdown**, with an emphasis on:
+This document describes **how Diregram represents the `grid`, `note`, and `vision` file types in Markdown**, with an emphasis on:
 
 - **Importability**: what you must include so a copied Markdown file can be imported and reconstruct the file.
 - **Non-bloat**: what metadata is unnecessary because the app can infer/regenerate it.
@@ -14,7 +14,7 @@ This document describes **how NexusMap represents the `grid`, `note`, and `visio
 
 ### 1) Optional doc header (`nexus-doc`)
 
-NexusMap supports an optional top-of-file header block:
+Diregram supports an optional top-of-file header block:
 
 ````markdown
 ```nexus-doc
@@ -50,7 +50,7 @@ A `grid` file is a Markdown document containing a fenced JSON block named `gridj
 ```
 ````
 
-NexusMap loads the grid by searching for this block and coercing it into the `GridDocV1` schema (`version: 1`).
+Diregram loads the grid by searching for this block and coercing it into the `GridDocV1` schema (`version: 1`).
 
 ### Minimal required content (to reconstruct a grid)
 
@@ -108,7 +108,7 @@ Because `gridjson` is a **snapshot**, most “bloat vs not” decisions come dow
 
 ### Legacy compatibility
 
-If `gridjson` is missing but the file contains legacy `tablejson`, NexusMap can convert it into a grid document on load.
+If `gridjson` is missing but the file contains legacy `tablejson`, Diregram can convert it into a grid document on load.
 
 ---
 
@@ -177,11 +177,11 @@ Markdown headings/lists/formatting are not used to reconstruct the canvas. Seman
 
 ### Canonical representation
 
-For notes, **the Markdown is the document**. NexusMap parses Markdown into its editor model (TipTap) and serializes back to Markdown.
+For notes, **the Markdown is the document**. Diregram parses Markdown into its editor model (TipTap) and serializes back to Markdown.
 
 ### Supported “semantic” structures
 
-Notes support normal Markdown structures (headings, paragraphs, lists, task items, blockquotes, fenced code blocks) *and* several NexusMap-specific blocks.
+Notes support normal Markdown structures (headings, paragraphs, lists, task items, blockquotes, fenced code blocks) *and* several Diregram-specific blocks.
 
 #### Inline range comments
 
@@ -193,7 +193,7 @@ This has a [[comment:c-1]]commented range[[/comment]].
 
 - **Required for correctness**: the closing `[[/comment]]` must exist; otherwise it’s treated as literal text.
 
-#### NexusMap-specific fenced blocks (typed content)
+#### Diregram-specific fenced blocks (typed content)
 
 Notes support several special fenced blocks. The fence “language” defines a typed block, and the fence body is typically JSON:
 
@@ -238,7 +238,7 @@ Notes are the best fit for “constructable but not bloated” because the seman
 
 - **Necessary**
   - Your Markdown content.
-  - Only the NexusMap fences you actually use.
+  - Only the Diregram fences you actually use.
   - Inline comment markers only where comments exist.
 - **Unnecessary / app-handled**
   - Cursor/selection/scroll/UI state.

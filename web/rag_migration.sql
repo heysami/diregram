@@ -1,5 +1,5 @@
--- NexusMap RAG + KG storage (Supabase Postgres)
--- This extends the existing NexusMap schema (folders/files) with:
+-- Diregram RAG + KG storage (Supabase Postgres)
+-- This extends the existing Diregram schema (folders/files) with:
 -- - pgvector-backed chunk embeddings for RAG
 -- - a persisted semantic knowledge graph (entities + edges) exported by `web/lib/kg-vector-export.ts`
 --

@@ -28,7 +28,7 @@ export type LocalFileStore = {
   lastOpenedFileId: string | null;
 };
 
-const STORAGE_KEY = 'nexusmap.localFileStore.v1';
+const STORAGE_KEY = 'diregram.localFileStore.v1';
 
 export type AccessRole = 'view' | 'edit';
 export type AccessPerson = { email: string; role: AccessRole };

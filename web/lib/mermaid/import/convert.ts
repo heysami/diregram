@@ -59,7 +59,7 @@ export function convertMermaidToNexusMarkdown(
 
   if (type === 'sequence') return convertSequenceDiagram(effectiveSrc);
   if (type === 'mindmap') return convertMindmap(effectiveSrc);
-  if (type === 'block') return convertBlockLikeSystemFlow(effectiveSrc, 'System flow (block)');
+  if (type === 'block') return convertBlockLikeSystemFlow(effectiveSrc, 'Tech flow (block)');
   if (type === 'packet') return convertPacketDiagram(effectiveSrc);
   if (type === 'architecture') return convertArchitectureDiagram(effectiveSrc);
   if (type === 'class') return convertClassDiagram(effectiveSrc);

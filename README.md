@@ -1,6 +1,6 @@
-## NexusMap
+## Diregram
 
-NexusMap is split into two Node.js apps:
+Diregram is split into two Node.js apps:
 
 - `web/`: Next.js frontend (UI, local-first storage, Yjs client)
 - `collab-server/`: Hocuspocus websocket server (Yjs sync)

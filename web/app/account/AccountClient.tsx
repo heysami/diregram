@@ -7,7 +7,7 @@ import { normalizeLayoutDirection, type LayoutDirection } from '@/lib/layout-dir
 import { fetchProfileDefaultLayoutDirection, updateProfileDefaultLayoutDirection } from '@/lib/layout-direction-supabase';
 import { DiregramMark } from '@/components/DiregramMark';
 
-const OPENAI_KEY_STORAGE = 'nexusmap.openaiApiKey.v1';
+const OPENAI_KEY_STORAGE = 'diregram.openaiApiKey.v1';
 
 function loadOpenAiKey(): string {
   if (typeof window === 'undefined') return '';

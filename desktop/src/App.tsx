@@ -13,7 +13,7 @@ import { OpenAiKeySection } from './components/OpenAiKeySection';
 import { EventsList } from './components/EventsList';
 import {
   clearAppConfig,
-  fetchPublicConfigFromNexusMap,
+  fetchPublicConfigFromDiregram,
   loadAppConfig,
   saveAppConfig,
   type AppConfigV1,
@@ -30,15 +30,15 @@ import { projectLocalPath } from './lib/localPaths';
 type AppStep = 'signedOut' | 'signedIn';
 
 export function App() {
-  const syncRootFolderName = 'NexusMap';
+  const syncRootFolderName = 'Diregram';
 
   const [config, setConfig] = useState<AppConfigV1 | null>(null);
   const [supabase, setSupabase] = useState<SupabaseClient | null>(null);
-  const [configHostedUrl, setConfigHostedUrl] = useState<string>(buildEnv.nexusmapHostedUrl || '');
+  const [configHostedUrl, setConfigHostedUrl] = useState<string>(buildEnv.diregramHostedUrl || '');
   const [showAdvancedConfig, setShowAdvancedConfig] = useState<boolean>(false);
   const [configSupabaseUrl, setConfigSupabaseUrl] = useState<string>('');
   const [configAnonKey, setConfigAnonKey] = useState<string>('');
-  const [configApiBaseUrl, setConfigApiBaseUrl] = useState<string>(buildEnv.nexusmapHostedUrl || 'http://localhost:3000');
+  const [configApiBaseUrl, setConfigApiBaseUrl] = useState<string>(buildEnv.diregramApiBaseUrl || 'http://localhost:3000');
 
   const [step, setStep] = useState<AppStep>('signedOut');
   const [email, setEmail] = useState<string>('');
@@ -69,20 +69,20 @@ export function App() {
       const cfg = await loadAppConfig();
       if (!cfg) {
         // Official builds can bake in a hosted URL; auto-fetch config from there.
-        if (buildEnv.nexusmapHostedUrl) {
+        if (buildEnv.diregramHostedUrl) {
           try {
-            setStatus('Connecting to NexusMap…');
-            const pub = await fetchPublicConfigFromNexusMap(buildEnv.nexusmapHostedUrl);
+            setStatus('Connecting to Diregram…');
+            const pub = await fetchPublicConfigFromDiregram(buildEnv.diregramHostedUrl);
             const saved = await saveAppConfig({
               supabaseUrl: pub.supabaseUrl,
               supabaseAnonKey: pub.supabaseAnonKey,
-              nexusmapApiBaseUrl: pub.nexusmapApiBaseUrl,
+              diregramApiBaseUrl: pub.diregramApiBaseUrl,
             });
             setConfig(saved);
-            setConfigHostedUrl(buildEnv.nexusmapHostedUrl);
+            setConfigHostedUrl(buildEnv.diregramHostedUrl);
             setConfigSupabaseUrl(saved.supabaseUrl);
             setConfigAnonKey(saved.supabaseAnonKey);
-            setConfigApiBaseUrl(saved.nexusmapApiBaseUrl);
+            setConfigApiBaseUrl(saved.diregramApiBaseUrl);
             const sb = createSupabaseClient(saved);
             setSupabase(sb);
             setStatus('');
@@ -99,7 +99,7 @@ export function App() {
       setConfig(cfg);
       setConfigSupabaseUrl(cfg.supabaseUrl);
       setConfigAnonKey(cfg.supabaseAnonKey);
-      setConfigApiBaseUrl(cfg.nexusmapApiBaseUrl);
+      setConfigApiBaseUrl(cfg.diregramApiBaseUrl);
 
       const sb = createSupabaseClient(cfg);
       setSupabase(sb);
@@ -311,17 +311,17 @@ export function App() {
     if (!base) return;
     setStatus('Connecting…');
     try {
-      const pub = await fetchPublicConfigFromNexusMap(base);
+      const pub = await fetchPublicConfigFromDiregram(base);
       const next = await saveAppConfig({
         supabaseUrl: pub.supabaseUrl,
         supabaseAnonKey: pub.supabaseAnonKey,
-        nexusmapApiBaseUrl: pub.nexusmapApiBaseUrl,
+        diregramApiBaseUrl: pub.diregramApiBaseUrl,
       });
 
       setConfigHostedUrl(base);
       setConfigSupabaseUrl(next.supabaseUrl);
       setConfigAnonKey(next.supabaseAnonKey);
-      setConfigApiBaseUrl(next.nexusmapApiBaseUrl);
+      setConfigApiBaseUrl(next.diregramApiBaseUrl);
       setConfig(next);
 
       const sb = createSupabaseClient(next);
@@ -517,9 +517,9 @@ export function App() {
     if (!vp) return;
     setStatus('Writing AI bundle into vault…');
     try {
-      await writeAiBundleToVault({ invoke, vaultPath: vp, apiBaseUrl: config?.nexusmapApiBaseUrl || null });
+      await writeAiBundleToVault({ invoke, vaultPath: vp, apiBaseUrl: config?.diregramApiBaseUrl || null });
       setStatus('');
-      setSyncInfo('Wrote the full AI bundle into `NexusMap AI/`.');
+      setSyncInfo('Wrote the full AI bundle into `Diregram AI/`.');
     } catch (e: any) {
       setStatus(`Write guide failed: ${e?.message ?? String(e)}`);
     }
@@ -620,7 +620,7 @@ export function App() {
                 ) : null}
 
                 <div className="muted" style={{ marginTop: 10 }}>
-                  When you choose a vault, NexusMap Sync will mirror every project into{' '}
+                  When you choose a vault, Diregram Sync will mirror every project into{' '}
                   <span className="mono">{syncRootFolderName}/&lt;ProjectName&gt;/…</span>.
                 </div>
 

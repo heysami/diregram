@@ -288,7 +288,7 @@ function stripDataObjectLinksFromSystemFlows(markdown: string, targetId: string)
 /**
  * Delete a data object and clean up references across:
  * - node lines (<!-- do:... --> + dependent doattrs/dostatus)
- * - system flow blocks (systemflow-*)
+ * - tech flow blocks (systemflow-*)
  * - expanded node metadata blocks (expanded-metadata-*)
  * - expanded grid blocks (expanded-grid-*)
  */

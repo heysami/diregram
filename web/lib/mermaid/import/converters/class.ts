@@ -115,8 +115,8 @@ export function convertClassDiagram(src: string): { title: string; kind: 'diagra
     .filter(Boolean) as SystemFlowLink[];
 
   const sfid = 'systemflow-1';
-  const sf = makeSystemFlowState({ sfid, title: 'System flow (class diagram)', boxes, links });
+  const sf = makeSystemFlowState({ sfid, title: 'Tech flow (class diagram)', boxes, links });
   const md = renderNodeLines([sf.rootLine]).markdown + makeSeparatorAndBlocks(sf.blocks);
-  return { title: 'System flow (class diagram)', kind: 'diagram', markdown: md };
+  return { title: 'Tech flow (class diagram)', kind: 'diagram', markdown: md };
 }
 

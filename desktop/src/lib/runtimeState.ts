@@ -8,7 +8,7 @@ export type RuntimeStateV1 = {
   pulling: boolean;
 };
 
-const KEY = 'nexusmap.sync.runtime.v1';
+const KEY = 'diregram.sync.runtime.v1';
 
 export async function loadRuntimeState(): Promise<RuntimeStateV1 | null> {
   const raw = await secureStorage.getItem(KEY);

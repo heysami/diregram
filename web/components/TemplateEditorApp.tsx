@@ -391,11 +391,11 @@ function parseSystemFlowTemplate(rendered: string): { version: 1; name: string; 
   const m = src.match(/```nexus-systemflow[ \t]*\n([\s\S]*?)\n```/);
   const body = (m ? m[1] : src).trim();
   const parsed = safeJsonParse<any>(body);
-  if (!parsed || typeof parsed !== 'object') throw new Error('Invalid system flow template payload.');
-  if (parsed.version !== 1) throw new Error('Unsupported system flow template version.');
-  const name = typeof parsed.name === 'string' ? parsed.name : 'System Flow';
+  if (!parsed || typeof parsed !== 'object') throw new Error('Invalid tech flow template payload.');
+  if (parsed.version !== 1) throw new Error('Unsupported tech flow template version.');
+  const name = typeof parsed.name === 'string' ? parsed.name : 'Tech Flow';
   const state = parsed.state as SystemFlowState;
-  if (!state || typeof state !== 'object') throw new Error('Invalid system flow state.');
+  if (!state || typeof state !== 'object') throw new Error('Invalid tech flow state.');
   return { version: 1, name, state };
 }
 

@@ -1,4 +1,4 @@
-const PREFIX = 'nexusmap.fileSnapshot.v1';
+const PREFIX = 'diregram.fileSnapshot.v1';
 
 function keyForFileId(fileId: string): string {
   return `${PREFIX}:${fileId}`;

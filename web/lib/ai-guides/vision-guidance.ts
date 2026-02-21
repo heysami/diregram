@@ -4,11 +4,11 @@ Vision docs; importable markdown
 ===============================================================================
 
 Goal
-Generate a NexusMap Vision document that can be imported/opened in the Vision editor, plus a design-system-derived UI component library for rapid vector UI mockups.
+Generate a Diregram Vision document that can be imported/opened in the Vision editor, plus a design-system-derived UI component library for rapid vector UI mockups.
 
-IMPORTANT: A Vision document is NOT the NexusMap tree format.
+IMPORTANT: A Vision document is NOT the Diregram tree format.
 - You MAY use normal markdown headings/lists.
-- You MUST include the required fenced blocks so NexusMap recognizes this file as kind:vision.
+- You MUST include the required fenced blocks so Diregram recognizes this file as kind:vision.
 
 ===============================================================================
 SECTION 1 — REQUIRED VISION MARKDOWN SKELETON (MUST)
@@ -90,7 +90,7 @@ Constraints (MUST):
 - Keep each SVG under a few KB.
 
 Usage (FYI):
-- In NexusMap Vision, create/select a card and paste SVG — the editor will import it as editable vector shapes.
+- In Diregram Vision, create/select a card and paste SVG — the editor will import it as editable vector shapes.
 
 ===============================================================================
 SECTION 5 — POST-GEN SELF-CHECK (MUST)

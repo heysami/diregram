@@ -46,7 +46,7 @@ class ConvertResponse(BaseModel):
     outputFormat: Literal["markdown", "json"]
 
 
-app = FastAPI(title="NexusMap Docling Service")
+app = FastAPI(title="Diregram Docling Service")
 
 
 @app.get("/health")

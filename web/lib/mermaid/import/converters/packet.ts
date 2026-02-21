@@ -68,8 +68,8 @@ export function convertPacketDiagram(src: string): { title: string; kind: 'diagr
     x += w + 1;
   });
 
-  const sf = makeSystemFlowState({ sfid, title: 'System flow (packet)', boxes, links });
+  const sf = makeSystemFlowState({ sfid, title: 'Tech flow (packet)', boxes, links });
   const md = renderNodeLines([sf.rootLine]).markdown + makeSeparatorAndBlocks(sf.blocks);
-  return { title: 'System flow (packet)', kind: 'diagram', markdown: md };
+  return { title: 'Tech flow (packet)', kind: 'diagram', markdown: md };
 }
 

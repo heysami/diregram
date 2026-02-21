@@ -189,7 +189,7 @@ export async function exportProjectBundleZip(res: {
   // Ensure the underlying buffer is a real ArrayBuffer for Blob typing.
   const bytes = new Uint8Array(zipped);
   const blob = new Blob([bytes], { type: 'application/zip' });
-  const filename = `nexusmap-bundle-${rootProjectFolderId}-${exportedAt.slice(0, 10)}.zip`;
+  const filename = `diregram-bundle-${rootProjectFolderId}-${exportedAt.slice(0, 10)}.zip`;
   return { blob, filename };
 }
 

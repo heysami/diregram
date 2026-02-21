@@ -89,20 +89,20 @@ fn now_iso() -> String {
   DateTime::<Utc>::from(Utc::now()).to_rfc3339()
 }
 
-fn nexusmap_dir(vault_path: &str) -> PathBuf {
-  Path::new(vault_path).join(".nexusmap")
+fn diregram_dir(vault_path: &str) -> PathBuf {
+  Path::new(vault_path).join(".diregram")
 }
 
 fn mapping_path(vault_path: &str) -> PathBuf {
-  nexusmap_dir(vault_path).join("sync.json")
+  diregram_dir(vault_path).join("sync.json")
 }
 
 fn events_path(vault_path: &str) -> PathBuf {
-  nexusmap_dir(vault_path).join("events.jsonl")
+  diregram_dir(vault_path).join("events.jsonl")
 }
 
 fn trash_dir(vault_path: &str) -> PathBuf {
-  nexusmap_dir(vault_path).join("trash")
+  diregram_dir(vault_path).join("trash")
 }
 
 fn archive_file_to_trash(vault_path: &str, rel_path: &str) -> Result<Option<PathBuf>, String> {
@@ -134,7 +134,7 @@ pub struct SyncEvent {
 }
 
 fn append_event(vault_path: &str, ev: &SyncEvent) -> Result<(), String> {
-  fs::create_dir_all(nexusmap_dir(vault_path)).map_err(|e| e.to_string())?;
+  fs::create_dir_all(diregram_dir(vault_path)).map_err(|e| e.to_string())?;
   let p = events_path(vault_path);
   let mut f = OpenOptions::new()
     .create(true)
@@ -172,7 +172,7 @@ fn read_mapping(vault_path: &str) -> Result<Option<SyncMappingV1>, String> {
 }
 
 fn write_mapping(vault_path: &str, mapping: &SyncMappingV1) -> Result<(), String> {
-  let dir = nexusmap_dir(vault_path);
+  let dir = diregram_dir(vault_path);
   fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
   let p = mapping_path(vault_path);
   let text = serde_json::to_string_pretty(mapping).map_err(|e| e.to_string())?;
@@ -586,7 +586,7 @@ pub async fn sync_init(vault_path: String, project_folder_id: String) -> Result<
 
   if let Some(existing) = read_mapping(&vault_path)? {
     if existing.project_folder_id != project_folder_id {
-      return Err("This vault is already linked to a different NexusMap project. Remove .nexusmap/sync.json to relink.".to_string());
+      return Err("This vault is already linked to a different Diregram project. Remove .diregram/sync.json to relink.".to_string());
     }
     return Ok(existing);
   }
@@ -645,7 +645,7 @@ pub async fn sync_initial_import(vault_path: String, project_folder_id: String, 
     }
 
     // Ignore internal folder
-    if p.components().any(|c| c.as_os_str() == ".nexusmap") {
+    if p.components().any(|c| c.as_os_str() == ".diregram") {
       continue;
     }
 
@@ -749,7 +749,7 @@ async fn sync_one_path(vault_path: &str, project_folder_id: &str, auth: &Supabas
   if !abs_path.starts_with(root) {
     return Ok(());
   }
-  if abs_path.components().any(|c| c.as_os_str() == ".nexusmap") {
+  if abs_path.components().any(|c| c.as_os_str() == ".diregram") {
     return Ok(());
   }
 
@@ -1536,7 +1536,7 @@ pub async fn sync_pull_once(vault_path: String, project_folder_id: String, auth:
       let ts = Utc::now().format("%Y-%m-%dT%H%M%SZ").to_string();
       let stem = abs_path.file_stem().and_then(|s| s.to_str()).unwrap_or("conflict");
       let ext = abs_path.extension().and_then(|e| e.to_str()).unwrap_or("md");
-      let conflict_name = format!("{stem} (conflict from NexusMap {ts}).{ext}");
+      let conflict_name = format!("{stem} (conflict from Diregram {ts}).{ext}");
       let conflict_path = abs_path.with_file_name(conflict_name);
       if let Err(e) = fs::write(&conflict_path, &remote_content) {
         summary.errors.push(e.to_string());
@@ -1608,7 +1608,7 @@ pub async fn sync_pull_once(vault_path: String, project_folder_id: String, auth:
       let ts = Utc::now().format("%Y-%m-%dT%H%M%SZ").to_string();
       let stem = abs_path.file_stem().and_then(|s| s.to_str()).unwrap_or("resource");
       let ext = abs_path.extension().and_then(|e| e.to_str()).unwrap_or("md");
-      let conflict_name = format!("{stem} (conflict from NexusMap {ts}).{ext}");
+      let conflict_name = format!("{stem} (conflict from Diregram {ts}).{ext}");
       let conflict_path = abs_path.with_file_name(conflict_name);
       if let Err(e) = fs::write(&conflict_path, rr.markdown.as_bytes()) {
         summary.errors.push(e.to_string());
@@ -1641,7 +1641,7 @@ pub async fn sync_pull_once(vault_path: String, project_folder_id: String, auth:
     );
   }
 
-  // Reconcile remote deletions (safe: archive local to `.nexusmap/trash/...`).
+  // Reconcile remote deletions (safe: archive local to `.diregram/trash/...`).
   let mut to_remove_files: Vec<String> = Vec::new();
   for (rel, fm) in &mapping.files {
     if !remote_file_ids.contains(&fm.file_id) {
@@ -1658,7 +1658,7 @@ pub async fn sync_pull_once(vault_path: String, project_folder_id: String, auth:
         ts: now_iso(),
         kind: "pull_delete".to_string(),
         path: rel.clone(),
-        detail: "Remote file was deleted; archived local copy to .nexusmap/trash/".to_string(),
+        detail: "Remote file was deleted; archived local copy to .diregram/trash/".to_string(),
       },
     );
   }
@@ -1679,7 +1679,7 @@ pub async fn sync_pull_once(vault_path: String, project_folder_id: String, auth:
         ts: now_iso(),
         kind: "pull_delete".to_string(),
         path: rel.clone(),
-        detail: "Remote resource was deleted; archived local copy to .nexusmap/trash/".to_string(),
+        detail: "Remote resource was deleted; archived local copy to .diregram/trash/".to_string(),
       },
     );
   }

@@ -49,7 +49,7 @@ export function ConnectPanel({
             <input value={anonKey} onChange={(e) => onAnonKeyChange(e.target.value)} placeholder="Supabase anon key" />
           </div>
           <div className="row" style={{ marginTop: 10 }}>
-            <input value={apiBaseUrl} onChange={(e) => onApiBaseUrlChange(e.target.value)} placeholder="NexusMap API base URL" />
+            <input value={apiBaseUrl} onChange={(e) => onApiBaseUrlChange(e.target.value)} placeholder="Diregram API base URL" />
           </div>
         </div>
       ) : null}

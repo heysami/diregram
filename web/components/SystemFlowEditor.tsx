@@ -103,9 +103,9 @@ export function SystemFlowEditor({
     const m = src.match(/```nexus-systemflow-box[ \t]*\n([\s\S]*?)\n```/);
     const body = (m ? m[1] : src).trim();
     const parsed = JSON.parse(body) as unknown;
-    if (!parsed || typeof parsed !== 'object') throw new Error('Invalid system flow template payload.');
+    if (!parsed || typeof parsed !== 'object') throw new Error('Invalid tech flow template payload.');
     const r = parsed as Record<string, unknown>;
-    if (r.version !== 1) throw new Error('Unsupported system flow box template version.');
+    if (r.version !== 1) throw new Error('Unsupported tech flow box template version.');
     const name = typeof r.name === 'string' ? r.name : 'Box';
     const gridWidth = Number(r.gridWidth);
     const gridHeight = Number(r.gridHeight);
@@ -437,7 +437,7 @@ export function SystemFlowEditor({
     persist({ ...state, zones: [...state.zones, zone] });
   }, [nextZoneId, persist, selectedBoxKeys, state]);
 
-  // Bottom-toolbar integration (EditorApp dispatches these events when System Flow tab is active)
+  // Bottom-toolbar integration (EditorApp dispatches these events when Tech Flow tab is active)
   useEffect(() => {
     const onTool = (e: Event) => {
       const ce = e as CustomEvent<{ type?: string }>;
@@ -1348,7 +1348,7 @@ export function SystemFlowEditor({
                 }}
                 data-sf-interactive="1"
               >
-                <div className="text-[10px] uppercase tracking-wide text-slate-500 font-semibold mb-1">System flow annotation</div>
+                <div className="text-[10px] uppercase tracking-wide text-slate-500 font-semibold mb-1">Tech flow annotation</div>
                 <textarea
                   value={annotationDraft}
                   onChange={(e) => setAnnotationDraft(e.target.value)}
@@ -1452,7 +1452,7 @@ export function SystemFlowEditor({
             >
               <div className="mac-titlebar">
                 <div className="mac-title">
-                  {selectedBox ? 'Box' : selectedLink ? 'Link' : selectedZone ? 'Zone' : steps.length ? 'Steps' : 'System Flow'}
+                  {selectedBox ? 'Box' : selectedLink ? 'Link' : selectedZone ? 'Zone' : steps.length ? 'Steps' : 'Tech Flow'}
                 </div>
               </div>
               <div className="p-3 overflow-auto" style={{ maxHeight: selectedBox || selectedLink ? '70vh' : '240px' }}>
@@ -1767,7 +1767,7 @@ export function SystemFlowEditor({
         {!embedded ? (
           <InsertFromTemplateModal
             open={insertFromTemplateOpen}
-            title="Insert system flow box"
+            title="Insert tech flow box"
             files={templateFiles || []}
             loadMarkdown={loadTemplateMarkdown || (async () => '')}
             accept={{ targetKind: 'diagram', mode: 'appendFragment', fragmentKind: 'systemFlowBox' }}

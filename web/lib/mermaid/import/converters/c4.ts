@@ -5,7 +5,7 @@ import { layoutBoxesInGrid, makeSystemFlowState } from '../systemflow';
 
 export function convertC4(src: string): { title: string; kind: 'diagram'; markdown: string } | { error: string } {
   const lines = normalizeNewlines(src).split('\n');
-  const title = 'System flow (C4)';
+  const title = 'Tech flow (C4)';
   type Elem = { id: string; label: string; kind: string };
   const elems: Elem[] = [];
   const elemById = new Map<string, Elem>();

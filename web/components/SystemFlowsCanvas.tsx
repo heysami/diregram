@@ -32,7 +32,7 @@ export function SystemFlowsCanvas({
   globalTemplatesEnabled,
 }: {
   doc: Y.Doc;
-  /** Current file id (reserved for clipboard constraints; not used by system flow yet). */
+  /** Current file id (reserved for clipboard constraints; not used by tech flow yet). */
   fileId: string | null;
   presence?: PresenceController | null;
   activeTool: ToolType;
@@ -69,12 +69,12 @@ export function SystemFlowsCanvas({
     const m = src.match(/```nexus-systemflow[ \t]*\n([\s\S]*?)\n```/);
     const body = (m ? m[1] : src).trim();
     const parsed = JSON.parse(body) as unknown;
-    if (!parsed || typeof parsed !== 'object') throw new Error('Invalid system flow template payload.');
+    if (!parsed || typeof parsed !== 'object') throw new Error('Invalid tech flow template payload.');
     const r = parsed as Record<string, unknown>;
-    if (r.version !== 1) throw new Error('Unsupported system flow template version.');
-    const name = typeof r.name === 'string' ? r.name : 'System Flow';
+    if (r.version !== 1) throw new Error('Unsupported tech flow template version.');
+    const name = typeof r.name === 'string' ? r.name : 'Tech Flow';
     const state = r.state as unknown;
-    if (!state || typeof state !== 'object') throw new Error('Missing system flow state.');
+    if (!state || typeof state !== 'object') throw new Error('Missing tech flow state.');
     return { version: 1, name, state: state as SystemFlowState };
   };
 
@@ -116,7 +116,7 @@ export function SystemFlowsCanvas({
 
   const deleteSelectedSystemFlow = useCallback(() => {
     if (!selectedSfid || !selectedRoot) return;
-    const ok = window.confirm('Delete this system flow? This removes the whole system flow and its saved diagram state.');
+    const ok = window.confirm('Delete this tech flow? This removes the whole tech flow and its saved diagram state.');
     if (!ok) return;
     deleteSystemFlowFromDoc({ doc, sfid: selectedSfid, root: selectedRoot });
 
@@ -127,7 +127,7 @@ export function SystemFlowsCanvas({
     if (!selectedSfid || !selectedRoot) return;
     if (!onSaveTemplateFile) return;
     const state = loadSystemFlowStateFromDoc(doc, selectedSfid);
-    const payload: SystemFlowTemplateV1 = { version: 1, name: selectedRoot.content || 'System Flow', state };
+    const payload: SystemFlowTemplateV1 = { version: 1, name: selectedRoot.content || 'Tech Flow', state };
     const payloadMd = ['```nexus-systemflow', JSON.stringify(payload, null, 2), '```', ''].join('\n');
     const headerBase: Omit<NexusTemplateHeader, 'name'> = {
       version: 1,
@@ -147,7 +147,7 @@ export function SystemFlowsCanvas({
     async (rendered: string) => {
       const tpl = parseSystemFlowTemplate(rendered);
       const sfid = nextSystemFlowSfid(systemFlowRoots);
-      const name = String(tpl.name || `System Flow ${sfid.split('-')[1]}`);
+      const name = String(tpl.name || `Tech Flow ${sfid.split('-')[1]}`);
       const yText = doc.getText('nexus');
       const text = yText.toString();
       const sep = text.indexOf('\n---\n');
@@ -167,7 +167,7 @@ export function SystemFlowsCanvas({
 
   const createNewSystemFlow = () => {
     const sfid = nextSystemFlowSfid(systemFlowRoots);
-    const name = `System Flow ${sfid.split('-')[1]}`;
+    const name = `Tech Flow ${sfid.split('-')[1]}`;
     const yText = doc.getText('nexus');
     const text = yText.toString();
     const sep = text.indexOf('\n---\n');
@@ -191,7 +191,7 @@ export function SystemFlowsCanvas({
       <div className="w-[280px] max-w-[35vw] min-w-[200px] m-4 mac-window overflow-hidden shrink">
         {viewBarSpacer}
         <div className="mac-titlebar">
-          <div className="mac-title">System Flows</div>
+          <div className="mac-title">Tech Flows</div>
           <div className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-1">
             {selectedRoot && onSaveTemplateFile ? (
               <button
@@ -200,7 +200,7 @@ export function SystemFlowsCanvas({
                 onClick={() => {
                   void saveSelectedSystemFlowAsTemplate().catch(() => {});
                 }}
-                title="Save this system flow as a template"
+                title="Save this tech flow as a template"
               >
                 Save template
               </button>
@@ -210,12 +210,12 @@ export function SystemFlowsCanvas({
                 type="button"
                 className="mac-btn"
                 onClick={() => setInsertSystemFlowFromTemplateOpen(true)}
-                title="Create a new system flow from a template"
+                title="Create a new tech flow from a template"
               >
                 Template…
               </button>
             ) : null}
-            <button type="button" onClick={createNewSystemFlow} className="mac-btn" title="Create new system flow">
+            <button type="button" onClick={createNewSystemFlow} className="mac-btn" title="Create new tech flow">
               <Plus size={14} />
             </button>
           </div>
@@ -223,7 +223,7 @@ export function SystemFlowsCanvas({
         <div className="p-2 overflow-auto">
           {systemFlowRoots.length === 0 ? (
             <div className="p-2 text-xs text-slate-500">
-              No system flows yet. Click <span className="font-semibold">New</span> to create one.
+              No tech flows yet. Click <span className="font-semibold">New</span> to create one.
             </div>
           ) : (
             <div className="flex flex-col gap-1">
@@ -257,7 +257,7 @@ export function SystemFlowsCanvas({
                 <button
                   type="button"
                   className="mac-btn"
-                  title="Delete this system flow"
+                  title="Delete this tech flow"
                   onClick={deleteSelectedSystemFlow}
                 >
                   <Trash2 size={12} />
@@ -293,7 +293,7 @@ export function SystemFlowsCanvas({
                       setIsRenaming(true);
                       setRenameDraft(selectedRoot.content || '');
                     }}
-                    title="Rename system flow"
+                    title="Rename tech flow"
                   >
                     <Pencil size={12} />
                     Rename
@@ -323,16 +323,16 @@ export function SystemFlowsCanvas({
         ) : (
           <div className="absolute inset-0 mac-window overflow-hidden">
             <div className="mac-titlebar">
-              <div className="mac-title">System Flow</div>
+              <div className="mac-title">Tech Flow</div>
             </div>
-            <div className="p-4 text-sm text-slate-700">Select a system flow on the left…</div>
+            <div className="p-4 text-sm text-slate-700">Select a tech flow on the left…</div>
           </div>
         )}
       </div>
 
       <InsertFromTemplateModal
         open={insertSystemFlowFromTemplateOpen}
-        title="New system flow from template"
+        title="New tech flow from template"
         files={templateFiles || []}
         loadMarkdown={loadTemplateMarkdown || (async () => '')}
         accept={{ targetKind: 'diagram', mode: 'appendFragment', fragmentKind: 'systemFlow' }}

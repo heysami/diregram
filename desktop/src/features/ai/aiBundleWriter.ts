@@ -26,7 +26,7 @@ export async function writeAiBundleToVault(opts: {
   const hosted = opts.apiBaseUrl ? await loadAiBundleFromHosted(opts.apiBaseUrl) : null;
   const bundle = hosted ?? buildAiGuideBundle();
 
-  await opts.invoke('vault_ensure_dir', { vaultPath: vp, relativePath: 'NexusMap AI' }).catch(() => {});
+  await opts.invoke('vault_ensure_dir', { vaultPath: vp, relativePath: 'Diregram AI' }).catch(() => {});
   for (const f of bundle) {
     // eslint-disable-next-line no-await-in-loop
     await opts.invoke('vault_write_text_file', { vaultPath: vp, relativePath: f.relativePath, content: f.content });

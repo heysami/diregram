@@ -28,9 +28,9 @@ function buildPlainTextSteps() {
     '- Convert resources to markdown (e.g. via Docling) so the AI can cite them cleanly.',
     '',
     'Stage 2 — Generate + Vision assets + verification',
-    '- In Cursor (Agent mode), ask it to create the NexusMap project you want, explicitly linking to the markdown resources and following the guideline format.',
+    '- In Cursor (Agent mode), ask it to create the Diregram project you want, explicitly linking to the markdown resources and following the guideline format.',
     '- If there is a design system or you have an online system, generate Vision assets as part of the generation workflow.',
-    '- After generation, run the verification sequence: verify Data Objects, then re-check IA + Expanded, then Swimlanes, then System Flow.',
+    '- After generation, run the verification sequence: verify Data Relationship, then re-check IA + Expanded, then Swimlanes, then Tech Flow.',
     '',
     'Stage 3 — Import + tweak + notes + review Semantic KG',
     '- Once they are ok, import to Diagram, import to Vision, and if your resources have Excel convert to CSV and upload to the Grid.',
@@ -42,7 +42,7 @@ function buildPlainTextSteps() {
     '- Build the Knowledge Base for RAG (embeddings + semantic KG).',
     '',
     'Stage 5 — MCP + build the app',
-    '- Create/use an MCP server to expose the RAG tools (see mcp-server-nexusmap-rag-hosted/ and mcp-server-nexusmap-rag/). BYOK: provide your own AI API key in the client (e.g. Cursor) as header x-openai-api-key.',
+    '- Create/use an MCP server to expose the RAG tools (see the `mcp-server-*` folders in this repo). BYOK: provide your own AI API key in the client (e.g. Cursor) as header x-openai-api-key.',
     '- Back in Cursor, ask it to build the app using the RAG you set up through MCP.',
     '',
   ].join('\n');
@@ -71,7 +71,7 @@ export function AiUsageHelpModal({ open, onClose }: { open: boolean; onClose: ()
             title: 'Convert resources to markdown',
             detail: (
               <>
-                Convert your resources to markdown (e.g. via Docling) so the AI can reference consistent text. In NexusMap, this is typically done via the workspace{' '}
+                Convert your resources to markdown (e.g. via Docling) so the AI can reference consistent text. In Diregram, this is typically done via the workspace{' '}
                 <span className="font-semibold">Import</span> tab.
               </>
             ),
@@ -84,7 +84,7 @@ export function AiUsageHelpModal({ open, onClose }: { open: boolean; onClose: ()
         steps: [
           {
             icon: Sparkles,
-            title: 'Generate the NexusMap project (Cursor Agent mode)',
+            title: 'Generate the Diregram project (Cursor Agent mode)',
             detail: (
               <>
                 Ask Cursor in Agent mode to create the project that you want, linking to the resources that are already markdown, and following the format of the guideline.
@@ -101,9 +101,9 @@ export function AiUsageHelpModal({ open, onClose }: { open: boolean; onClose: ()
             title: 'Verification sequence (post-generation)',
             detail: (
               <>
-                After generation, run through the list of sequence. After running through <span className="font-semibold">Data Objects</span> and though you verify again the{' '}
+                After generation, run through the list of sequence. After running through <span className="font-semibold">Data Relationship</span> and though you verify again the{' '}
                 <span className="font-semibold">IA + Expanded</span>. Then continue to <span className="font-semibold">Swimlane</span> and lastly the{' '}
-                <span className="font-semibold">System Flow</span>.
+                <span className="font-semibold">Tech Flow</span>.
               </>
             ),
           },
@@ -156,7 +156,7 @@ export function AiUsageHelpModal({ open, onClose }: { open: boolean; onClose: ()
             detail: (
               <>
                 Once ready make a mcp (guide on sample code for mcp) for cursor with the url and ai api key. We have BYOK policy. Sample code lives in{' '}
-                <code className="font-mono">mcp-server-nexusmap-rag-hosted/</code> and <code className="font-mono">mcp-server-nexusmap-rag/</code>. In Cursor, the key is
+                the MCP server folders under <code className="font-mono">mcp-server-*/</code>. In Cursor, the key is
                 typically passed as header <code className="font-mono">x-openai-api-key</code>.
               </>
             ),
@@ -220,7 +220,7 @@ export function AiUsageHelpModal({ open, onClose }: { open: boolean; onClose: ()
 
         <div className="p-4 flex-1 min-h-0 overflow-auto text-[12px] space-y-4">
           <div className="text-[11px] text-slate-600">
-            This is the recommended end-to-end sequence for generating, validating, importing, exporting, and turning a NexusMap project into a queryable RAG knowledge base.
+            This is the recommended end-to-end sequence for generating, validating, importing, exporting, and turning a Diregram project into a queryable RAG knowledge base.
           </div>
 
           <div className="flex flex-wrap gap-2">

@@ -98,7 +98,7 @@ function sseWriteText(res, event, text) {
 function bearerUnauthorized(res, message) {
   // Hint MCP clients this is bearer-token auth, not OAuth.
   // (Prevents some clients from attempting OAuth dynamic registration.)
-  res.setHeader('WWW-Authenticate', 'Bearer realm="nexusmap-mcp", error="invalid_token"');
+  res.setHeader('WWW-Authenticate', 'Bearer realm="diregram-mcp", error="invalid_token"');
   return res.status(401).json({ error: message || 'Unauthorized' });
 }
 
@@ -128,13 +128,13 @@ async function ragQueryScoped(share, args, opts) {
   });
 
   if (!openaiApiKey) {
-    throw new Error('OpenAI key required: pass openaiApiKey (sk-...) or call nexusmap_set_openai_key once per session.');
+    throw new Error('OpenAI key required: pass openaiApiKey (sk-...) or call diregram_set_openai_key once per session.');
   }
 
   const embedding = (await embedOpenAI({ apiKey: openaiApiKey, model: embeddingModel, input: [a.query] }))[0];
 
   const projectId = share.projectFolderId ? share.projectFolderId : String(opts?.projectFolderId || '').trim();
-  if (!projectId) throw new Error('Missing project: use nexusmap_list_projects and nexusmap_set_project first, or use a project-scoped MCP token.');
+  if (!projectId) throw new Error('Missing project: use diregram_list_projects and diregram_set_project first, or use a project-scoped MCP token.');
 
   const { data, error } = await supabase.rpc('match_rag_chunks', {
     query_embedding: embedding,
@@ -307,7 +307,7 @@ app.post('/messages', async (req, res) => {
     if (method === 'initialize') {
       sendResult({
         protocolVersion: '2024-11-05',
-        serverInfo: { name: 'nexusmap-rag-hosted', version: '0.1.0' },
+        serverInfo: { name: 'diregram-rag-hosted', version: '0.1.0' },
         capabilities: { tools: {} },
       });
       return res.status(202).end();
@@ -317,7 +317,7 @@ app.post('/messages', async (req, res) => {
       sendResult({
         tools: [
           {
-            name: 'nexusmap_set_openai_key',
+            name: 'diregram_set_openai_key',
             description: 'Store your OpenAI API key for this MCP session (in-memory only).',
             inputSchema: {
               type: 'object',
@@ -328,7 +328,7 @@ app.post('/messages', async (req, res) => {
             },
           },
           {
-            name: 'nexusmap_list_projects',
+            name: 'diregram_list_projects',
             description: 'List projects available to this MCP token (account-scoped tokens only).',
             inputSchema: {
               type: 'object',
@@ -337,19 +337,19 @@ app.post('/messages', async (req, res) => {
             },
           },
           {
-            name: 'nexusmap_set_project',
+            name: 'diregram_set_project',
             description: 'Select which project to query (account-scoped tokens only).',
             inputSchema: {
               type: 'object',
               properties: {
-                publicProjectId: { type: 'string', description: 'Project public id (rag_...) from nexusmap_list_projects' },
+                publicProjectId: { type: 'string', description: 'Project public id (rag_...) from diregram_list_projects' },
               },
               required: ['publicProjectId'],
             },
           },
           {
-            name: 'nexusmap_rag_query',
-            description: 'Query the NexusMap project knowledge base (scoped by share token).',
+            name: 'diregram_rag_query',
+            description: 'Query the Diregram project knowledge base (scoped by share token).',
             inputSchema: {
               type: 'object',
               properties: {
@@ -371,7 +371,7 @@ app.post('/messages', async (req, res) => {
     if (method === 'tools/call') {
       const toolName = String(params?.name || '');
       const args = params?.arguments || {};
-      if (toolName === 'nexusmap_set_openai_key') {
+      if (toolName === 'diregram_set_openai_key') {
         const key = String(args?.openaiApiKey || '').trim();
         if (!key) throw new Error('Missing openaiApiKey');
         sess.openaiApiKey = key;
@@ -380,14 +380,14 @@ app.post('/messages', async (req, res) => {
         return res.status(202).end();
       }
 
-      if (toolName === 'nexusmap_list_projects') {
+      if (toolName === 'diregram_list_projects') {
         if (sess.share.scope !== 'account') throw new Error('list_projects requires an account-scoped token');
         const projects = await listProjectsForOwner(sess.share.ownerId);
         sendResult({ content: [{ type: 'text', text: JSON.stringify({ ok: true, projects }, null, 2) }] });
         return res.status(202).end();
       }
 
-      if (toolName === 'nexusmap_set_project') {
+      if (toolName === 'diregram_set_project') {
         if (sess.share.scope !== 'account') throw new Error('set_project requires an account-scoped token');
         const pid = String(args?.publicProjectId || '').trim();
         if (!pid) throw new Error('Missing publicProjectId');
@@ -407,7 +407,7 @@ app.post('/messages', async (req, res) => {
         return res.status(202).end();
       }
 
-      if (toolName === 'nexusmap_rag_query') {
+      if (toolName === 'diregram_rag_query') {
         let projectFolderId = '';
         if (sess.share.scope === 'account') {
           const pid = String(sess.activePublicProjectId || '').trim();

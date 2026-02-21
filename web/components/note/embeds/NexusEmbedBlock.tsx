@@ -19,7 +19,7 @@ export type NexusEmbedSpec =
       id: string;
       kind: 'systemflow';
       fileId?: string;
-      /** System flow id, e.g. "systemflow-1" */
+      /** Tech flow id, e.g. "systemflow-1" */
       ref: string;
     }
   | {
@@ -137,7 +137,7 @@ export function NexusEmbedBlock({
     return wrap(
       <div className="my-4 rounded-lg border border-slate-200 bg-white overflow-hidden">
         <div className="px-3 py-2 border-b bg-slate-50 text-[11px] font-semibold text-slate-700">
-          System Flow <span className="font-mono opacity-70">{spec.ref}</span>
+          Tech Flow <span className="font-mono opacity-70">{spec.ref}</span>
         </div>
         <div className="h-[420px] relative">
           <div className="absolute inset-0 pointer-events-none">
@@ -178,7 +178,7 @@ export function NexusEmbedBlock({
     }
     return wrap(
       <div className="my-4 rounded-lg border border-slate-200 bg-white overflow-hidden">
-        <div className="px-3 py-2 border-b bg-slate-50 text-[11px] font-semibold text-slate-700">Canvas (read-only)</div>
+        <div className="px-3 py-2 border-b bg-slate-50 text-[11px] font-semibold text-slate-700">Site Map (read-only)</div>
         <div className="h-[420px] relative">
           <div className="absolute inset-0 pointer-events-none">
             <NexusCanvas
@@ -210,7 +210,7 @@ export function NexusEmbedBlock({
   if (spec.kind === 'dataObjects') {
     return wrap(
       <div className="my-4 rounded-lg border border-slate-200 bg-white overflow-hidden">
-        <div className="px-3 py-2 border-b bg-slate-50 text-[11px] font-semibold text-slate-700">Data Objects (read-only)</div>
+        <div className="px-3 py-2 border-b bg-slate-50 text-[11px] font-semibold text-slate-700">Data Relationship (read-only)</div>
         <div className="h-[420px] relative">
           <div className="absolute inset-0 pointer-events-none">
             <DataObjectsCanvas

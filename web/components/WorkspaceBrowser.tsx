@@ -487,7 +487,7 @@ export function WorkspaceBrowser() {
             open={kgViewerOpen}
             onClose={() => setKgViewerOpen(false)}
             exportResult={kgExportResult}
-            basename={`nexusmap-${activeFolder.id}`}
+            basename={`diregram-${activeFolder.id}`}
           />
 
           <div className="grid gap-2">

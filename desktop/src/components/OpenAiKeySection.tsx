@@ -20,7 +20,7 @@ export function OpenAiKeySection({ value, onChange, hasSavedKey, onSave, onClear
         </button>
       </div>
       <div className="muted" style={{ marginTop: 6 }}>
-        Stored locally in Keychain. Never sent to NexusMap except as a request header to generate embeddings.
+        Stored locally in Keychain. Never sent to Diregram except as a request header to generate embeddings.
       </div>
     </div>
   );

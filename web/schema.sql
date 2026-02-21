@@ -102,7 +102,7 @@ create policy "Users can delete owned or shared(edit) folders" on public.folders
   for delete
   using (auth.uid() = owner_id or public.access_can_edit(access));
 
--- Files (NexusMap Documents)
+-- Files (Diregram Documents)
 create table public.files (
   id uuid default uuid_generate_v4() primary key,
   name text not null,

@@ -8,7 +8,7 @@ import { FULL_AI_PROMPT } from '@/components/ImportMarkdownModal';
 
 export function downloadDiagramGuidesAndChecklistsBundle() {
   const bundle = [
-    '# NexusMap — AI guidance + checklists (bundle)',
+    '# Diregram — AI guidance + checklists (bundle)',
     '',
     '## AI guidance prompt',
     FULL_AI_PROMPT,
@@ -21,7 +21,7 @@ export function downloadDiagramGuidesAndChecklistsBundle() {
     '',
   ].join('\n');
 
-  downloadTextFile('nexusmap-guides-and-checklists-bundle.md', bundle);
+  downloadTextFile('diregram-guides-and-checklists-bundle.md', bundle);
 }
 
 export function downloadVisionGuidesAndChecklistsBundle() {

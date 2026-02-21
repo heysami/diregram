@@ -19,8 +19,8 @@ export async function reindexRagForProjects(opts: {
   const session = await getSession(opts.supabase);
   if (!session?.user) throw new Error('Not signed in (session missing).');
 
-  const base = normalizeHttpBaseUrl(opts.config.nexusmapApiBaseUrl);
-  if (!base) throw new Error('Missing NexusMap API base URL.');
+  const base = normalizeHttpBaseUrl(opts.config.diregramApiBaseUrl);
+  if (!base) throw new Error('Missing Diregram API base URL.');
 
   for (const p of opts.projects) {
     // eslint-disable-next-line no-await-in-loop

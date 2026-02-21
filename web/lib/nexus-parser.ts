@@ -148,7 +148,7 @@ export function parseNexusMarkdown(text: string): NexusNode[] {
     const fidMatch = line.match(/<!--\s*fid:([^>]+)\s*-->/);
     const fid = fidMatch ? fidMatch[1].trim() : undefined;
 
-    // Extract stable System Flow ID (if any). Used to identify system flows across edits.
+    // Extract stable Tech Flow ID (if any). Used to identify tech flows across edits.
     // Format: <!-- sfid:systemflow-1 -->
     const sfidMatch = line.match(/<!--\s*sfid:([^>]+)\s*-->/);
     const sfid = sfidMatch ? sfidMatch[1].trim() : undefined;
@@ -264,7 +264,7 @@ export function parseNexusMarkdown(text: string): NexusNode[] {
         activeContent = activeContent.replace(/#flowtab#/g, '').trim();
     }
 
-    // System flow root marker (used to hide from main canvas but show under System Flow tab)
+    // Tech flow root marker (used to hide from main canvas but show under Tech Flow tab)
     if (activeContent.includes('#systemflow#')) {
         isSystemFlowRoot = true;
         activeContent = activeContent.replace(/#systemflow#/g, '').trim();

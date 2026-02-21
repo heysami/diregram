@@ -912,7 +912,7 @@ function exportDiagramSemanticKg(opts: {
     // ignore custom connection parse errors
   }
 
-  // System flow blocks: export boxes + links (semantic relationships across a different “presentation” of the same system).
+  // Tech flow blocks: export boxes + links (semantic relationships across a different “presentation” of the same system).
   try {
     const sfids = new Set<string>();
     const collect = (n: any) => {

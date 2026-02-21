@@ -30,7 +30,7 @@ export async function GET(request: Request) {
     NextResponse.json({
       supabaseUrl,
       supabaseAnonKey,
-      nexusmapApiBaseUrl: origin,
+      diregramApiBaseUrl: origin,
     }),
   );
 }

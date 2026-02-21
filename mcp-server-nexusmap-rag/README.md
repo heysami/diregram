@@ -1,6 +1,6 @@
-## NexusMap RAG MCP Server
+## Diregram RAG MCP Server
 
-This is an optional MCP server that wraps your running NexusMap app’s RAG endpoints:
+This is an optional MCP server that wraps your running Diregram app’s RAG endpoints:
 
 - `POST /api/rag/ingest`
 - `POST /api/rag/query`
@@ -8,29 +8,27 @@ This is an optional MCP server that wraps your running NexusMap app’s RAG endp
 ### Install
 
 ```bash
-cd mcp-server-nexusmap-rag
 npm install
 ```
 
-### Run (local NexusMap)
+### Run (local Diregram)
 
-Start NexusMap (`web`) on `http://localhost:3000`, then in another terminal:
+Start Diregram (`web`) on `http://localhost:3000`, then in another terminal (from this folder):
 
 ```bash
-cd mcp-server-nexusmap-rag
-NEXUSMAP_BASE_URL=http://localhost:3000 npm start
+DIREGRAM_BASE_URL=http://localhost:3000 npm start
 ```
 
 ### Optional auth (server-to-server)
 
-If your NexusMap deployment sets `RAG_API_KEY`, set:
+If your Diregram deployment sets `RAG_API_KEY`, set:
 
-- `NEXUSMAP_RAG_API_KEY=<same value>`
+- `DIREGRAM_RAG_API_KEY=<same value>`
 
 ### Tools exposed
 
-- `nexusmap_rag_ingest`
-- `nexusmap_rag_query`
+- `diregram_rag_ingest`
+- `diregram_rag_query`
 
 Both tools optionally accept `openaiApiKey` so each user can bring their own key.
 

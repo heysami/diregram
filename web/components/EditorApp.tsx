@@ -69,7 +69,7 @@ type ActiveFileMeta = {
 type PendingLayoutDirectionV1 = { dir: LayoutDirection; ts: number };
 
 function pendingLayoutDirectionStorageKey(fileId: string) {
-  return `nexusmap.pendingLayoutDirection.v1:${fileId}`;
+  return `diregram.pendingLayoutDirection.v1:${fileId}`;
 }
 
 function loadPendingLayoutDirection(fileId: string): PendingLayoutDirectionV1 | null {
@@ -109,7 +109,7 @@ const DEFAULT_TAG_VIEW: TagViewState = {
 };
 
 function tagViewStorageKey(fileId: string) {
-  return `nexusmap.tagView.v1:${fileId}`;
+  return `diregram.tagView.v1:${fileId}`;
 }
 
 function loadTagViewForFile(fileId: string): TagViewState | null {
@@ -1369,12 +1369,12 @@ export function EditorApp() {
                   type="button"
                   className={`mac-btn h-8 w-8 flex items-center justify-center ${activeView === 'main' ? 'mac-btn--primary' : ''}`}
                   onClick={() => changeView('main')}
-                  aria-label="Canvas"
+                  aria-label="Site Map"
                 >
                   <Network size={16} />
                 </button>
                 <span className="mac-tooltip absolute left-1/2 top-[calc(100%+6px)] -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">
-                  Canvas
+                  Site Map
                 </span>
               </div>
               <div className="relative group">
@@ -1395,12 +1395,12 @@ export function EditorApp() {
                   type="button"
                   className={`mac-btn h-8 w-8 flex items-center justify-center ${activeView === 'systemFlow' ? 'mac-btn--primary' : ''}`}
                   onClick={() => changeView('systemFlow')}
-                  aria-label="System Flow"
+                  aria-label="Tech Flow"
                 >
                   <LayoutDashboard size={16} />
                 </button>
                 <span className="mac-tooltip absolute left-1/2 top-[calc(100%+6px)] -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">
-                  System Flow
+                  Tech Flow
                 </span>
               </div>
               <div className="relative group">
@@ -1408,12 +1408,12 @@ export function EditorApp() {
                   type="button"
                   className={`mac-btn h-8 w-8 flex items-center justify-center ${activeView === 'dataObjects' ? 'mac-btn--primary' : ''}`}
                   onClick={() => changeView('dataObjects')}
-                  aria-label="Data Objects"
+                  aria-label="Data Relationship"
                 >
                   <Database size={16} />
                 </button>
                 <span className="mac-tooltip absolute left-1/2 top-[calc(100%+6px)] -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">
-                  Data Objects
+                  Data Relationship
                 </span>
               </div>
           </div>

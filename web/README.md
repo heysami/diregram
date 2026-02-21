@@ -1,4 +1,4 @@
-## NexusMap (web)
+## Diregram (web)
 
 This is the Next.js frontend.
 
@@ -56,7 +56,7 @@ This repo already exports a **semantic KG + “chunks to embed”** from a proje
 
 ### Hosted MCP (so users don’t run anything locally)
 
-If you deploy the hosted MCP server (`mcp-server-nexusmap-rag-hosted/`), you can give users a single URL they can add in Cursor.
+If you deploy the hosted MCP server (see `mcp-server-*` folders), you can give users a single URL they can add in Cursor.
 
 Setup:
 
@@ -74,9 +74,9 @@ Instead of one MCP URL per project:
 - In the app: **Project → Copy MCP URL (account)**
 - Users add that one URL once.
 - Then they can use MCP tools:
-  - `nexusmap_list_projects`
-  - `nexusmap_set_project`
-  - `nexusmap_rag_query`
+  - `diregram_list_projects`
+  - `diregram_set_project`
+  - `diregram_rag_query`
 
 ### Making it “real” (recommended next steps)
 

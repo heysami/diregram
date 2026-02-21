@@ -147,7 +147,7 @@ function buildLineIndexToNode(roots: NexusNode[]): Map<number, NexusNode> {
 
 function summarizeIssues(errors: ImportValidationIssue[], warnings: ImportValidationIssue[]): string {
   const lines: string[] = [];
-  lines.push('NexusMap markdown import validation report');
+  lines.push('Diregram markdown import validation report');
   lines.push('');
   if (!errors.length && !warnings.length) {
     lines.push('No issues found.');
@@ -185,7 +185,7 @@ export function validateNexusMarkdownImport(markdown: string): ImportValidationR
       warnings,
       'warning',
       'CRLF_NORMALIZED',
-      'Windows/CRLF newlines were detected. NexusMap normalizes all newlines to UNIX (\\n) on import to avoid separator/metadata placement bugs.',
+      'Windows/CRLF newlines were detected. Diregram normalizes all newlines to UNIX (\\n) on import to avoid separator/metadata placement bugs.',
     );
   }
 
@@ -254,7 +254,7 @@ export function validateNexusMarkdownImport(markdown: string): ImportValidationR
     nodeById.set(n.id, n);
   });
 
-  // System Flow recommendation: technical-diagram language should map to System Flow tab.
+  // Tech Flow recommendation: technical-diagram language should map to Tech Flow tab.
   const hasSystemFlowRoot = (() => {
     let found = false;
     traverseAllParsedNodes(roots, (n) => {
@@ -270,7 +270,7 @@ export function validateNexusMarkdownImport(markdown: string): ImportValidationR
       warnings,
       'warning',
       'SUGGEST_SYSTEM_FLOW',
-      'Detected technical-diagram language (sequence/use case/architecture/integration/etc.) but no System Flow root was found. Create a System Flow root using `#systemflow# <!-- sfid:systemflow-N -->` and store diagram state in a fenced `systemflow-<sfid>` block.',
+      'Detected technical-diagram language (sequence/use case/architecture/integration/etc.) but no Tech Flow root was found. Create a Tech Flow root using `#systemflow# <!-- sfid:systemflow-N -->` and store diagram state in a fenced `systemflow-<sfid>` block.',
     );
   }
 

@@ -159,7 +159,7 @@ export function WorkspaceBrowserSupabase() {
 
   const loadOpenAiKey = () => {
     try {
-      return String(window.localStorage.getItem('nexusmap.openaiApiKey.v1') || '');
+      return String(window.localStorage.getItem('diregram.openaiApiKey.v1') || '');
     } catch {
       return '';
     }
@@ -171,7 +171,7 @@ export function WorkspaceBrowserSupabase() {
     const entered = String(window.prompt('Enter your OpenAI API key (starts with sk-). This will be saved in this browser only.', '') || '').trim();
     if (!entered) return '';
     try {
-      window.localStorage.setItem('nexusmap.openaiApiKey.v1', entered);
+      window.localStorage.setItem('diregram.openaiApiKey.v1', entered);
     } catch {
       // ignore
     }
@@ -1085,7 +1085,7 @@ export function WorkspaceBrowserSupabase() {
             open={kgViewerOpen}
             onClose={() => setKgViewerOpen(false)}
             exportResult={kgExportResult}
-            basename={`nexusmap-${activeFolder.id}`}
+            basename={`diregram-${activeFolder.id}`}
           />
 
           <div className="grid gap-2">

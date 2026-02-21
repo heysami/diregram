@@ -1,4 +1,4 @@
-## Hosted NexusMap RAG MCP Server
+## Hosted Diregram RAG MCP Server
 
 This package is for **you to deploy once** (online). After that, users can add it in Cursor using an **SSE URL** — they do **not** run anything locally.
 
@@ -7,7 +7,7 @@ This package is for **you to deploy once** (online). After that, users can add i
 - Implements a minimal **MCP-over-SSE** server.
 - Scopes access using a **share token** stored in Supabase (`public.rag_mcp_shares`).
 - Exposes one tool:
-  - `nexusmap_rag_query` (requires the caller to provide their own `openaiApiKey`)
+  - `diregram_rag_query` (requires the caller to provide their own `openaiApiKey`)
 
 ### Required environment variables (on the hosted MCP server)
 
@@ -31,7 +31,7 @@ Users can set their OpenAI key once in Cursor as a header (recommended) instead 
 ```json
 {
   "mcpServers": {
-    "nexusmap-rag": {
+    "diregram-rag": {
       "url": "https://mcp.yourdomain.com/sse?token=nm_mcp_...",
       "headers": {
         "x-openai-api-key": "sk-..."
@@ -45,7 +45,7 @@ This key stays on the user's machine (Cursor config) and is sent to the MCP serv
 
 ### How you generate the token (admin workflow)
 
-In the NexusMap web app:
+In the Diregram web app:
 - open any project
 - **Project → Copy MCP URL (account)**
 

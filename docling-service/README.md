@@ -1,6 +1,6 @@
-# NexusMap Docling service
+# Diregram Docling service
 
-Internal document conversion service used by the NexusMap web app.
+Internal document conversion service used by the Diregram web app.
 
 ## What it does
 

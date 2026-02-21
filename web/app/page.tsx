@@ -3,7 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/hooks/use-auth';
 import { AuthStatus } from '@/components/AuthStatus';
-import { FileText, Network, Table, Sparkles, LayoutTemplate } from 'lucide-react';
+import { FileText, Network, Table, Sparkles, LayoutTemplate, Workflow, LayoutDashboard, Database, Download, Package, Share2 } from 'lucide-react';
 import { DiregramMark } from '@/components/DiregramMark';
 
 export default function Home() {
@@ -23,7 +23,7 @@ export default function Home() {
               Diregram <span className="text-[11px] font-normal opacity-70">Connected diagrams</span>
             </h1>
           </button>
-          <div className="text-[12px] opacity-70 hidden sm:block">Maps · Flows · Data</div>
+          <div className="text-[12px] opacity-70 hidden sm:block">Playbooks · Decisions · AI-ready</div>
         </div>
         <div className="flex items-center gap-3">
           <button type="button" className="mac-btn h-8 flex items-center gap-1.5" onClick={() => router.push('/templates/global')}>
@@ -39,16 +39,15 @@ export default function Home() {
           <div className="space-y-6">
             <div className="space-y-3">
               <h2 className="text-[30px] leading-tight font-bold tracking-tight">
-                A workspace for building apps—maps, grids, and notes.
+                A living client playbook your AI can actually use.
               </h2>
               <p className="text-sm opacity-80 max-w-[760px]">
-                Diregram organizes your project into a few simple file types so you can capture architecture, requirements, and
-                decisions in a form that’s easy to browse, share, and feed to an LLM.
+                Diregram turns messy discovery notes into a structured system: site map, swimlane journeys, tech flows, and data
+                relationships—packaged as portable Markdown you can reuse with AI, hand off to clients, and keep consistent.
               </p>
               <div className="text-xs opacity-80 max-w-[780px]">
-                Use a <span className="font-semibold">Map</span> to model systems and flows, a <span className="font-semibold">Grid</span> to
-                track structured data like endpoints or schemas, and a <span className="font-semibold">Note</span> for narrative context and
-                rationale—all in one workspace.
+                You curate the decisions. Diregram keeps them organized. Then AI can draft, check, and summarize using the same
+                source of truth (instead of guessing from scattered docs).
               </div>
               <div className="pt-1">
                 {!signedIn ? (
@@ -80,34 +79,16 @@ export default function Home() {
               </div>
             </div>
 
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
               <div className="mac-window mac-double-outline p-5">
                 <div className="mac-double-outline inline-flex p-3">
                   <Network size={22} />
                 </div>
-                <div className="mt-3 text-[14px] font-bold tracking-tight">Maps (diagrams)</div>
+                <div className="mt-3 text-[14px] font-bold tracking-tight">Four connected views</div>
                 <div className="mt-1 text-xs opacity-80">
-                  Model architecture, flows, and relationships. Great for system overviews and “how it works” explanations.
-                </div>
-              </div>
-
-              <div className="mac-window mac-double-outline p-5">
-                <div className="mac-double-outline inline-flex p-3">
-                  <Table size={22} />
-                </div>
-                <div className="mt-3 text-[14px] font-bold tracking-tight">Grids (tables)</div>
-                <div className="mt-1 text-xs opacity-80">
-                  Capture structured specs like endpoints, fields, permissions, test cases, or migration checklists.
-                </div>
-              </div>
-
-              <div className="mac-window mac-double-outline p-5">
-                <div className="mac-double-outline inline-flex p-3">
-                  <FileText size={22} />
-                </div>
-                <div className="mt-3 text-[14px] font-bold tracking-tight">Notes</div>
-                <div className="mt-1 text-xs opacity-80">
-                  Write context and decisions alongside the work—requirements, trade-offs, meeting notes, and implementation plans.
+                  Switch between <span className="font-semibold">Site Map</span>, <span className="font-semibold">Flow</span>,{' '}
+                  <span className="font-semibold">Tech Flow</span>, and <span className="font-semibold">Data Relationship</span>—all tied to the
+                  same source content.
                 </div>
               </div>
 
@@ -115,27 +96,141 @@ export default function Home() {
                 <div className="mac-double-outline inline-flex p-3">
                   <Sparkles size={22} />
                 </div>
-                <div className="mt-3 text-[14px] font-bold tracking-tight">Useful for LLMs</div>
+                <div className="mt-3 text-[14px] font-bold tracking-tight">AI guardrails included</div>
                 <div className="mt-1 text-xs opacity-80">
-                  Structured files make better prompts. Ask an LLM to generate code, fill grids, or refactor maps with less ambiguity.
+                  Download the AI prompt + verification checklists, validate imports, export a bundle, then build a queryable
+                  knowledge base when you’re ready.
+                </div>
+              </div>
+
+              <div className="mac-window mac-double-outline p-5">
+                <div className="mac-double-outline inline-flex p-3">
+                  <FileText size={22} />
+                </div>
+                <div className="mt-3 text-[14px] font-bold tracking-tight">Deliverables that stay live</div>
+                <div className="mt-1 text-xs opacity-80">
+                  Notes can embed a live view of a swimlane flow, a tech flow, the site map, data relationships, and even Vision
+                  cards—so handoffs don’t drift out of sync.
+                </div>
+              </div>
+
+              <div className="mac-window mac-double-outline p-5">
+                <div className="mac-double-outline inline-flex p-3">
+                  <LayoutTemplate size={22} />
+                </div>
+                <div className="mt-3 text-[14px] font-bold tracking-tight">Templates (3 levels)</div>
+                <div className="mt-1 text-xs opacity-80">
+                  Reuse patterns across engagements with <span className="font-semibold">Project</span>,{' '}
+                  <span className="font-semibold">Account</span>, and <span className="font-semibold">Global</span> templates.
+                </div>
+              </div>
+
+              <div className="mac-window mac-double-outline p-5">
+                <div className="mac-double-outline inline-flex p-3">
+                  <Share2 size={22} />
+                </div>
+                <div className="mt-3 text-[14px] font-bold tracking-tight">Semantic export + Knowledge Base</div>
+                <div className="mt-1 text-xs opacity-80">
+                  Export a semantic knowledge graph, build a searchable knowledge base (RAG), and connect it to tools like Cursor via
+                  MCP—so AI can answer using your project context.
+                </div>
+              </div>
+
+              <div className="mac-window mac-double-outline p-5">
+                <div className="mac-double-outline inline-flex p-3">
+                  <Download size={22} />
+                </div>
+                <div className="mt-3 text-[14px] font-bold tracking-tight">Desktop vault sync (Obsidian/OneDrive)</div>
+                <div className="mt-1 text-xs opacity-80">
+                  Diregram Sync keeps a local Markdown vault in sync, handles conflicts safely, writes an AI workflow bundle, and
+                  can export resources and knowledge snapshots into your folder.
                 </div>
               </div>
             </div>
 
             <div className="mac-window mac-double-outline p-5">
-              <div className="text-[14px] font-bold tracking-tight">Why these file types help</div>
-              <div className="mt-2 grid gap-3 md:grid-cols-3 text-xs opacity-85">
-                <div>
-                  <div className="font-semibold">Fast navigation</div>
-                  <div className="mt-1 opacity-80">Pick the right format for the job and scan projects quickly by icon and type.</div>
+              <div className="text-[14px] font-bold tracking-tight">How it works (the full workflow)</div>
+              <div className="mt-3 grid gap-4 md:grid-cols-4 text-xs opacity-85">
+                <div className="mac-double-outline p-4">
+                  <div className="flex items-center gap-2">
+                    <Download size={16} />
+                    <div className="font-semibold">1) Bring in sources</div>
+                  </div>
+                  <div className="mt-2 opacity-80">
+                    Import Mermaid, paste AI-generated Markdown, or convert PDFs/docs into clean Markdown resources (Docling) for
+                    reliable referencing.
+                  </div>
                 </div>
-                <div>
-                  <div className="font-semibold">Less ambiguity</div>
-                  <div className="mt-1 opacity-80">Maps show structure, grids show facts, notes show intent—so collaborators align faster.</div>
+                <div className="mac-double-outline p-4">
+                  <div className="flex items-center gap-2">
+                    <Workflow size={16} />
+                    <div className="font-semibold">2) Model the reality</div>
+                  </div>
+                  <div className="mt-2 opacity-80">
+                    Use the right view for the right decision: journeys with swimlanes, system tech flows, and data relationships—
+                    plus comments, annotations, and tags.
+                  </div>
                 </div>
-                <div>
-                  <div className="font-semibold">Better automation</div>
-                  <div className="mt-1 opacity-80">When you hand this workspace to an LLM, it can act on clearer, more complete inputs.</div>
+                <div className="mac-double-outline p-4">
+                  <div className="flex items-center gap-2">
+                    <LayoutTemplate size={16} />
+                    <div className="font-semibold">3) Package as templates</div>
+                  </div>
+                  <div className="mt-2 opacity-80">
+                    Save your best patterns as templates and reuse them across clients—without copy/paste drift.
+                  </div>
+                </div>
+                <div className="mac-double-outline p-4">
+                  <div className="flex items-center gap-2">
+                    <Package size={16} />
+                    <div className="font-semibold">4) Use with AI</div>
+                  </div>
+                  <div className="mt-2 opacity-80">
+                    Download the AI guides + checklists, export a bundle, and (optionally) build a knowledge base so AI can answer
+                    with your context.
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="mac-window mac-double-outline p-5">
+              <div className="flex items-start justify-between gap-4 flex-col md:flex-row">
+                <div className="min-w-0">
+                  <div className="text-[14px] font-bold tracking-tight">Start your next client playbook</div>
+                  <div className="mt-1 text-xs opacity-80 max-w-[680px]">
+                    Capture the decisions once, then reuse them with AI prompts, checklists, exports, and an optional knowledge base.
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 flex-wrap shrink-0">
+                  {!signedIn ? (
+                    <>
+                      <button
+                        type="button"
+                        className="mac-btn mac-btn--primary"
+                        onClick={() => router.push(`/login?next=${encodeURIComponent('/workspace')}`)}
+                      >
+                        Sign in to start
+                      </button>
+                      <button type="button" className="mac-btn" onClick={() => router.push('/templates/global')}>
+                        Browse global templates
+                      </button>
+                      <button type="button" className="mac-btn" onClick={() => router.push('/download')}>
+                        Download desktop app (macOS)
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button type="button" className="mac-btn mac-btn--primary" onClick={() => router.push('/workspace')}>
+                        Open workspace
+                      </button>
+                      <button type="button" className="mac-btn" onClick={() => router.push('/templates/global')}>
+                        Browse global templates
+                      </button>
+                      <button type="button" className="mac-btn" onClick={() => router.push('/download')}>
+                        Download desktop app (macOS)
+                      </button>
+                    </>
+                  )}
                 </div>
               </div>
             </div>

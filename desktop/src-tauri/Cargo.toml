@@ -1,8 +1,8 @@
 [package]
-name = "nexusmap_sync"
+name = "diregram_sync"
 version = "0.1.0"
-description = "NexusMap desktop sync app"
-authors = ["NexusMap"]
+description = "Diregram desktop sync app"
+authors = ["Diregram"]
 edition = "2021"
 
 [build-dependencies]

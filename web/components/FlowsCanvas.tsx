@@ -1004,7 +1004,10 @@ export function FlowsCanvas({
       <div className="w-[280px] max-w-[35vw] min-w-[200px] m-4 mac-window overflow-hidden shrink flex flex-col max-h-[calc(100%-80px)]">
         {viewBarSpacer}
         <div className="mac-titlebar">
-          <div className="mac-title">Flows</div>
+          <div className="flex flex-col leading-tight">
+            <div className="mac-title">Flows</div>
+            <div className="text-[10px] text-slate-500 -mt-0.5">Swimlane Flows</div>
+          </div>
           <div className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-1">
             {selectedRoot && onSaveTemplateFile ? (
               <button
@@ -1097,7 +1100,7 @@ export function FlowsCanvas({
           <div className="mt-3 border-t border-slate-200 pt-3">
             <details open={true}>
               <summary className="cursor-pointer text-[11px] font-semibold text-slate-800">
-                Navigations (main canvas process flows) <span className="opacity-60 font-normal">· view only</span>
+                Process Flows <span className="opacity-60 font-normal">· view only</span>
               </summary>
               <div className="mt-2 flex flex-col gap-1">
                 {processFlowRoots.length === 0 ? (
@@ -1138,7 +1141,7 @@ export function FlowsCanvas({
           <div className="mt-3 border-t border-slate-200 pt-3">
             <details open={false}>
               <summary className="cursor-pointer text-[11px] font-semibold text-slate-800">
-                Flow descriptions <span className="opacity-60 font-normal">· view only</span>
+                Conditional Node/Data Status Flow Descriptions <span className="opacity-60 font-normal">· view only</span>
               </summary>
               <div className="mt-2 space-y-2">
                 <div>

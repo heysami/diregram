@@ -1,6 +1,6 @@
 ## collab-server
 
-Websocket collaboration server for NexusMap using Hocuspocus/Yjs.
+Websocket collaboration server for Diregram using Hocuspocus/Yjs.
 
 ### Local dev
 

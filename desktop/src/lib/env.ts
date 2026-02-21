@@ -8,7 +8,7 @@ function optionalEnv(name: string): string | null {
 export const buildEnv = {
   supabaseUrl: optionalEnv('VITE_SUPABASE_URL'),
   supabaseAnonKey: optionalEnv('VITE_SUPABASE_ANON_KEY'),
-  nexusmapApiBaseUrl: optionalEnv('VITE_NEXUSMAP_API_BASE_URL') || 'http://localhost:3000',
-  nexusmapHostedUrl: optionalEnv('VITE_NEXUSMAP_HOSTED_URL'),
+  diregramApiBaseUrl: optionalEnv('VITE_DIREGRAM_API_BASE_URL') || 'http://localhost:3000',
+  diregramHostedUrl: optionalEnv('VITE_DIREGRAM_HOSTED_URL'),
 };
 

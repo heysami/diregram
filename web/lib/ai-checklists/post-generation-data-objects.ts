@@ -1,7 +1,7 @@
-export const POST_GEN_CHECKLIST_DATA_OBJECTS = `Post-Generation Checklist — Data Objects UI Realization (logical + wired + visible in UI)
+export const POST_GEN_CHECKLIST_DATA_OBJECTS = `Post-Generation Checklist — Data Relationship UI Realization (logical + wired + visible in UI)
 
 Goal:
-  - Ensure data objects are not only modeled correctly in \`\`\`data-objects\`\`\`, but also RENDER correctly in the NexusMap UI.
+  - Ensure data objects are not only modeled correctly in \`\`\`data-objects\`\`\`, but also RENDER correctly in the Diregram UI.
   - The UI often depends on IA anchors and expanded-screen bindings to compute “linked objects”.
 
 MUST:

@@ -158,14 +158,14 @@ export function EmbedLinkModal({
               className={`mac-btn h-7 ${kind === 'systemflow' ? 'mac-btn--primary' : ''}`}
               onClick={() => setKind('systemflow')}
             >
-              System flow
+              Tech flow
             </button>
             <button
               type="button"
               className={`mac-btn h-7 ${kind === 'dataObjects' ? 'mac-btn--primary' : ''}`}
               onClick={() => setKind('dataObjects')}
             >
-              Data objects
+              Data relationship
             </button>
           </div>
 
@@ -178,7 +178,7 @@ export function EmbedLinkModal({
 
           {kind === 'systemflow' ? (
             <div>
-              <div className="text-xs font-semibold mb-2">Pick a system flow</div>
+              <div className="text-xs font-semibold mb-2">Pick a tech flow</div>
               <select
                 className="mac-field h-8 w-full"
                 value={systemFlowRef}
@@ -192,7 +192,7 @@ export function EmbedLinkModal({
                   </option>
                 ))}
               </select>
-              {idx.systemFlows.length === 0 ? <div className="mt-2 text-xs text-slate-500">No system flows found.</div> : null}
+              {idx.systemFlows.length === 0 ? <div className="mt-2 text-xs text-slate-500">No tech flows found.</div> : null}
             </div>
           ) : null}
 
@@ -200,7 +200,7 @@ export function EmbedLinkModal({
             <div>
               <div className="text-xs font-semibold mb-2">Scope (optional)</div>
               <select className="mac-field h-8 w-full" value={rootFocusId} onChange={(e) => setRootFocusId(e.target.value)}>
-                <option value="">Full canvas</option>
+                <option value="">Full site map</option>
                 {idx.mainRoots.map((r) => (
                   <option key={r.id} value={r.id}>
                     {r.label}
