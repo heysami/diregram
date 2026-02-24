@@ -61,7 +61,8 @@ export function VisionEditor({
   templateSourceLabel?: string;
   globalTemplatesEnabled?: boolean;
 }) {
-  useHtmlThemeOverride('vision');
+  // Vision editor should match the app's current visual system (diregram-v2).
+  useHtmlThemeOverride('diregram-v2');
 
   const [canvasEditor, setCanvasEditor] = useState<Editor | null>(null);
   const [markdownOpen, setMarkdownOpen] = useState(false);
@@ -129,47 +130,34 @@ export function VisionEditor({
   }, [activeTool, canvasEditor]);
 
   return (
-    <main className="h-screen w-screen bg-white text-black">
-      <div className="h-12 px-3 border-b flex items-center justify-between gap-3">
+    <main className="mac-desktop h-screen w-screen relative overflow-hidden dg-vision-editor">
+      <header className="mac-menubar h-12 px-4 flex items-center justify-between gap-3 shrink-0 z-[100] relative">
         <div className="flex items-center gap-2 min-w-0">
-          <button
-            type="button"
-            className="h-8 px-2 border flex items-center gap-2 bg-white"
-            onClick={onBack}
-            title="Back to workspace"
-          >
+          <button type="button" className="mac-btn h-8 flex items-center gap-1.5" onClick={onBack} title="Back to workspace">
             <ArrowLeft size={16} />
-            <span className="text-sm">Workspace</span>
+            Workspace
           </button>
           <TldrawHeaderActions editor={canvasEditor} />
-          <div className="font-semibold truncate">{title || 'Vision'}</div>
-          <div className="text-xs opacity-70 whitespace-nowrap">{statusLabel || ''}</div>
+          <div className="text-[13px] font-bold tracking-tight truncate">{title || 'Vision'}</div>
+          <div className="text-[11px] opacity-70 whitespace-nowrap">{statusLabel || ''}</div>
         </div>
 
         <div className="flex items-center gap-2">
           <button
             type="button"
-            className="h-8 px-2 border bg-white text-sm"
+            className="mac-btn h-8 disabled:opacity-40 disabled:cursor-not-allowed"
             disabled={!templateFiles || !loadTemplateMarkdown || (templateFiles || []).length === 0 || !canvasEditor}
             title={!canvasEditor ? 'Canvas not ready yet' : (templateFiles || []).length === 0 ? 'No templates yet.' : 'Create a new card from a template'}
             onClick={() => setInsertCardTemplateOpen(true)}
           >
             Card template…
           </button>
-          <button
-            type="button"
-            className="h-8 px-2 border bg-white text-sm"
-            onClick={() => setImportOpen(true)}
-            title="Import/replace Vision markdown"
-          >
+          <button type="button" className="mac-btn h-8" onClick={() => setImportOpen(true)} title="Import/replace Vision markdown">
             Import
           </button>
           <button
             type="button"
-            className={[
-              'h-8 px-2 border text-sm',
-              activeTool === 'comment' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white',
-            ].join(' ')}
+            className={['mac-btn h-8', activeTool === 'comment' ? 'mac-btn--dark' : ''].join(' ')}
             onClick={() => {
               setActiveTool((t) => {
                 const next = t === 'comment' ? 'select' : 'comment';
@@ -184,11 +172,11 @@ export function VisionEditor({
           >
             Comment
           </button>
-          <button type="button" className="h-8 px-2 border bg-white text-sm" onClick={() => setMarkdownOpen(true)} title="Open markdown preview">
+          <button type="button" className="mac-btn h-8" onClick={() => setMarkdownOpen(true)} title="Open markdown preview">
             Markdown
           </button>
         </div>
-      </div>
+      </header>
 
       <InsertFromTemplateModal
         open={insertCardTemplateOpen}
@@ -235,7 +223,7 @@ export function VisionEditor({
       />
 
       <div className="absolute inset-0 top-12">
-        <div className="h-full w-full overflow-hidden">
+        <div className="h-full w-full overflow-hidden mac-canvas-bg">
           <VisionCanvas
             fileId={fileId}
             sessionStorageKey={`vision:tldraw:canvas:session:${fileId}`}
@@ -298,4 +286,3 @@ export function VisionEditor({
     </main>
   );
 }
-

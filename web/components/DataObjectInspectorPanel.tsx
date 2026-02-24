@@ -139,13 +139,13 @@ function DataObjectInspectorPanelInner({
               <button
                 type="button"
                 onClick={() => onDelete(selectedId)}
-                className="mac-btn"
+                className="mac-btn mac-btn--icon-sm"
                 title="Delete data object"
               >
                 <Trash2 size={16} />
               </button>
             ) : null}
-            <button type="button" onClick={onClose} className="mac-btn" title="Close">
+            <button type="button" onClick={onClose} className="mac-btn mac-btn--icon-sm" title="Close">
               <X size={16} />
             </button>
           </div>
@@ -191,7 +191,7 @@ function DataObjectInspectorPanelInner({
                   <button
                     key={id}
                     type="button"
-                    className="w-full text-left px-2 py-1 rounded border border-slate-200 hover:bg-slate-50"
+                    className="w-full text-left px-2 py-1 mac-interactive-row"
                     onClick={() => onSelectId(id)}
                   >
                     <div className="text-xs font-medium text-slate-900 truncate">{label}</div>
@@ -213,7 +213,7 @@ function DataObjectInspectorPanelInner({
             <div className="text-[11px] text-gray-500">Attributes</div>
             <button
               type="button"
-              className="h-7 px-2 rounded-md border border-slate-200 text-[11px] text-slate-700 hover:bg-slate-50 inline-flex items-center gap-1"
+              className="mac-btn h-7 px-2 inline-flex items-center gap-1"
               onClick={() => {
                 const next = [...attrsDraft, { id: newDataObjectAttributeId(), name: 'NewAttribute', sample: '' }];
                 setAttrsDraft(next);
@@ -243,7 +243,7 @@ function DataObjectInspectorPanelInner({
                   />
                   <button
                     type="button"
-                    className="h-8 w-8 rounded-md border border-slate-200 hover:bg-slate-50 flex items-center justify-center"
+                    className="mac-btn mac-btn--icon-sm"
                     title="Remove attribute"
                     onClick={() => {
                       const next = attrsDraft.filter((x) => x.id !== a.id);
@@ -369,4 +369,3 @@ function DataObjectInspectorPanelInner({
     </div>
   );
 }
-

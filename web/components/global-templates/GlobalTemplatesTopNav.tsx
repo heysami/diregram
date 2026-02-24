@@ -20,11 +20,11 @@ export function GlobalTemplatesTopNav(props: { titleSuffix: string; backToGlobal
           </h1>
         </button>
         {backToGlobalList ? (
-          <button type="button" className="mac-btn h-8" onClick={() => router.push('/templates/global')}>
+          <button type="button" className="mac-btn mac-btn--lg" onClick={() => router.push('/templates/global')}>
             Global templates
           </button>
         ) : (
-          <button type="button" className="mac-btn h-8" onClick={() => router.push('/workspace')}>
+          <button type="button" className="mac-btn mac-btn--lg" onClick={() => router.push('/workspace')}>
             Workspace
           </button>
         )}
@@ -35,4 +35,3 @@ export function GlobalTemplatesTopNav(props: { titleSuffix: string; backToGlobal
     </header>
   );
 }
-

@@ -20,29 +20,29 @@ export function MarkdownPopup({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[20000]">
+    <div className="fixed inset-0 z-[20000]" role="dialog" aria-modal="true" aria-label="Markdown preview">
       <div
         className="absolute inset-0 bg-black/20"
-        onClick={onClose}
-        role="button"
-        tabIndex={0}
-        onKeyDown={(e) => {
-          if (e.key === 'Escape') onClose();
+        onMouseDown={(e) => {
+          if (e.target === e.currentTarget) onClose();
         }}
       />
-      <div className="absolute right-3 top-14 w-[520px] max-w-[calc(100vw-24px)] max-h-[calc(100vh-72px)] bg-white border shadow-lg flex flex-col">
-        <div className="h-10 px-2 border-b flex items-center justify-between gap-2">
-          <div className="text-sm font-semibold">Markdown (preview)</div>
-          <button type="button" className="h-7 w-7 border bg-white flex items-center justify-center" onClick={onClose}>
-            <X size={16} />
-          </button>
+      <div className="absolute right-4 top-14 w-[560px] max-w-[calc(100vw-32px)] max-h-[calc(100vh-72px)] mac-window mac-double-outline overflow-hidden flex flex-col">
+        <div className="mac-titlebar">
+          <div className="mac-title">Markdown preview</div>
+          <div className="absolute right-1 top-1/2 -translate-y-1/2">
+            <button type="button" className="mac-btn mac-btn--icon-sm" onClick={onClose} title="Close">
+              <X size={16} />
+            </button>
+          </div>
         </div>
-        <div className="p-2 overflow-auto">
-          <div className="text-[11px] opacity-70 mb-2">
+
+        <div className="p-3 overflow-auto">
+          <div className="text-[11px] opacity-70 mb-2 font-mono">
             {rawMarkdownChars ? `${rawMarkdownChars.toLocaleString()} chars` : '—'}
             {supabaseMode ? ` • Supabase user: ${userId || 'unknown'}` : ' • Local mode'}
           </div>
-          <pre className="text-[10px] whitespace-pre-wrap break-words border p-2 bg-white max-h-[70vh] overflow-auto">
+          <pre className="mac-double-outline bg-white px-3 py-2 text-[11px] font-mono whitespace-pre-wrap break-words max-h-[70vh] overflow-auto">
             {(rawMarkdownPreview || '') +
               (rawMarkdownPreview && rawMarkdownChars && rawMarkdownChars > rawMarkdownPreview.length ? '\n\n— preview truncated —\n' : '')}
           </pre>
@@ -51,4 +51,3 @@ export function MarkdownPopup({
     </div>
   );
 }
-

@@ -54,7 +54,7 @@ export function ExpandedGridLayout({
             if (!doid) return;
             onClickDataObjectId?.(doid);
           }}
-          className="w-full text-left text-[10px] text-slate-800 hover:bg-slate-50 rounded px-1 py-0.5"
+          className="w-full text-left text-[10px] text-neutral-800 hover:bg-black/5 px-1 py-0.5"
           title={`Open linked node for ${doid}`}
         >
           {it.icon ? <span className="mr-1">{it.icon}</span> : null}
@@ -63,7 +63,7 @@ export function ExpandedGridLayout({
       );
     }
     return (
-      <div key={`${keyPrefix}-${it.id}`} className="text-[10px] text-slate-800 truncate px-1 py-0.5">
+      <div key={`${keyPrefix}-${it.id}`} className="text-[10px] text-neutral-800 truncate px-1 py-0.5">
         {it.icon ? <span className="mr-1">{it.icon}</span> : null}
         {label}
       </div>
@@ -71,7 +71,7 @@ export function ExpandedGridLayout({
   };
 
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-3 overflow-auto">
+    <div className="border border-black/10 bg-white p-3 overflow-auto">
       <div
         className="grid gap-2"
         style={{
@@ -101,8 +101,8 @@ export function ExpandedGridLayout({
                   onClickNode(n);
                 }
               }}
-              className={`rounded-md border p-2 text-left hover:bg-slate-50 overflow-hidden outline-none focus:ring-2 focus:ring-blue-200 h-full flex flex-col ${
-                isHighlight ? 'border-blue-500 ring-2 ring-blue-200 bg-blue-50' : 'border-slate-200 bg-white'
+              className={`border p-2 text-left hover:bg-black/5 overflow-hidden outline-none focus-visible:outline-1 focus-visible:outline-[#e11d48] h-full flex flex-col ${
+                isHighlight ? 'border-[#e11d48] bg-[#ffe4ec]' : 'border-black/10 bg-white'
               }`}
               style={{
                 gridColumn: `${Math.max(1, (n.gridX || 0) + 1)} / span ${Math.max(1, n.gridWidth || 1)}`,
@@ -113,7 +113,7 @@ export function ExpandedGridLayout({
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0 flex-1">
                   {showHeaderTitle ? (
-                    <div className="text-[11px] font-semibold text-slate-900 truncate">{title}</div>
+                    <div className="text-[11px] font-semibold text-neutral-900 truncate">{title}</div>
                   ) : null}
                 </div>
                 {showHeaderOpen && n.dataObjectId ? (
@@ -125,7 +125,7 @@ export function ExpandedGridLayout({
                       if (!doid) return;
                       onClickDataObjectId?.(doid);
                     }}
-                    className="text-[10px] px-2 py-0.5 rounded border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                    className="mac-btn h-7 text-[10px] px-2 disabled:opacity-50"
                     title={n.dataObjectId ? `Open linked node for ${n.dataObjectId}` : 'No data object link'}
                     disabled={!onClickDataObjectId || !n.dataObjectId}
                   >
@@ -136,7 +136,7 @@ export function ExpandedGridLayout({
 
               {/* Filter is intentionally minimal: no link/mode pills */}
               {ui === 'filter' ? null : n.dataObjectId ? (
-                <div className="mt-1 text-[10px] text-slate-500 truncate">
+                <div className="mt-1 text-[10px] text-neutral-500 truncate">
                   🔗 <span className="font-mono">{n.dataObjectId}</span>
                 </div>
               ) : null}
@@ -182,7 +182,7 @@ export function ExpandedGridLayout({
                   renderItem={renderItem}
                 />
               ) : (
-                <div className="mt-1 text-[10px] text-slate-500 truncate">&nbsp;</div>
+                <div className="mt-1 text-[10px] text-neutral-500 truncate">&nbsp;</div>
               )}
             </div>
           );
@@ -191,4 +191,3 @@ export function ExpandedGridLayout({
     </div>
   );
 }
-

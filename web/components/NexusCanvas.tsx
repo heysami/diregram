@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useState, useMemo, useRef, useCallback, Fragment } from 'react';
+import { useEffect, useLayoutEffect, useState, useMemo, useRef, useCallback, Fragment, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import * as Y from 'yjs';
 import { parseNexusMarkdown } from '@/lib/nexus-parser';
@@ -1025,12 +1025,32 @@ export function NexusCanvas({
     [getProcessRunningNumber, getRunningNumber],
   );
 
+  // Fallback resolver for cases where running-number mapping is temporarily missing.
+  const resolveProcessNumber = useCallback(
+    (nodeId: string): number | undefined => {
+      const direct = getProcessNumber(nodeId);
+      if (direct !== undefined) return direct;
+      if (!doc) return undefined;
+      const node = nodeMap.get(nodeId);
+      if (!node || !node.isFlowNode) return undefined;
+
+      const flowNodeData = loadFlowNodeStates(doc);
+      const byLine = flowNodeData.entries.find((e) => e.lineIndex === node.lineIndex);
+      if (byLine) return byLine.runningNumber;
+
+      const byContent = flowNodeData.entries.filter((e) => e.content === node.content.trim());
+      if (byContent.length === 1) return byContent[0].runningNumber;
+      return undefined;
+    },
+    [doc, getProcessNumber, nodeMap],
+  );
+
   // Load flow node types and connector labels from storage
   useEffect(() => {
     if (!doc) return;
     
     // Load process node types
-    const types = loadProcessNodeTypes(doc, flattenedNodes, getProcessNumber);
+    const types = loadProcessNodeTypes(doc, flattenedNodes, resolveProcessNumber);
     setProcessNodeTypes(types);
     
     // Load connector labels
@@ -1038,13 +1058,13 @@ export function NexusCanvas({
     setConnectorLabels(labels);
     
     // Load goto targets
-    const gotoMap = loadGotoTargets(doc, flattenedNodes, getProcessNumber);
+    const gotoMap = loadGotoTargets(doc, flattenedNodes, resolveProcessNumber);
     setGotoTargets(gotoMap);
 
     // Load loop targets
-    const loopMap = loadLoopTargets(doc, flattenedNodes, getProcessNumber);
+    const loopMap = loadLoopTargets(doc, flattenedNodes, resolveProcessNumber);
     setLoopTargets(loopMap);
-  }, [doc, flattenedNodes, getProcessNumber]);
+  }, [doc, flattenedNodes, resolveProcessNumber]);
 
   // Save connector labels
   const handleSaveConnectorLabels = useCallback(
@@ -1129,7 +1149,7 @@ export function NexusCanvas({
   // Save goto target
   const handleSaveGotoTarget = (nodeId: string, targetId: string) => {
     if (!doc) return;
-    const runningNumber = getProcessNumber(nodeId);
+    const runningNumber = resolveProcessNumber(nodeId);
     if (runningNumber === undefined) return;
     
     saveGotoTarget(doc, nodeId, targetId, runningNumber);
@@ -1148,7 +1168,7 @@ export function NexusCanvas({
   // Save loop target
   const handleSaveLoopTarget = (nodeId: string, targetId: string) => {
     if (!doc) return;
-    const runningNumber = getProcessNumber(nodeId);
+    const runningNumber = resolveProcessNumber(nodeId);
     if (runningNumber === undefined) return;
 
     saveLoopTarget(doc, nodeId, targetId, runningNumber);
@@ -2050,16 +2070,26 @@ export function NexusCanvas({
       }
   };
 
-  const handleKeyValueSelect = (e: React.ChangeEvent<HTMLSelectElement>, hubId: string, key: string) => {
-      e.stopPropagation();
-      onActiveVariantChange(prev => ({
-          ...prev,
-          [hubId]: {
-              ...(prev[hubId] || {}),
-              [key]: e.target.value
-          }
-      }));
-      onSelectNode(hubId);
+  const handleKeyValueSelect = (
+    e: React.ChangeEvent<HTMLSelectElement>,
+    hubId: string,
+    key: string,
+    baseConditions: Record<string, string> = {},
+  ) => {
+    e.stopPropagation();
+    const selectedValue = e.target.value;
+    const filteredBase = Object.fromEntries(
+      Object.entries(baseConditions).filter(([, v]) => typeof v === 'string' && v.trim().length > 0),
+    ) as Record<string, string>;
+
+    onActiveVariantChange((prev) => ({
+      ...prev,
+      [hubId]: {
+        ...filteredBase,
+        [key]: selectedValue,
+      },
+    }));
+    onSelectNode(hubId);
   };
 
   const toggleCommon = (e: React.MouseEvent, node: NexusNode) => {
@@ -2721,6 +2751,11 @@ export function NexusCanvas({
     <div 
       ref={containerRef}
       className={`relative w-full h-full mac-canvas-bg overflow-hidden outline-none ${cursorStyle}`}
+      style={
+        {
+          '--canvas-zoom': scale,
+        } as CSSProperties
+      }
       onMouseDown={(e) => {
         const target = e.target as HTMLElement;
         focusOnPointerEvent(target);
@@ -3642,6 +3677,34 @@ export function NexusCanvas({
 
           const hubStyle = styleMap.get(hub.id);
           const { groupClass, headerClass } = getHubGroupStyle(hubStyle?.hueIndex);
+          const effectiveConditions = (() => {
+            if (!hub.variants || hub.variants.length === 0 || keys.length === 0) return selectedConditions;
+
+            let activeVariant = hub.variants[0];
+            if (selectedConditions && Object.keys(selectedConditions).length > 0) {
+              const matching = hub.variants.find((v) => {
+                if (!v.conditions) return false;
+                return Object.entries(selectedConditions).every(([k, val]) => v.conditions?.[k] === val);
+              });
+              if (matching) activeVariant = matching;
+            }
+
+            const out: Record<string, string> = {};
+            keys.forEach((k) => {
+              const fromSelected = selectedConditions[k];
+              if (typeof fromSelected === 'string' && fromSelected.trim().length > 0) {
+                out[k] = fromSelected;
+                return;
+              }
+              const fromVariant = activeVariant.conditions?.[k];
+              if (typeof fromVariant === 'string' && fromVariant.trim().length > 0) {
+                out[k] = fromVariant;
+                return;
+              }
+              out[k] = '';
+            });
+            return out;
+          })();
 
           return (
             <div
@@ -3693,13 +3756,13 @@ export function NexusCanvas({
                     <div className="flex flex-wrap gap-1">
                       {keys.map((key) => {
                         const values = Array.from(keyValueMap.get(key) || []).sort();
-                        const selectedValue = selectedConditions[key] || values[0] || '';
+                        const selectedValue = effectiveConditions[key] || '';
 
                         return (
                           <select
                             key={key}
                             value={selectedValue}
-                            onChange={(e) => handleKeyValueSelect(e, hub.id, key)}
+                            onChange={(e) => handleKeyValueSelect(e, hub.id, key, effectiveConditions)}
                             onClick={(e) => e.stopPropagation()}
                             className="px-1.5 py-0.5 text-[9px] bg-transparent border border-white/70 text-white rounded hover:bg-white/10 focus:outline-none focus:ring-1 focus:ring-white cursor-pointer"
                           >
@@ -3927,7 +3990,7 @@ export function NexusCanvas({
                 orient="auto"
                 markerUnits="userSpaceOnUse"
               >
-                <polygon points="0 0, 8 4, 0 8" fill="#f97316" stroke="#f97316" strokeWidth="1" />
+                <polygon points="0 0, 8 4, 0 8" fill="#e11d48" stroke="#e11d48" strokeWidth="1" />
               </marker>
               <marker
                 id="arrowhead-gray"
@@ -4137,7 +4200,7 @@ export function NexusCanvas({
                   selectedNodeId === node.parentId ||
                   selectedNodeIdsSet.has(node.id) ||
                   selectedNodeIdsSet.has(node.parentId);
-                const connectorStroke = isConnectorHighlighted ? '#f97316' : '#000000';
+                const connectorStroke = isConnectorHighlighted ? '#e11d48' : '#000000';
                 
                 return (
                     <g key={`${node.parentId}-${node.id}`}>
@@ -4174,8 +4237,8 @@ export function NexusCanvas({
                               ry={0}
                               width={80}
                               height={20}
-                              fill={isConnectorHighlighted ? '#ffedd5' : '#000000'}
-                              stroke={isConnectorHighlighted ? '#f97316' : 'none'}
+                              fill={isConnectorHighlighted ? '#fee2e2' : '#000000'}
+                              stroke={isConnectorHighlighted ? '#e11d48' : 'none'}
                               strokeWidth={isConnectorHighlighted ? 1.5 : 0}
                               style={{ cursor: 'pointer' }}
                               pointerEvents="all"
@@ -4192,7 +4255,7 @@ export function NexusCanvas({
                               x={midX}
                               y={midY + 3}
                               textAnchor="middle"
-                              fill={isConnectorHighlighted ? '#f97316' : '#ffffff'}
+                              fill={isConnectorHighlighted ? '#e11d48' : '#ffffff'}
                               fontSize={10}
                               pointerEvents="none"
                             >
@@ -4516,6 +4579,43 @@ export function NexusCanvas({
             // Diamonds are normally 120px, but allow them to grow (up to NODE_WIDTH) so text doesn't clip.
             // We cap at NODE_WIDTH because the layout engine reserves NODE_WIDTH horizontally for these nodes.
             const diamondSize = isDiamond ? Math.min(NODE_WIDTH, Math.max(DIAMOND_SIZE, nodeLayout.height)) : DIAMOND_SIZE;
+            const isActiveNodeCard = !isDiamond && (isSelected || isDropTarget || draggingLineFrom === node.id);
+            const nodeMetaLabel = (() => {
+              if (isProcessNode) {
+                if (processNodeType === 'end') return 'output';
+                if (processNodeType === 'goto') return 'route';
+                if (processNodeType === 'validation' || processNodeType === 'branch') return 'decision';
+                if (processNodeType === 'time') return 'timer';
+                if (processNodeType === 'loop') return 'loop';
+                return 'process';
+              }
+              if (isHub) return 'hub';
+              return node.parentId ? 'node' : 'input';
+            })();
+            const nodeMetaId = (() => {
+              const running = getRunningNumber(node.id);
+              if (typeof running === 'number' && Number.isFinite(running)) {
+                return `ID:${String(running).padStart(2, '0')}`;
+              }
+              return `L:${Math.max(1, node.lineIndex + 1)}`;
+            })();
+            const nodeOverflowClass = (() => {
+              if (isExpanded) return 'overflow-visible group';
+              if (hasPinnedTagsForNode) return 'overflow-visible';
+              if (isProcessNode && isInProcessFlowMode) return 'overflow-visible';
+              if (isProcessNode && !isInProcessFlowMode && node.children.length > 0) return 'overflow-visible';
+              return 'overflow-hidden';
+            })();
+            const nodeCardStateClass = (() => {
+              if (isDiamond) return '';
+              if (isActiveNodeCard) {
+                if (!isExpanded) return 'dg-node-card--active';
+                if (isProcessNode && !isInProcessFlowMode) return 'dg-node-card--active';
+              }
+              return !isExpanded ? 'dg-node-card--idle' : '';
+            })();
+            const inlineControlTextClass = isActiveNodeCard ? 'text-white/90' : 'text-slate-900';
+            const inlineControlLabelClass = isActiveNodeCard ? 'text-white/70' : 'text-slate-600';
 
             const rn = lineIndexToRn.get(node.lineIndex);
             const commentTargetKey = typeof rn === 'number' ? buildNexusNodeCommentTargetKey(rn) : null;
@@ -4655,32 +4755,18 @@ export function NexusCanvas({
                     onDoubleClick={(e) => {
                       startEditing(node.id, undefined, true);
                     }} 
-                    className={`absolute ${isDiamond ? 'text-black bg-transparent' : style.styleClass} ${(isProcessNode && !isCollapsed && isInProcessFlowMode && !isDiamond) ? (processNodeBgClass || '') : ''} ${isDiamond ? '' : 'mac-double-outline'} ${isDiamond ? '' : 'rounded-md'} ${isDiamond ? '' : 'px-3 py-2'} flex flex-col items-center justify-center text-sm font-medium break-words ${isExpanded ? 'overflow-visible group' : (hasPinnedTagsForNode ? 'overflow-visible' : (isProcessNode && !isInProcessFlowMode && node.children.length > 0 ? 'overflow-visible' : 'overflow-hidden'))} ${(() => {
-                      if (!isProcessNode) return '';
-                      // Check if process flow mode is enabled for root process node
-                      let root: NexusNode | null = node;
-                      let check: NexusNode | null = node;
-                      while (check) {
-                        if (check.isFlowNode) {
-                          root = check;
-                          const parentId = check.parentId;
-                          if (!parentId) break;
-                          const p = nodeMap.get(parentId);
-                          if (!p || !p.isFlowNode) break;
-                          check = p;
-                        } else {
-                          break;
-                        }
-                      }
-                      return root && processFlowModeNodes?.has(root.id) ? 'overflow-visible' : '';
-                    })()} ${transitionClasses} outline-none select-none
-                        ${isSelected && !isDiamond ? 'mac-shadow-hard' : ''}
-                        ${isDropTarget && !isDiamond ? 'mac-shadow-hard' : ''}
+                    className={`absolute ${
+                      isDiamond
+                        ? (isSelected ? 'text-white bg-transparent' : 'text-black bg-transparent')
+                        : isExpanded
+                          ? `${style.styleClass} mac-double-outline rounded-md px-3 py-2`
+                          : 'dg-node-card'
+                    } ${(isProcessNode && !isCollapsed && isInProcessFlowMode && !isDiamond) ? (processNodeBgClass || '') : ''} ${nodeCardStateClass} flex flex-col items-center ${isDiamond || isExpanded ? 'justify-center' : 'justify-start'} text-sm font-medium break-words ${nodeOverflowClass} ${transitionClasses} outline-none select-none
                         ${isDragged ? 'opacity-50 border-dashed' : ''}
+                        ${isExpanded && isSelected && !isDiamond ? 'mac-shadow-hard' : ''}
                         ${isShaking ? 'animate-shake border-black' : ''}
                         ${activeTool === 'select' ? 'cursor-pointer' : activeTool === 'line' ? 'cursor-crosshair' : 'cursor-default'}
-                        ${draggingLineFrom === node.id && !isDiamond ? 'mac-shadow-hard' : ''}
-                        ${showMoveVisual ? `cursor-move ${isDiamond ? '' : 'mac-shadow-hard'}` : ''}
+                        ${showMoveVisual ? `cursor-move ${isDiamond ? '' : (isExpanded ? 'mac-shadow-hard' : 'dg-node-card--active')}` : ''}
                     `}
                     style={{
                         left: (() => {
@@ -4712,13 +4798,14 @@ export function NexusCanvas({
                           if (isDiamond) {
                             return diamondSize;
                           }
-                          // Increase height for process nodes with top icons (time/loop)
-                          if (isProcessNode && (processNodeType === 'time' || processNodeType === 'loop')) {
-                            // Add extra space for icon at top, plus extra room for loop dropdown when selected
-                            const extraForIcon = 24;
-                            const extraForLoopDropdown =
-                              processNodeType === 'loop' && isSelected ? 26 : 0;
-                            return nodeLayout.height + extraForIcon + extraForLoopDropdown;
+                          if (isProcessNode) {
+                            const extraForIcon =
+                              processNodeType === 'time' || processNodeType === 'loop' ? 24 : 0;
+                            const extraForInlineControl =
+                              (processNodeType === 'loop' || processNodeType === 'goto') && isSelected ? 40 : 0;
+                            if (extraForIcon > 0 || extraForInlineControl > 0) {
+                              return nodeLayout.height + extraForIcon + extraForInlineControl;
+                            }
                           }
                           return nodeLayout.height;
                         })(),
@@ -4727,12 +4814,14 @@ export function NexusCanvas({
                           if (isDiamond) {
                             return diamondSize;
                           }
-                          // Increase min height for process nodes with top icons (time/loop)
-                          if (isProcessNode && (processNodeType === 'time' || processNodeType === 'loop')) {
-                            const extraForIcon = 24;
-                            const extraForLoopDropdown =
-                              processNodeType === 'loop' && isSelected ? 26 : 0;
-                            return nodeLayout.height + extraForIcon + extraForLoopDropdown;
+                          if (isProcessNode) {
+                            const extraForIcon =
+                              processNodeType === 'time' || processNodeType === 'loop' ? 24 : 0;
+                            const extraForInlineControl =
+                              (processNodeType === 'loop' || processNodeType === 'goto') && isSelected ? 40 : 0;
+                            if (extraForIcon > 0 || extraForInlineControl > 0) {
+                              return nodeLayout.height + extraForIcon + extraForInlineControl;
+                            }
                           }
                           return nodeLayout.height;
                         })(),
@@ -4756,31 +4845,15 @@ export function NexusCanvas({
                         {/* Fill */}
                         <polygon
                           points="50,0 100,50 50,100 0,50"
-                          fill="#ffffff"
+                          fill={isSelected ? '#171a1f' : '#ffffff'}
                           shapeRendering="crispEdges"
                         />
-                        {/* Double outline: black / white / black */}
+                        {/* Thin outline to match card style (no heavy black ring). */}
                         <polygon
-                          points="50,2 98,50 50,98 2,50"
+                          points="50,1.5 98.5,50 50,98.5 1.5,50"
                           fill="none"
-                          stroke="var(--mac-black)"
-                          strokeWidth={isSelected ? 5 : 3}
-                          strokeLinejoin="miter"
-                          shapeRendering="crispEdges"
-                        />
-                        <polygon
-                          points="50,4 96,50 50,96 4,50"
-                          fill="none"
-                          stroke="var(--mac-white)"
-                          strokeWidth={isSelected ? 3 : 2}
-                          strokeLinejoin="miter"
-                          shapeRendering="crispEdges"
-                        />
-                        <polygon
-                          points="50,6 94,50 50,94 6,50"
-                          fill="none"
-                          stroke="var(--mac-black)"
-                          strokeWidth={isSelected ? 2 : 1}
+                          stroke={isSelected ? '#171a1f' : 'var(--dg-border-strong, #989fa9)'}
+                          strokeWidth={isSelected ? 1.5 : 1.2}
                           strokeLinejoin="miter"
                           shapeRendering="crispEdges"
                         />
@@ -4871,7 +4944,9 @@ export function NexusCanvas({
                     {/* Light colored background layer - behind text content */}
                     {isProcessNode && !isInProcessFlowMode && node.children.length > 0 && (
                       <div 
-                        className="absolute inset-0 rounded-md bg-slate-50 pointer-events-none"
+                        className={`absolute inset-0 rounded-md pointer-events-none ${
+                          isActiveNodeCard ? 'bg-[#171a1f]' : 'bg-slate-50'
+                        }`}
                         style={{
                           zIndex: 0,
                         }}
@@ -4952,43 +5027,17 @@ export function NexusCanvas({
                           {/* Icons at the top for time - always show when in process flow mode */}
                           {isInProcessFlowMode && processNodeType === 'time' && (
                             <div className="flex justify-center pointer-events-none absolute top-1 left-1/2 -translate-x-1/2 w-full">
-                              <Clock size={20} className="text-slate-500" />
+                              <Clock size={20} className={isActiveNodeCard ? 'text-white/70' : 'text-slate-500'} />
                             </div>
                           )}
                           {isInProcessFlowMode && processNodeType === 'loop' && (
                             <div className="flex justify-center pointer-events-none absolute top-1 left-1/2 -translate-x-1/2 w-full">
-                              <Repeat size={20} className="text-slate-500" />
+                              <Repeat size={20} className={isActiveNodeCard ? 'text-white/70' : 'text-slate-500'} />
                             </div>
                           )}
                           {isInProcessFlowMode && processNodeType === 'end' && (
                             <div className="w-full border-2 border-black bg-black px-1.5 py-0.5 text-xs text-white text-center mac-shadow-hard">
                               End
-                            </div>
-                          )}
-                          {isInProcessFlowMode && processNodeType === 'goto' && (
-                            <div className="flex w-full min-w-0 items-center justify-center gap-1 text-xs text-slate-900 overflow-hidden">
-                              <span className="shrink-0 text-slate-600">Go to</span>
-                              <select
-                                value={gotoTargets[node.id] || ''}
-                                onChange={(e) => {
-                                  e.stopPropagation();
-                                  handleSaveGotoTarget(node.id, e.target.value);
-                                }}
-                                className="w-24 min-w-0 appearance-none rounded border border-transparent bg-transparent px-1.5 py-0.5 text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-400"
-                                style={{ width: 96, maxWidth: 96 }}
-                                onClick={(e) => e.stopPropagation()}
-                              >
-                                <option value="" disabled>
-                                  Select…
-                                </option>
-                                {flattenedNodes
-                                  .filter((n) => n.id !== node.id && n.isFlowNode)
-                                  .map((n) => (
-                                    <option key={n.id} value={n.id}>
-                                      {n.content || n.id}
-                                    </option>
-                                  ))}
-                              </select>
                             </div>
                           )}
                           
@@ -5122,10 +5171,14 @@ export function NexusCanvas({
                                         currentHeightMult > 0 ? nodeLayout.height / currentHeightMult : nodeLayout.height;
 
                                       const extraHeightPx = (() => {
-                                        if (isProcessNode && (processNodeType === 'time' || processNodeType === 'loop')) {
-                                          const extraForIcon = 24;
-                                          const extraForLoopDropdown = processNodeType === 'loop' && isSelected ? 26 : 0;
-                                          return extraForIcon + extraForLoopDropdown;
+                                        if (isProcessNode) {
+                                          const extraForIcon =
+                                            processNodeType === 'time' || processNodeType === 'loop' ? 24 : 0;
+                                          const extraForInlineControl =
+                                            (processNodeType === 'loop' || processNodeType === 'goto') && isSelected
+                                              ? 40
+                                              : 0;
+                                          return extraForIcon + extraForInlineControl;
                                         }
                                         return 0;
                                       })();
@@ -5303,7 +5356,7 @@ export function NexusCanvas({
                         </div>
                     ) : (
                         <div 
-                            className={`w-full text-center ${processNodeType === 'loop' && isSelected ? 'overflow-visible' : 'overflow-hidden'} flex flex-col items-center justify-center relative ${(processNodeType === 'time' || processNodeType === 'loop') ? 'pt-6' : ''} ${isDiamond ? 'px-3 py-2 relative z-[2]' : ''}`}
+                            className={`w-full h-full ${isDiamond ? 'text-center items-center' : 'text-left items-start'} ${isDiamond ? 'overflow-hidden' : 'overflow-visible'} flex flex-col ${isDiamond ? 'justify-center' : 'justify-start'} relative ${(processNodeType === 'time' || processNodeType === 'loop') ? 'pt-6' : ''} ${isDiamond ? 'px-3 py-2 relative z-[2]' : ''}`}
                             style={{ 
                                 whiteSpace: 'pre-wrap',
                                 maxWidth: '100%',
@@ -5324,16 +5377,33 @@ export function NexusCanvas({
                                 {node.icon}
                               </div>
                             )}
-                            <div className="w-full break-words whitespace-pre-wrap overflow-hidden flex items-center justify-center">
-                              {(processNodeType === 'end' || processNodeType === 'goto') ? '' : (
-                                <span className="mac-label-plate inline-flex items-center gap-1">
-                                  {linkedTextSet.size > 0 && linkedTextSet.has((node.content || '').trim()) ? (
-                                    <span className="text-slate-500" title="Linked to a dimension value">
-                                      <Link2 size={12} />
-                                    </span>
-                                  ) : null}
-                                  <span>{node.content}</span>
-                                </span>
+                            {!isDiamond ? (
+                              <div className="dg-node-card__meta-row">
+                                <span className="dg-node-card__meta-label">{nodeMetaLabel}</span>
+                                <span className="dg-node-card__meta-id">{nodeMetaId}</span>
+                              </div>
+                            ) : null}
+                            <div className={`w-full break-words whitespace-pre-wrap flex items-center ${isDiamond ? 'justify-center' : 'justify-start'}`}>
+                              {processNodeType === 'end' ? '' : (
+                                isDiamond ? (
+                                  <span className="inline-flex flex-wrap items-center justify-center gap-1 text-center">
+                                    {linkedTextSet.size > 0 && linkedTextSet.has((node.content || '').trim()) ? (
+                                      <span className={isSelected ? 'text-white/80' : 'text-slate-500'} title="Linked to a dimension value">
+                                        <Link2 size={12} />
+                                      </span>
+                                    ) : null}
+                                    <span>{node.content}</span>
+                                  </span>
+                                ) : (
+                                  <span className="dg-node-card__title inline-flex flex-wrap items-center gap-1 justify-start">
+                                    {linkedTextSet.size > 0 && linkedTextSet.has((node.content || '').trim()) ? (
+                                      <span className={isActiveNodeCard ? 'text-white/80' : 'text-slate-500'} title="Linked to a dimension value">
+                                        <Link2 size={12} />
+                                      </span>
+                                    ) : null}
+                                    <span>{processNodeType === 'goto' ? (node.content || 'Go to') : node.content}</span>
+                                  </span>
+                                )
                               )}
                             </div>
                             {isProcessNode && isInProcessFlowMode && processNodeType === 'loop' && isSelected && (() => {
@@ -5343,15 +5413,17 @@ export function NexusCanvas({
                               const value = selectedIsValid ? selected : '';
 
                               return (
-                                <div className="mt-1 flex w-full items-center justify-center gap-1 text-xs text-slate-900">
-                                  <span className="text-slate-600">Loop to</span>
+                                <div className={`mt-1 flex w-full min-w-0 flex-col items-start gap-0.5 px-2 text-xs ${inlineControlTextClass}`}>
+                                  <span className={`leading-none ${inlineControlLabelClass}`}>Loop to</span>
                                   <select
                                     value={value}
                                     onChange={(e) => {
                                       e.stopPropagation();
                                       handleSaveLoopTarget(node.id, e.target.value);
                                     }}
-                                    className="appearance-none rounded border border-transparent bg-transparent px-1.5 py-0.5 text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-400"
+                                    className={`dg-node-inline-select w-full min-w-0 appearance-none rounded border px-1.5 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-slate-400 ${
+                                      isActiveNodeCard ? 'bg-white/10 border-white/25' : 'bg-transparent border-transparent'
+                                    } ${inlineControlTextClass}`}
                                     onClick={(e) => e.stopPropagation()}
                                   >
                                     <option value="">
@@ -5366,6 +5438,42 @@ export function NexusCanvas({
                                 </div>
                               );
                             })()}
+                            {isProcessNode && isInProcessFlowMode && processNodeType === 'goto' && isSelected && (() => {
+                              const options = flattenedNodes.filter((n) => n.id !== node.id && n.isFlowNode);
+                              const selected = gotoTargets[node.id] || '';
+                              const selectedIsValid = !selected || options.some((o) => o.id === selected);
+                              const value = selectedIsValid ? selected : '';
+
+                              return (
+                                <div className={`mt-1 flex w-full min-w-0 flex-col items-start gap-0.5 px-2 text-xs ${inlineControlTextClass}`}>
+                                  <span className={`leading-none ${inlineControlLabelClass}`}>Go to</span>
+                                  <select
+                                    value={value}
+                                    onChange={(e) => {
+                                      e.stopPropagation();
+                                      handleSaveGotoTarget(node.id, e.target.value);
+                                    }}
+                                    className={`dg-node-inline-select w-full min-w-0 appearance-none rounded border px-1.5 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-slate-400 ${
+                                      isActiveNodeCard ? 'bg-white/10 border-white/25' : 'bg-transparent border-transparent'
+                                    } ${inlineControlTextClass}`}
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    <option value="" disabled>
+                                      Select…
+                                    </option>
+                                    {options.map((n) => (
+                                      <option key={n.id} value={n.id}>
+                                        {n.content || n.id}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
+                              );
+                            })()}
+                            {!isDiamond &&
+                            !(isProcessNode && isInProcessFlowMode && (processNodeType === 'goto' || (processNodeType === 'loop' && isSelected))) ? (
+                              <div className="dg-node-card__placeholder" />
+                            ) : null}
                         </div>
                     )}
                     

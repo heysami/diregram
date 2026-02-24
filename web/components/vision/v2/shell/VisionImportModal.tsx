@@ -69,49 +69,50 @@ export function VisionImportModal({ doc, isOpen, onClose }: { doc: Y.Doc; isOpen
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[22000] flex items-center justify-center">
-      <div className="absolute inset-0 bg-black/40" onClick={close} />
-      <div className="relative w-[min(1000px,92vw)] max-h-[90vh] flex flex-col overflow-hidden bg-white border border-slate-200 shadow-xl">
-        <div className="h-10 px-2 border-b flex items-center justify-between gap-2 bg-white">
-          <div className="text-sm font-semibold">Import Vision</div>
-          <button type="button" onClick={close} className="h-7 w-7 border bg-white flex items-center justify-center" title="Close">
-            <X size={16} />
-          </button>
+    <div
+      className="fixed inset-0 z-[22000] flex items-center justify-center bg-black/20 p-4"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) close();
+      }}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Import Vision markdown"
+    >
+      <div className="mac-window mac-double-outline w-[1000px] max-w-[92vw] max-h-[90vh] flex flex-col overflow-hidden bg-white">
+        <div className="mac-titlebar">
+          <div className="mac-title">Import vision</div>
+          <div className="absolute right-1 top-1/2 -translate-y-1/2">
+            <button type="button" onClick={close} className="mac-btn mac-btn--icon-sm" title="Close">
+              <X size={16} />
+            </button>
+          </div>
         </div>
 
         <div className="p-4 overflow-auto space-y-4">
-          <div className="text-[11px] text-slate-600">
+          <div className="text-[11px] opacity-70">
             Need the AI guidance prompts and checklists? Use <span className="font-semibold">Project → Download … guides + checklists</span>.
           </div>
 
-          <div>
-            <div className="text-[11px] font-bold uppercase tracking-wide text-slate-600">Paste Vision markdown</div>
+          <div className="space-y-2">
+            <div className="text-[11px] font-semibold">Paste Vision markdown</div>
             <textarea
               value={markdown}
               onChange={(e) => setMarkdown(e.target.value)}
               rows={14}
-              className="mt-2 w-full rounded-lg border border-slate-200 px-3 py-2 font-mono text-[12px] leading-5 focus:outline-none focus:ring-2 focus:ring-blue-200"
+              className="w-full px-3 py-2 font-mono text-[11px] leading-5 mac-double-outline bg-white"
               placeholder="Paste Vision markdown here…"
             />
-            <div className="mt-2 flex items-center justify-between gap-2">
-              <div className="text-[11px] text-slate-500">Import will replace the entire Vision markdown (including the visionjson payload).</div>
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div className="text-[11px] opacity-70">Import will replace the entire Vision markdown (including the visionjson payload).</div>
               <div className="flex items-center gap-2">
-                <label className="flex items-center gap-2 text-[11px] text-slate-600 select-none">
+                <label className="flex items-center gap-2 text-[11px] opacity-80 select-none">
                   <input type="checkbox" checked={clearComments} onChange={(e) => setClearComments(e.target.checked)} />
                   Clear comments
                 </label>
-                <button
-                  type="button"
-                  onClick={() => setMarkdown('')}
-                  className="px-3 py-1.5 rounded-md border border-slate-200 bg-white text-[12px] font-semibold text-slate-700 hover:bg-slate-50"
-                >
+                <button type="button" onClick={() => setMarkdown('')} className="mac-btn h-8">
                   Clear
                 </button>
-                <button
-                  type="button"
-                  onClick={onValidate}
-                  className="px-3 py-1.5 rounded-md bg-blue-600 text-white text-[12px] font-semibold hover:bg-blue-700"
-                >
+                <button type="button" onClick={onValidate} className="mac-btn mac-btn--primary h-8">
                   Validate
                 </button>
               </div>
@@ -119,12 +120,12 @@ export function VisionImportModal({ doc, isOpen, onClose }: { doc: Y.Doc; isOpen
           </div>
 
           {issues ? (
-            <div className={`rounded-lg border p-3 ${issues.errors.length ? 'border-red-200 bg-red-50' : 'border-green-200 bg-green-50'}`}>
+            <div className="mac-double-outline p-3 bg-white">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
-                    {issues.errors.length ? <AlertTriangle size={16} className="text-red-700" /> : <div className="w-2 h-2 rounded-full bg-green-600 mt-1" />}
-                    <div className="text-[12px] font-semibold text-slate-900">
+                    {issues.errors.length ? <AlertTriangle size={16} className="text-rose-700" /> : <div className="w-2 h-2 rounded-full bg-emerald-600 mt-1" />}
+                    <div className="text-[12px] font-semibold">
                       {issues.errors.length
                         ? `Found ${issues.errors.length} error(s) and ${issues.warnings.length} warning(s)`
                         : `No errors. ${issues.warnings.length} warning(s)`}
@@ -132,7 +133,7 @@ export function VisionImportModal({ doc, isOpen, onClose }: { doc: Y.Doc; isOpen
                   </div>
                   <div className="mt-2 space-y-1">
                     {issues.errors.map((it, idx) => (
-                      <div key={`e-${idx}`} className="text-[12px] text-red-700">
+                      <div key={`e-${idx}`} className="text-[12px] text-rose-700">
                         <span className="font-semibold">ERROR</span>: {it.message}
                       </div>
                     ))}
@@ -144,12 +145,7 @@ export function VisionImportModal({ doc, isOpen, onClose }: { doc: Y.Doc; isOpen
                   </div>
                 </div>
                 <div className="shrink-0 flex flex-col gap-2">
-                  <button
-                    type="button"
-                    className="px-3 py-1.5 rounded-md border border-slate-200 bg-white text-[12px] font-semibold text-slate-700 hover:bg-slate-50"
-                    onClick={() => void copy(issues.reportText)}
-                    title="Copy the error report for your AI"
-                  >
+                  <button type="button" className="mac-btn h-8" onClick={() => void copy(issues.reportText)} title="Copy the error report for your AI">
                     Copy report
                   </button>
                 </div>
@@ -158,35 +154,25 @@ export function VisionImportModal({ doc, isOpen, onClose }: { doc: Y.Doc; isOpen
           ) : null}
 
           {step === 'confirm' ? (
-            <div className="rounded-lg border border-slate-200 bg-white p-3">
-              <div className="text-[12px] font-semibold text-slate-900">Ready to {hasExistingContent ? 'replace' : 'import'} Vision markdown</div>
-              <div className="mt-1 text-[12px] text-slate-600">
+            <div className="mac-double-outline bg-white p-3">
+              <div className="text-[12px] font-semibold">Ready to {hasExistingContent ? 'replace' : 'import'} Vision markdown</div>
+              <div className="mt-1 text-[12px] opacity-70">
                 This will overwrite the current Vision document markdown{clearComments ? ' and clear comments' : ''}.
               </div>
               <div className="mt-3 flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  className="px-3 py-1.5 rounded-md border border-slate-200 bg-white text-[12px] font-semibold text-slate-700 hover:bg-slate-50"
-                  onClick={() => setStep('edit')}
-                >
+                <button type="button" className="mac-btn h-8" onClick={() => setStep('edit')}>
                   Back
                 </button>
-                <button
-                  type="button"
-                  className={`px-3 py-1.5 rounded-md text-[12px] font-semibold ${canReplace ? 'bg-blue-600 text-white hover:bg-blue-700' : 'bg-slate-200 text-slate-500'}`}
-                  disabled={!canReplace}
-                  onClick={doReplace}
-                >
+                <button type="button" className="mac-btn mac-btn--primary h-8 disabled:opacity-40" disabled={!canReplace} onClick={doReplace}>
                   {hasExistingContent ? 'Replace' : 'Import'}
                 </button>
               </div>
             </div>
           ) : null}
 
-          {copyStatus ? <div className="text-[11px] text-slate-600">{copyStatus}</div> : null}
+          {copyStatus ? <div className="text-[11px] opacity-70">{copyStatus}</div> : null}
         </div>
       </div>
     </div>
   );
 }
-

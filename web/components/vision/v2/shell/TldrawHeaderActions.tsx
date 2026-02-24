@@ -9,7 +9,7 @@ export function TldrawHeaderActions({ editor }: { editor: Editor | null }) {
     <div className="flex items-center gap-1">
       <button
         type="button"
-        className="h-8 w-8 border flex items-center justify-center bg-white"
+        className="mac-btn mac-btn--icon disabled:opacity-40 disabled:cursor-not-allowed"
         onClick={() => {
           try {
             editor?.undo();
@@ -24,7 +24,7 @@ export function TldrawHeaderActions({ editor }: { editor: Editor | null }) {
       </button>
       <button
         type="button"
-        className="h-8 w-8 border flex items-center justify-center bg-white"
+        className="mac-btn mac-btn--icon disabled:opacity-40 disabled:cursor-not-allowed"
         onClick={() => {
           try {
             editor?.redo();
@@ -39,7 +39,7 @@ export function TldrawHeaderActions({ editor }: { editor: Editor | null }) {
       </button>
       <button
         type="button"
-        className="h-8 w-8 border flex items-center justify-center bg-white"
+        className="mac-btn mac-btn--icon disabled:opacity-40 disabled:cursor-not-allowed"
         onClick={() => {
           const ed = editor;
           if (!ed) return;
@@ -58,7 +58,7 @@ export function TldrawHeaderActions({ editor }: { editor: Editor | null }) {
       </button>
       <button
         type="button"
-        className="h-8 w-8 border flex items-center justify-center bg-white"
+        className="mac-btn mac-btn--icon disabled:opacity-40 disabled:cursor-not-allowed"
         onClick={() => {
           const ed = editor;
           if (!ed) return;
@@ -78,4 +78,3 @@ export function TldrawHeaderActions({ editor }: { editor: Editor | null }) {
     </div>
   );
 }
-

@@ -65,7 +65,7 @@ function DropdownMenu({
               key={it.id}
               role="menuitem"
               type="button"
-              className="w-full text-left px-3 py-2 text-xs hover:bg-gray-50 flex items-center gap-2 disabled:opacity-50"
+              className="w-full text-left px-3 py-2 text-xs flex items-center gap-2 disabled:opacity-50 mac-menu-item"
               disabled={!!it.disabled}
               title={it.title}
               onClick={async () => {
@@ -230,4 +230,3 @@ export function ProjectActionMenus({
     </div>
   );
 }
-

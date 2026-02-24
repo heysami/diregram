@@ -206,42 +206,18 @@ export function parseNexusMarkdown(text: string): NexusNode[] {
     let isCommon = false;
 
     // Parse Condition: (key=value, key2=value2)
-    // Regex to find parens that contain =
-    // Loop to handle multiple groups (though typically one group with commas)
-    // Actually, let's just extract all parens first.
-    
+    // Important: node titles can legitimately contain parentheses that are NOT conditions
+    // (e.g. "Student Application (draft)"). We must still parse later "(key=value)" groups.
     let activeContent = displayContent;
-    const parenMatches = activeContent.matchAll(/\(([^)]+)\)/g);
-    
-    // We need to be careful not to replace text if we iterate.
-    // Simpler approach: Iteratively find and replace
-    
-    while (true) {
-        const match = /\(([^)]+)\)/.exec(activeContent);
-        if (!match) break;
-        
-        const inner = match[1];
-        const fullMatch = match[0];
-        
-        // Check if it looks like attributes
-        if (inner.includes('=')) {
-            // Split by comma
-            const pairs = inner.split(',');
-            pairs.forEach(pair => {
-                const [k, v] = pair.split('=').map(s => s.trim());
-                if (k && v) {
-                    conditions[k] = v;
-                }
-            });
-            activeContent = activeContent.replace(fullMatch, '');
-        } else {
-            // Just parens text? leave it? or remove?
-            // "Student Application (draft)" -> might not be a condition.
-            // Requirement says "Condition: (key=value)".
-            // Let's assume non-equals parens are part of content unless strictly 'common'
-            break; // Stop loop to avoid infinite if we don't remove it
-        }
-    }
+    activeContent = activeContent.replace(/\(([^)]+)\)/g, (fullMatch, inner: string) => {
+      if (!inner || !inner.includes('=')) return fullMatch;
+
+      inner.split(',').forEach((pair) => {
+        const [k, v] = pair.split('=').map((s) => s.trim());
+        if (k && v) conditions[k] = v;
+      });
+      return '';
+    });
     
     // Check for #common# tag (more specific than (common) to avoid conflicts)
     let isFlowNode = false;

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import * as Y from 'yjs';
-import { Pencil, Plus, Trash2, X } from 'lucide-react';
+import { Pencil, Plus, Save, LayoutTemplate, Trash2, X } from 'lucide-react';
 import type { ToolType } from '@/components/Toolbar';
 import { NexusCanvas } from '@/components/NexusCanvas';
 import type { PresenceController } from '@/lib/presence';
@@ -1015,24 +1015,32 @@ export function FlowsCanvas({
                 onClick={() => {
                   void saveSelectedFlowAsTemplate().catch(() => {});
                 }}
-                className="mac-btn"
+                className="mac-btn mac-btn--icon-sm"
                 title="Save this entire flow as a template"
+                aria-label="Save template"
               >
-                Save template
+                <Save size={16} />
               </button>
             ) : null}
             {templateFiles && loadTemplateMarkdown ? (
               <button
                 type="button"
                 onClick={() => setInsertFlowFromTemplateOpen(true)}
-                className="mac-btn"
+                className="mac-btn mac-btn--icon-sm"
                 title="Create a new flow from a template"
+                aria-label="New from template"
               >
-                Template…
+                <LayoutTemplate size={16} />
               </button>
             ) : null}
-            <button type="button" onClick={createNewFlow} className="mac-btn" title="Create new flow">
-              <Plus size={14} />
+            <button
+              type="button"
+              onClick={createNewFlow}
+              className="mac-btn mac-btn--icon-sm"
+              title="Create new flow"
+              aria-label="New flow"
+            >
+              <Plus size={16} />
             </button>
           </div>
         </div>
@@ -1057,9 +1065,8 @@ export function FlowsCanvas({
                     onSelectNode(null);
                     onSelectNodeIds([]);
                   }}
-                  className={`w-full px-2 py-2 text-left text-xs border mac-double-outline ${
-                    selectedFid === fid ? 'mac-shadow-hard mac-fill--hatch' : 'bg-white'
-                  }`}
+                  className="w-full px-2 py-2 text-left text-xs mac-interactive-row"
+                  aria-selected={selectedFid === fid}
                 >
                   <div className="font-medium truncate">{r.content}</div>
                   <div className="text-[10px] text-slate-400 truncate">{fid}</div>
@@ -1122,9 +1129,8 @@ export function FlowsCanvas({
                           onSelectNode(n.id);
                           onSelectNodeIds([]);
                         }}
-                        className={`w-full px-2 py-2 text-left text-xs border mac-double-outline ${
-                          isActive ? 'mac-shadow-hard mac-fill--hatch' : 'bg-white'
-                        }`}
+                        className="w-full px-2 py-2 text-left text-xs mac-interactive-row"
+                        aria-selected={isActive}
                         title="Show this process flow on the right"
                       >
                         <div className="font-medium truncate">{n.content}</div>
@@ -1169,9 +1175,8 @@ export function FlowsCanvas({
                               onSelectNode(null);
                               onSelectNodeIds([]);
                             }}
-                            className={`w-full px-2 py-2 text-left text-xs border mac-double-outline ${
-                              isActive ? 'mac-shadow-hard mac-fill--hatch' : 'bg-white'
-                            }`}
+                            className="w-full px-2 py-2 text-left text-xs mac-interactive-row"
+                            aria-selected={isActive}
                             title="Show this description flow on the right"
                           >
                             <div className="font-medium truncate">{b.hubLabel || String(b.id)}</div>
@@ -1210,9 +1215,8 @@ export function FlowsCanvas({
                               onSelectNode(null);
                               onSelectNodeIds([]);
                             }}
-                            className={`w-full px-2 py-2 text-left text-xs border mac-double-outline ${
-                              isActive ? 'mac-shadow-hard mac-fill--hatch' : 'bg-white'
-                            }`}
+                            className="w-full px-2 py-2 text-left text-xs mac-interactive-row"
+                            aria-selected={isActive}
                             title="Show this status flow on the right"
                           >
                             <div className="font-medium truncate">{b.label || b.id}</div>
@@ -1913,4 +1917,3 @@ function safeStageIndex(
   const idx = Number.isFinite(raw) ? (raw as number) : 0;
   return Math.max(0, Math.min(idx, Math.max(0, swimlane.stages.length - 1)));
 }
-

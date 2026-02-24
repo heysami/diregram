@@ -89,7 +89,7 @@ export function TreeTestRunner({
   }, [currentNode, currentNodeId, state]);
 
   if (!currentNode) {
-    return <div className="p-4 text-sm text-slate-600">Start node not found.</div>;
+    return <div className="p-4 text-sm text-neutral-600">Start node not found.</div>;
   }
 
   const currentUi = state.uiTypeByNodeId.get(currentNodeId) || null;
@@ -220,10 +220,8 @@ export function TreeTestRunner({
                 key={`${id}-${idx}`}
                 type="button"
                 onClick={() => jumpTo(idx)}
-                className={`rounded-full border px-3 py-1 text-xs ${
-                  idx === path.length - 1
-                    ? 'bg-slate-900 border-slate-900 text-white'
-                    : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                className={`mac-btn ${
+                  idx === path.length - 1 ? 'mac-btn--dark' : ''
                 }`}
                 title="Jump to step"
               >
@@ -234,14 +232,14 @@ export function TreeTestRunner({
         </div>
 
         <div className="mt-4">
-          <div className="text-lg font-semibold text-slate-900 mb-2">{singleLine(currentNode.content)}</div>
+          <div className="text-lg font-semibold text-neutral-900 mb-2">{singleLine(currentNode.content)}</div>
 
           {currentUi === 'list' && !listGateOpened ? (
-            <div className="rounded-lg border border-slate-200 bg-white p-4">
+            <div className="border border-black/10 bg-white p-4">
               {listGateDoIds.length === 0 ? (
-                <div className="text-xs text-slate-500">No linked data objects found on this node or its children.</div>
+                <div className="text-xs text-neutral-500">No linked data objects found on this node or its children.</div>
               ) : (
-                <div className="rounded-md border border-slate-200 divide-y overflow-hidden">
+                <div className="border border-black/10 divide-y overflow-hidden">
                   {listGateMockItems.map((it) => {
                     const isSelected = selectedListToken === it.instanceId;
                     return (
@@ -256,10 +254,10 @@ export function TreeTestRunner({
                           });
                           setOpenedListNodes((prev) => new Set(prev).add(currentNodeId));
                         }}
-                        className={`w-full text-left px-3 py-2 text-sm hover:bg-slate-50 ${isSelected ? 'bg-blue-50' : ''}`}
+                        className={`w-full text-left px-3 py-2 text-sm hover:bg-black/5 ${isSelected ? 'bg-[#ffe4ec]' : ''}`}
                         title="Select"
                       >
-                        <div className="font-medium text-slate-900">{singleLine(it.label)}</div>
+                        <div className="font-medium text-neutral-900">{singleLine(it.label)}</div>
                       </button>
                     );
                   })}
@@ -270,7 +268,7 @@ export function TreeTestRunner({
                   <button
                     type="button"
                     onClick={() => setOpenedListNodes((prev) => new Set(prev).add(currentNodeId))}
-                    className="h-8 rounded-md border border-slate-200 bg-white px-3 text-xs text-slate-700 hover:bg-slate-50"
+                    className="mac-btn"
                   >
                     Continue
                   </button>
@@ -278,9 +276,9 @@ export function TreeTestRunner({
               ) : null}
             </div>
           ) : nextInnerStep && nextInnerGridNode ? (
-            <div className="rounded-lg border border-blue-200 bg-blue-50 p-4">
-              <div className="text-xs font-semibold text-slate-800 mb-1">Flow inner step</div>
-              <div className="text-[11px] text-slate-600 mb-3">
+            <div className="border border-black/10 bg-white p-4">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-neutral-700 mb-1">Flow inner step</div>
+              <div className="text-[11px] text-neutral-600 mb-3">
                 Step {innerProgress + 1} of {innerSeq.length} (from flow). Click the inner node first.
               </div>
               {nextInnerGridLayout ? (
@@ -303,7 +301,7 @@ export function TreeTestRunner({
           ) : (
             <>
               {selectedListToken ? (
-                <div className="mb-2 text-[11px] text-slate-500">
+                <div className="mb-2 text-[11px] text-neutral-500">
                   Selected: {singleLine((dataObjectById.get(selectedListDoId)?.name || selectedListDoId) + (selectedListInstance ? ` ${selectedListInstance}` : ''))}
                 </div>
               ) : null}
@@ -322,18 +320,18 @@ export function TreeTestRunner({
               ) : null}
 
               {endsHere ? (
-                <div className="text-xs text-slate-500">flows end here.</div>
+                <div className="text-xs text-neutral-500">flows end here.</div>
               ) : currentUi === 'list' ? (
-                <div className="rounded-md border border-slate-200 bg-white divide-y">
+                <div className="border border-black/10 bg-white divide-y">
                   {visibleChildrenFiltered.map((c) => (
                     <button
                       key={c.id}
                       type="button"
                       onClick={() => clickChild(c.id)}
-                      className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50"
+                      className="w-full text-left px-3 py-2 text-sm hover:bg-black/5"
                       title="Select item"
                     >
-                      <div className="font-medium text-slate-900">{singleLine(c.content)}</div>
+                      <div className="font-medium text-neutral-900">{singleLine(c.content)}</div>
                     </button>
                   ))}
                 </div>
@@ -365,4 +363,3 @@ export function TreeTestRunner({
     </div>
   );
 }
-

@@ -97,7 +97,7 @@ export function SlashMenu({
         e.stopPropagation();
       }}
     >
-      <div className="px-3 py-2 border-b bg-slate-50">
+      <div className="px-3 py-2 border-b bg-white/70">
         <div className="text-[11px] uppercase tracking-wide text-slate-600">Insert</div>
         <div className="mt-1 text-[12px] text-slate-700">
           <span className="text-slate-500">/</span>
@@ -111,8 +111,8 @@ export function SlashMenu({
               key={it.id}
               type="button"
               data-slash-idx={idx}
-              className={`pointer-events-auto w-full text-left rounded px-2 py-1 ${
-                idx === index ? 'bg-slate-100' : 'hover:bg-slate-50'
+              className={`pointer-events-auto w-full text-left rounded px-2 py-1 mac-menu-item ${
+                idx === index ? 'is-active' : ''
               }`}
               onMouseDown={(e) => {
                 // Use mousedown instead of click so we run before any global "outside click" closer.
@@ -140,7 +140,7 @@ export function SlashMenu({
       <div className="border-t bg-white/70 p-2">
         <button
           type="button"
-          className="pointer-events-auto w-full text-left rounded px-2 py-1 text-slate-500 hover:bg-slate-50"
+          className="pointer-events-auto w-full text-left rounded px-2 py-1 text-slate-500 mac-menu-item"
           onMouseDown={(e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -153,4 +153,3 @@ export function SlashMenu({
     </div>
   );
 }
-

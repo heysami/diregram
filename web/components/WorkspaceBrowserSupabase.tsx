@@ -703,8 +703,8 @@ export function WorkspaceBrowserSupabase() {
   };
 
   if (!configured) return null;
-  if (!ready) return <div className="text-xs opacity-80">Loading…</div>;
-  if (!supabase) return <div className="text-xs opacity-80">Loading…</div>;
+  if (!ready) return <div className="w-full" aria-busy="true" />;
+  if (!supabase) return <div className="w-full" aria-busy="true" />;
   if (!userId) return <div className="text-xs">You’re signed out.</div>;
 
   return (
@@ -717,7 +717,7 @@ export function WorkspaceBrowserSupabase() {
 
       {error ? <div className="mac-double-outline p-3 text-xs">{error}</div> : null}
 
-      {loading ? <div className="text-xs opacity-80">Loading…</div> : null}
+      {/* Intentionally no "Loading…" text here; it flickers and feels worse than an empty state. */}
 
       {!activeFolder ? (
         <div className="space-y-4">
@@ -729,147 +729,150 @@ export function WorkspaceBrowserSupabase() {
             </button>
           </div>
 
-          <div className="grid gap-4 w-full grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {folders.map((folder) => {
-              const canEdit = effectiveCanEditFolder(folder, userId, userEmail);
-              const recent = (filesByFolder.get(folder.id) || [])
-                .filter((f) => effectiveCanView(f, folder, userId, userEmail))
-                .slice(0, 3);
-              const empty = (filesByFolder.get(folder.id) || []).length === 0;
+	          <div className="grid gap-4 w-full grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+	            {folders.map((folder, idx) => {
+	              const canEdit = effectiveCanEditFolder(folder, userId, userEmail);
+	              const recent = (filesByFolder.get(folder.id) || [])
+	                .filter((f) => effectiveCanView(f, folder, userId, userEmail))
+	                .slice(0, 3);
+	              const empty = (filesByFolder.get(folder.id) || []).length === 0;
 
-              return (
-                <div
-                  key={folder.id}
-                  className="mac-window mac-double-outline p-5 group relative cursor-pointer"
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => {
-                    setActiveFolderId(folder.id);
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') setActiveFolderId(folder.id);
-                  }}
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <Folder size={18} />
-                        <div className="text-[14px] font-bold tracking-tight truncate">{folder.name}</div>
-                      </div>
-                      <div className="text-[11px] opacity-70 mt-1">{recent.length} recent</div>
-                    </div>
+	              return (
+	                <div
+	                  key={folder.id}
+	                  className="mac-window mac-double-outline mac-interactive-row p-5 group relative cursor-pointer dg-reveal-card"
+	                  style={{ '--dg-reveal-delay': `${Math.min(idx, 10) * 90}ms` } as any}
+	                  role="button"
+	                  tabIndex={0}
+	                  onClick={() => {
+	                    setActiveFolderId(folder.id);
+	                  }}
+	                  onKeyDown={(e) => {
+	                    if (e.key === 'Enter') setActiveFolderId(folder.id);
+	                  }}
+	                >
+	                  <div className="dg-reveal-card__content">
+	                    <div className="flex items-start justify-between gap-3">
+	                      <div className="min-w-0">
+	                        <div className="flex items-center gap-2">
+	                          <Folder size={18} />
+	                          <div className="text-[14px] font-bold tracking-tight truncate">{folder.name}</div>
+	                        </div>
+	                        <div className="text-[11px] opacity-70 mt-1">{recent.length} recent</div>
+	                      </div>
 
-                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button
-                        type="button"
-                        className="h-7 w-7 border flex items-center justify-center bg-white"
-                        title={!canEdit ? 'No edit access' : 'Edit'}
-                        disabled={!canEdit}
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          if (!canEdit) return;
-                          setEditError(null);
-                          setEditProject({ id: folder.id, name: folder.name, people: folder.access?.people || [] });
-                        }}
-                      >
-                        <Pencil size={14} />
-                      </button>
-                      <button
-                        type="button"
-                        className="h-7 w-7 border flex items-center justify-center bg-white"
-                        title={empty ? 'Delete' : 'Delete (project not empty)'}
-                        disabled={folder.name === 'Account Templates' || !empty || !canEdit}
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          if (!canEdit) return;
-                          if (folder.name === 'Account Templates') return;
-                          deleteProject(folder.id);
-                        }}
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
-                  </div>
+	                      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+	                        <button
+	                          type="button"
+	                          className="mac-btn mac-btn--icon"
+	                          title={!canEdit ? 'No edit access' : 'Edit'}
+	                          disabled={!canEdit}
+	                          onClick={(e) => {
+	                            e.preventDefault();
+	                            e.stopPropagation();
+	                            if (!canEdit) return;
+	                            setEditError(null);
+	                            setEditProject({ id: folder.id, name: folder.name, people: folder.access?.people || [] });
+	                          }}
+	                        >
+	                          <Pencil size={14} />
+	                        </button>
+	                        <button
+	                          type="button"
+	                          className="mac-btn mac-btn--icon"
+	                          title={empty ? 'Delete' : 'Delete (project not empty)'}
+	                          disabled={folder.name === 'Account Templates' || !empty || !canEdit}
+	                          onClick={(e) => {
+	                            e.preventDefault();
+	                            e.stopPropagation();
+	                            if (!canEdit) return;
+	                            if (folder.name === 'Account Templates') return;
+	                            deleteProject(folder.id);
+	                          }}
+	                        >
+	                          <Trash2 size={14} />
+	                        </button>
+	                      </div>
+	                    </div>
 
-                  <div className="mt-4 space-y-2">
-                    {recent.length === 0 ? (
-                      <div className="text-xs opacity-70">No maps yet.</div>
-                    ) : (
-                      recent.map((f) => (
-                        <div
-                          key={f.id}
-                          className="w-full mac-double-outline px-2 py-1 text-left text-xs hover:bg-gray-50 flex items-center justify-between gap-2 group/file"
-                        >
-                          <button
-                            type="button"
-                            className="flex items-center gap-2 min-w-0 flex-1"
-                            title="Open"
-                            onClick={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              openFile(f);
-                            }}
-                          >
-                            <KindIcon kind={f.kind} size={12} />
-                            <span className="truncate">{f.name}</span>
-                          </button>
+	                    <div className="mt-4 space-y-2">
+	                      {recent.length === 0 ? (
+	                        <div className="text-xs opacity-70">No maps yet.</div>
+	                      ) : (
+	                        recent.map((f) => (
+	                          <div
+	                            key={f.id}
+	                            className="w-full mac-double-outline mac-interactive-row px-2 py-1 text-left text-xs flex items-center justify-between gap-2 group/file"
+	                          >
+	                            <button
+	                              type="button"
+	                              className="flex items-center gap-2 min-w-0 flex-1"
+	                              title="Open"
+	                              onClick={(e) => {
+	                                e.preventDefault();
+	                                e.stopPropagation();
+	                                openFile(f);
+	                              }}
+	                            >
+	                              <KindIcon kind={f.kind} size={12} />
+	                              <span className="truncate">{f.name}</span>
+	                            </button>
 
-                          <div className="flex items-center gap-1 opacity-0 group-hover/file:opacity-100 transition-opacity">
-                            <button
-                              type="button"
-                              className="h-6 w-6 border flex items-center justify-center bg-white"
-                              title={!effectiveCanEditFile(f, folder, userId, userEmail) ? 'No edit access' : 'Edit'}
-                              disabled={!effectiveCanEditFile(f, folder, userId, userEmail)}
-                              onClick={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                if (!effectiveCanEditFile(f, folder, userId, userEmail)) return;
-                                setEditError(null);
-                                setEditFile({ id: f.id, name: f.name, people: f.access?.people || [] });
-                              }}
-                            >
-                              <Pencil size={12} />
-                            </button>
-                            <button
-                              type="button"
-                              className="h-6 w-6 border flex items-center justify-center bg-white"
-                              title={!effectiveCanEditFile(f, folder, userId, userEmail) ? 'No edit access' : 'Delete'}
-                              disabled={!effectiveCanEditFile(f, folder, userId, userEmail)}
-                              onClick={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                if (!effectiveCanEditFile(f, folder, userId, userEmail)) return;
-                                supabase
-                                  .from('files')
-                                  .delete()
-                                  .eq('id', f.id)
-                                  .select('id')
-                                  .then(({ data, error: delErr }) => {
-                                    if (delErr) return showToast(delErr.message);
-                                    const deletedCount = Array.isArray(data) ? data.length : data ? 1 : 0;
-                                    if (deletedCount <= 0) {
-                                      showToast('Could not delete (insufficient permission).');
-                                      return;
-                                    }
-                                    setFiles((prev) => prev.filter((x) => x.id !== f.id));
-                                    setTemplateFiles((prev) => prev.filter((x) => x.id !== f.id));
-                                    showToast('Deleted');
-                                  });
-                              }}
-                            >
-                              <Trash2 size={12} />
-                            </button>
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+	                            <div className="flex items-center gap-1 opacity-0 group-hover/file:opacity-100 transition-opacity">
+	                              <button
+	                                type="button"
+	                                className="mac-btn mac-btn--icon-sm"
+	                                title={!effectiveCanEditFile(f, folder, userId, userEmail) ? 'No edit access' : 'Edit'}
+	                                disabled={!effectiveCanEditFile(f, folder, userId, userEmail)}
+	                                onClick={(e) => {
+	                                  e.preventDefault();
+	                                  e.stopPropagation();
+	                                  if (!effectiveCanEditFile(f, folder, userId, userEmail)) return;
+	                                  setEditError(null);
+	                                  setEditFile({ id: f.id, name: f.name, people: f.access?.people || [] });
+	                                }}
+	                              >
+	                                <Pencil size={12} />
+	                              </button>
+	                              <button
+	                                type="button"
+	                                className="mac-btn mac-btn--icon-sm"
+	                                title={!effectiveCanEditFile(f, folder, userId, userEmail) ? 'No edit access' : 'Delete'}
+	                                disabled={!effectiveCanEditFile(f, folder, userId, userEmail)}
+	                                onClick={(e) => {
+	                                  e.preventDefault();
+	                                  e.stopPropagation();
+	                                  if (!effectiveCanEditFile(f, folder, userId, userEmail)) return;
+	                                  supabase
+	                                    .from('files')
+	                                    .delete()
+	                                    .eq('id', f.id)
+	                                    .select('id')
+	                                    .then(({ data, error: delErr }) => {
+	                                      if (delErr) return showToast(delErr.message);
+	                                      const deletedCount = Array.isArray(data) ? data.length : data ? 1 : 0;
+	                                      if (deletedCount <= 0) {
+	                                        showToast('Could not delete (insufficient permission).');
+	                                        return;
+	                                      }
+	                                      setFiles((prev) => prev.filter((x) => x.id !== f.id));
+	                                      setTemplateFiles((prev) => prev.filter((x) => x.id !== f.id));
+	                                      showToast('Deleted');
+	                                    });
+	                                }}
+	                              >
+	                                <Trash2 size={12} />
+	                              </button>
+	                            </div>
+	                          </div>
+	                        ))
+	                      )}
+	                    </div>
+	                  </div>
+	                </div>
+	              );
+	            })}
+	          </div>
         </div>
       ) : (
         <div className="space-y-4">
@@ -1271,67 +1274,80 @@ export function WorkspaceBrowserSupabase() {
                   </div>
                 );
               }
-              return visible.map((f) => (
-                <div key={f.id} className="mac-double-outline p-3 text-left hover:bg-gray-50 flex items-center justify-between gap-3 group">
-                  <button type="button" className="flex items-center gap-2 min-w-0 flex-1" onClick={() => openFile(f)} title="Open">
-                    <KindIcon kind={f.kind} size={14} />
-                    <div className="text-xs font-semibold truncate">{f.name}</div>
-                  </button>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <div className="text-[11px] opacity-70 hidden sm:block">{(f.last_opened_at || f.updated_at) ? new Date(f.last_opened_at || f.updated_at || '').toLocaleDateString() : ''}</div>
-                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <>
-                        <button
-                          type="button"
-                          className="h-7 w-7 border flex items-center justify-center bg-white"
-                          title={!effectiveCanEditFile(f, activeFolder, userId, userEmail) ? 'No edit access' : 'Edit'}
-                          disabled={!effectiveCanEditFile(f, activeFolder, userId, userEmail)}
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            if (!effectiveCanEditFile(f, activeFolder, userId, userEmail)) return;
-                            setEditError(null);
-                            setEditFile({ id: f.id, name: f.name, people: f.access?.people || [] });
-                          }}
-                        >
-                          <Pencil size={14} />
-                        </button>
-                        <button
-                          type="button"
-                          className="h-7 w-7 border flex items-center justify-center bg-white"
-                          title={!effectiveCanEditFile(f, activeFolder, userId, userEmail) ? 'No edit access' : 'Delete'}
-                          disabled={!effectiveCanEditFile(f, activeFolder, userId, userEmail)}
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            if (!effectiveCanEditFile(f, activeFolder, userId, userEmail)) return;
-                            supabase
-                              .from('files')
-                              .delete()
-                              .eq('id', f.id)
-                              .select('id')
-                              .then(({ data, error: delErr }) => {
-                                if (delErr) return showToast(delErr.message);
-                                const deletedCount = Array.isArray(data) ? data.length : data ? 1 : 0;
-                                if (deletedCount <= 0) {
-                                  showToast('Could not delete (insufficient permission).');
-                                  return;
-                                }
-                                setFiles((prev) => prev.filter((x) => x.id !== f.id));
-                                setTemplateFiles((prev) => prev.filter((x) => x.id !== f.id));
-                                showToast('Deleted');
-                              });
-                          }}
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </>
-                    </div>
-                  </div>
-                </div>
-              ));
-            })()}
-          </div>
+	              return visible.map((f, idx) => (
+	                <div
+	                  key={f.id}
+	                  className="mac-double-outline mac-interactive-row p-3 text-left flex items-center justify-between gap-3 group dg-reveal-card"
+	                  style={{ '--dg-reveal-delay': `${Math.min(idx, 12) * 70}ms` } as any}
+	                >
+	                  <div className="dg-reveal-card__content flex items-center justify-between gap-3 w-full">
+	                    <button
+	                      type="button"
+	                      className="flex items-center gap-2 min-w-0 flex-1"
+	                      onClick={() => openFile(f)}
+	                      title="Open"
+	                    >
+	                      <KindIcon kind={f.kind} size={14} />
+	                      <div className="text-xs font-semibold truncate">{f.name}</div>
+	                    </button>
+	                    <div className="flex items-center gap-2 shrink-0">
+	                      <div className="text-[11px] opacity-70 hidden sm:block">
+	                        {(f.last_opened_at || f.updated_at) ? new Date(f.last_opened_at || f.updated_at || '').toLocaleDateString() : ''}
+	                      </div>
+	                      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+	                        <>
+	                          <button
+	                            type="button"
+	                            className="mac-btn mac-btn--icon"
+	                            title={!effectiveCanEditFile(f, activeFolder, userId, userEmail) ? 'No edit access' : 'Edit'}
+	                            disabled={!effectiveCanEditFile(f, activeFolder, userId, userEmail)}
+	                            onClick={(e) => {
+	                              e.preventDefault();
+	                              e.stopPropagation();
+	                              if (!effectiveCanEditFile(f, activeFolder, userId, userEmail)) return;
+	                              setEditError(null);
+	                              setEditFile({ id: f.id, name: f.name, people: f.access?.people || [] });
+	                            }}
+	                          >
+	                            <Pencil size={14} />
+	                          </button>
+	                          <button
+	                            type="button"
+	                            className="mac-btn mac-btn--icon"
+	                            title={!effectiveCanEditFile(f, activeFolder, userId, userEmail) ? 'No edit access' : 'Delete'}
+	                            disabled={!effectiveCanEditFile(f, activeFolder, userId, userEmail)}
+	                            onClick={(e) => {
+	                              e.preventDefault();
+	                              e.stopPropagation();
+	                              if (!effectiveCanEditFile(f, activeFolder, userId, userEmail)) return;
+	                              supabase
+	                                .from('files')
+	                                .delete()
+	                                .eq('id', f.id)
+	                                .select('id')
+	                                .then(({ data, error: delErr }) => {
+	                                  if (delErr) return showToast(delErr.message);
+	                                  const deletedCount = Array.isArray(data) ? data.length : data ? 1 : 0;
+	                                  if (deletedCount <= 0) {
+	                                    showToast('Could not delete (insufficient permission).');
+	                                    return;
+	                                  }
+	                                  setFiles((prev) => prev.filter((x) => x.id !== f.id));
+	                                  setTemplateFiles((prev) => prev.filter((x) => x.id !== f.id));
+	                                  showToast('Deleted');
+	                                });
+	                            }}
+	                          >
+	                            <Trash2 size={14} />
+	                          </button>
+	                        </>
+	                      </div>
+	                    </div>
+	                  </div>
+	                </div>
+	              ));
+	            })()}
+	          </div>
         </div>
       )}
 
@@ -1363,12 +1379,12 @@ export function WorkspaceBrowserSupabase() {
                 <div className="flex items-center justify-between gap-2">
                   <div className="text-xs font-semibold">Access</div>
                   <div className="flex items-center gap-1">
-                    <button type="button" className="h-7 w-7 border flex items-center justify-center" title="Invite (copy + email)" onClick={() => invitePeople(editProject.name, editProject.people)}>
+                    <button type="button" className="mac-btn mac-btn--icon" title="Invite (copy + email)" onClick={() => invitePeople(editProject.name, editProject.people)}>
                       <Mail size={14} />
                     </button>
                     <button
                       type="button"
-                      className="h-7 w-7 border flex items-center justify-center"
+                      className="mac-btn mac-btn--icon"
                       title="Copy list"
                       onClick={async () => {
                         if (editProject.people.length === 0) return showToast('Add someone first');
@@ -1464,4 +1480,3 @@ export function WorkspaceBrowserSupabase() {
     </div>
   );
 }
-

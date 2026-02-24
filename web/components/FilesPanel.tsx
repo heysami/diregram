@@ -92,7 +92,7 @@ export function FilesPanel({ activeFileId, onOpenFile }: Props) {
         <button
           type="button"
           onClick={() => toggleExpanded(folder.id)}
-          className="w-full flex items-center gap-1 text-left text-xs px-2 py-1 hover:bg-gray-50"
+          className="w-full flex items-center gap-1 text-left text-xs px-2 py-1 mac-interactive-row"
           style={{ paddingLeft: 8 + depth * 14 }}
           title={folder.name}
         >
@@ -146,8 +146,8 @@ export function FilesPanel({ activeFileId, onOpenFile }: Props) {
                       e.stopPropagation();
                       onOpenFile(f);
                     }}
-                    className={`w-full text-left text-xs px-2 py-1 ${
-                      selectedFileId === f.id ? 'mac-fill--hatch mac-shadow-hard' : 'hover:bg-gray-50'
+                    className={`w-full text-left text-xs px-2 py-1 mac-interactive-row ${
+                      selectedFileId === f.id ? 'is-active' : ''
                     }`}
                     title="Click to select · Double-click to open"
                   >
@@ -200,7 +200,7 @@ export function FilesPanel({ activeFileId, onOpenFile }: Props) {
           </button>
           <button
             type="button"
-            className="h-6 w-6 border flex items-center justify-center"
+            className="mac-btn mac-btn--icon-sm"
             title="New folder"
             onClick={() => {
               setStore((prev) => createLocalFolder(prev, 'New Folder', null));
@@ -210,7 +210,7 @@ export function FilesPanel({ activeFileId, onOpenFile }: Props) {
           </button>
           <button
             type="button"
-            className="h-6 w-6 border flex items-center justify-center"
+            className="mac-btn mac-btn--icon-sm"
             title="New file"
             onClick={() => {
               setStore((prev) => {
@@ -268,8 +268,8 @@ export function FilesPanel({ activeFileId, onOpenFile }: Props) {
                   e.stopPropagation();
                   onOpenFile(f);
                 }}
-                className={`w-full text-left text-xs px-2 py-1 ${
-                  selectedFileId === f.id ? 'mac-fill--hatch mac-shadow-hard' : 'hover:bg-gray-50'
+                className={`w-full text-left text-xs px-2 py-1 mac-interactive-row ${
+                  selectedFileId === f.id ? 'is-active' : ''
                 }`}
                 title="Click to select · Double-click to open"
               >
@@ -282,4 +282,3 @@ export function FilesPanel({ activeFileId, onOpenFile }: Props) {
     </div>
   );
 }
-

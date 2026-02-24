@@ -1,15 +1,16 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Lexend, Sometype_Mono } from "next/font/google";
 import "./globals.css";
 import "./vision-style-panel.css";
+import "./design-system-v2.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+const lexend = Lexend({
+  variable: "--font-lexend",
   subsets: ["latin"],
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+const sometypeMono = Sometype_Mono({
+  variable: "--font-sometype-mono",
   subsets: ["latin"],
 });
 
@@ -24,10 +25,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" data-theme="mac3" suppressHydrationWarning>
+    <html lang="en" data-theme="diregram-v2" suppressHydrationWarning>
       <body
         suppressHydrationWarning
-        className={`${geistSans.variable} ${geistMono.variable} antialiased mac3`}
+        className={`${lexend.variable} ${sometypeMono.variable} antialiased`}
       >
         {children}
       </body>

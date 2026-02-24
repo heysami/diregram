@@ -61,13 +61,14 @@ export function buildProcessRunningNumberMap(opts: {
       const parentPath = node.isCommon
         ? buildParentPath(node, nodeMap)
         : buildFlowNodeParentPath(node, nodeMap, roots);
-      const match = flowNodeData.entries.find((e) => {
+      const matchByContentAndPath = flowNodeData.entries.find((e) => {
         return (
           e.content === node.content.trim() &&
           e.parentPath.length === parentPath.length &&
           e.parentPath.every((p, i) => p === parentPath[i])
         );
       });
+      const match = matchByContentAndPath || flowNodeData.entries.find((e) => e.lineIndex === node.lineIndex);
       if (match) next.set(node.id, match.runningNumber);
     }
 
@@ -84,4 +85,3 @@ export function buildProcessRunningNumberMap(opts: {
 
   return next;
 }
-

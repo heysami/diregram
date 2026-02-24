@@ -21,20 +21,19 @@ export function NavigationCardGrid({
           key={c.id}
           type="button"
           onClick={() => onSelect(c.id)}
-          className="rounded-lg border border-slate-200 bg-white p-4 text-left hover:bg-slate-50 flex flex-col"
+          className="border border-black/10 bg-white p-4 text-left hover:bg-black/5 flex flex-col transition-colors"
           style={{ height: cardHeight, minHeight: minCardHeightPx }}
           title="Open"
         >
-          <div className="text-sm font-semibold text-slate-900">{singleLine(c.content)}</div>
+          <div className="text-sm font-semibold text-neutral-900">{singleLine(c.content)}</div>
           {c.annotation ? (
-            <div className="mt-2 text-[11px] text-slate-600 overflow-hidden">
+            <div className="mt-2 text-[11px] text-neutral-600 overflow-hidden">
               <div className="line-clamp-4">{singleLine(c.annotation)}</div>
             </div>
           ) : null}
-          <div className="mt-auto pt-3 text-[11px] text-slate-500">{c.children?.length ? `${c.children.length} steps` : 'Open'}</div>
+          <div className="mt-auto pt-3 text-[11px] text-neutral-500">{c.children?.length ? `${c.children.length} steps` : 'Open'}</div>
         </button>
       ))}
     </div>
   );
 }
-

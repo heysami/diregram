@@ -1,6 +1,6 @@
 'use client';
 
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import * as Y from 'yjs';
 import type { NexusNode } from '@/types/nexus';
 import { buildMergedDataObjectGraph, type DataObjectEdge, type DataObjectGraph, type DataObjectNode } from '@/lib/data-object-graph';
@@ -511,7 +511,14 @@ export function DataObjectsCanvas({
   };
 
   return (
-    <div className="absolute inset-0 mac-canvas-bg">
+    <div
+      className="absolute inset-0 mac-canvas-bg"
+      style={
+        {
+          '--canvas-zoom': scale,
+        } as CSSProperties
+      }
+    >
       {selectedId ? (
         <DataObjectInspectorPanel
           doc={doc}
@@ -690,9 +697,9 @@ export function DataObjectsCanvas({
             return (
               <Fragment key={o.id}>
                 <div
-                  className={`absolute rounded-lg border shadow-sm px-3 py-2 select-none ${
-                    o.missing ? 'bg-red-50 border-red-200' : 'bg-white border-gray-200'
-                  } ${isSelected ? 'ring-2 ring-blue-400' : ''} ${
+                  className={`absolute dg-do-card px-4 py-3 select-none ${
+                    o.missing ? 'is-missing' : ''
+                  } ${isSelected ? 'is-selected' : ''} ${
                     selectedId && !isFocused ? 'opacity-25 hover:opacity-60 transition-opacity' : ''
                   }`}
                   data-do-card
@@ -728,7 +735,7 @@ export function DataObjectsCanvas({
                     <button
                       type="button"
                       data-do-bubble
-                      className="absolute -right-2 -top-2 h-6 min-w-6 px-1.5 rounded-full bg-slate-900 text-white text-[11px] shadow-sm hover:bg-slate-800"
+                      className="absolute -right-2 -top-2 h-6 min-w-6 px-1.5 rounded-full text-[11px] shadow-sm hover:opacity-90 dg-do-bubble"
                       title={hasComment ? 'Open comment' : 'Add comment'}
                       onClick={(e) => {
                         e.stopPropagation();
@@ -746,8 +753,11 @@ export function DataObjectsCanvas({
                       {hasComment ? commentCount : '+'}
                     </button>
                   )}
-                  <div className="text-xs font-semibold text-gray-900 truncate">{o.name || o.id}</div>
-                  <div className="text-[11px] text-gray-500 truncate">{o.id}</div>
+                  <div className="dg-node-card__meta-row">
+                    <span className="dg-node-card__meta-label">Data object</span>
+                    <span className="dg-node-card__meta-id">{o.id}</span>
+                  </div>
+                  <div className="text-[15px] leading-[1.05] font-semibold text-gray-900 truncate">{o.name || o.id}</div>
                   {o.missing ? <div className="text-[10px] text-red-700 mt-1">referenced but missing</div> : null}
                   {attrsToShow.length ? (
                     <div className="mt-2 pt-2 border-t border-gray-100">
@@ -770,11 +780,11 @@ export function DataObjectsCanvas({
                       {inlined.map((child) => (
                         <div
                           key={child.id}
-                          className={`px-2 py-1 rounded border text-[11px] truncate ${
+                          className={`px-2 py-1 text-[11px] truncate dg-do-inline ${
                             child.missing
                               ? 'bg-red-50 border-red-200 text-red-800'
-                              : 'bg-slate-50 border-slate-200 text-slate-800'
-                          } ${selectedId === child.id ? 'ring-2 ring-blue-400' : ''} cursor-pointer`}
+                              : 'text-slate-800'
+                          } ${selectedId === child.id ? 'is-selected' : ''} cursor-pointer`}
                           title={child.id}
                           onClick={(e) => {
                             e.stopPropagation();
@@ -821,8 +831,10 @@ export function DataObjectsCanvas({
                     onMouseDown={(e) => e.stopPropagation()}
                   >
                     <div className="rounded-md border border-slate-200 bg-white/95 px-2 py-1 shadow-sm">
+                    <div className="mac-double-outline px-2 py-1 bg-white/95">
                       <div className="text-[11px] text-slate-700 whitespace-pre-wrap break-words">{ann}</div>
                     </div>
+                  </div>
                   </div>
                 ) : null}
               </Fragment>
@@ -833,7 +845,7 @@ export function DataObjectsCanvas({
         {annotationEditForId && annotationPopoverPos ? (
           <div
             data-do-popover
-            className="fixed z-50 w-[320px] rounded-lg border border-slate-200 bg-white shadow-xl p-3"
+            className="fixed z-50 w-[320px] p-3 dg-do-popover"
             style={{ left: annotationPopoverPos.x, top: annotationPopoverPos.y }}
             onClick={(e) => e.stopPropagation()}
             onMouseDown={(e) => e.stopPropagation()}
@@ -845,14 +857,14 @@ export function DataObjectsCanvas({
               value={annotationDraft}
               onChange={(e) => setAnnotationDraft(e.target.value)}
               rows={4}
-              className="w-full rounded-md border border-slate-200 px-2 py-1 text-[12px] focus:outline-none focus:ring-2 focus:ring-blue-200"
+              className="mac-field w-full px-2 py-1 text-[12px]"
               placeholder="Write an annotation…"
               autoFocus
             />
             <div className="mt-2 flex items-center justify-between gap-2">
               <button
                 type="button"
-                className="h-7 px-2 rounded-md border border-slate-200 text-[11px] text-slate-700 hover:bg-slate-50"
+                className="mac-btn h-7 px-2"
                 onClick={() => {
                   saveAnnotation(annotationEditForId, '');
                   setAnnotationEditForId(null);
@@ -865,7 +877,7 @@ export function DataObjectsCanvas({
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  className="h-7 px-2 rounded-md border border-slate-200 text-[11px] text-slate-700 hover:bg-slate-50"
+                  className="mac-btn h-7 px-2"
                   onClick={() => {
                     setAnnotationEditForId(null);
                     setAnnotationPopoverPos(null);
@@ -875,7 +887,7 @@ export function DataObjectsCanvas({
                 </button>
                 <button
                   type="button"
-                  className="h-7 px-2 rounded-md bg-blue-600 text-white text-[11px] font-semibold hover:bg-blue-700"
+                  className="mac-btn mac-btn--primary h-7 px-2 text-[11px] font-semibold"
                   onClick={() => {
                     saveAnnotation(annotationEditForId, annotationDraft);
                     setAnnotationEditForId(null);
@@ -894,4 +906,3 @@ export function DataObjectsCanvas({
     </div>
   );
 }
-

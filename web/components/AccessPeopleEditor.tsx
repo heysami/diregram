@@ -141,7 +141,7 @@ export function AccessPeopleEditor({ label, value, onChange, error, onError, com
                     Edit
                   </button>
                 </div>
-                <button type="button" className="h-7 w-7 border flex items-center justify-center bg-white" title="Remove" onClick={() => remove(p.email)}>
+                <button type="button" className="mac-btn mac-btn--icon-sm" title="Remove" onClick={() => remove(p.email)}>
                   <Trash2 size={14} />
                 </button>
               </div>
@@ -152,4 +152,3 @@ export function AccessPeopleEditor({ label, value, onChange, error, onError, com
     </div>
   );
 }
-

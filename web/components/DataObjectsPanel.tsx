@@ -57,7 +57,7 @@ export function DataObjectsPanel({ doc, roots, onClose }: Props) {
   const incomingRelations = incoming.filter((e) => e.kind === 'relation');
 
   return (
-    <div className="w-96 border-l bg-gray-50 p-4 flex flex-col shrink-0 overflow-y-auto relative">
+    <div className="w-96 border-l border-black/10 bg-[#f0f0f0] p-4 flex flex-col shrink-0 overflow-y-auto relative">
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           <Database size={16} className="text-gray-500" />
@@ -76,7 +76,7 @@ export function DataObjectsPanel({ doc, roots, onClose }: Props) {
               const obj = createDataObject(doc, name);
               setSelectedId(obj.id);
             }}
-            className="p-1.5 rounded-md hover:bg-gray-100 text-gray-600"
+            className="mac-btn mac-btn--icon-sm"
             title="New data object"
           >
             <Plus size={14} />
@@ -93,7 +93,7 @@ export function DataObjectsPanel({ doc, roots, onClose }: Props) {
               deleteDataObjectAndCleanupReferences(doc, id);
               setSelectedId(null);
             }}
-            className={`p-1.5 rounded-md hover:bg-gray-100 ${effectiveSelectedId ? 'text-gray-600' : 'text-gray-300 cursor-not-allowed'}`}
+            className={`mac-btn mac-btn--icon-sm ${effectiveSelectedId ? '' : 'opacity-45 cursor-not-allowed'}`}
             title={effectiveSelectedId ? 'Delete selected data object' : 'Select an object to delete'}
             disabled={!effectiveSelectedId}
           >
@@ -102,7 +102,7 @@ export function DataObjectsPanel({ doc, roots, onClose }: Props) {
           <button
             type="button"
             onClick={onClose}
-            className="p-1.5 rounded-md hover:bg-gray-100 text-gray-500"
+            className="mac-btn mac-btn--icon-sm"
             title="Close"
           >
             <X size={14} />
@@ -115,7 +115,7 @@ export function DataObjectsPanel({ doc, roots, onClose }: Props) {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Search by name or id…"
-          className="w-full text-xs border border-gray-300 rounded px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+          className="mac-field w-full text-xs"
         />
       </div>
 
@@ -130,10 +130,8 @@ export function DataObjectsPanel({ doc, roots, onClose }: Props) {
                   key={o.id}
                   type="button"
                   onClick={() => setSelectedId(o.id)}
-                  className={`w-full text-left px-2 py-1.5 rounded border text-[11px] ${
-                    isSelected
-                      ? 'border-blue-300 bg-blue-50 text-blue-800'
-                      : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-100'
+                  className={`w-full text-left px-2 py-1.5 rounded text-[11px] mac-interactive-row ${
+                    isSelected ? 'is-active text-[#7a1028]' : 'text-gray-700'
                   }`}
                   title={o.id}
                 >
@@ -162,12 +160,12 @@ export function DataObjectsPanel({ doc, roots, onClose }: Props) {
             <div className="text-[11px] text-gray-500">Select an object to view attributes & relationships.</div>
           ) : (
             <div className="space-y-3">
-              <div className="bg-white border border-gray-200 rounded p-2">
+              <div className="mac-double-outline p-2">
                 <div className="text-xs font-semibold text-gray-800 truncate">{selected.name}</div>
                 <div className="text-[11px] text-gray-500">{selected.id}</div>
               </div>
 
-              <details className="bg-white border border-gray-200 rounded">
+              <details className="mac-double-outline">
                 <summary className="cursor-pointer px-2 py-1.5 text-[11px] font-medium text-gray-700 flex items-center justify-between">
                   Attributes <span className="text-[10px] text-gray-500">{outgoingAttributes.length}</span>
                 </summary>
@@ -188,7 +186,7 @@ export function DataObjectsPanel({ doc, roots, onClose }: Props) {
                 </div>
               </details>
 
-              <details className="bg-white border border-gray-200 rounded" open>
+              <details className="mac-double-outline" open>
                 <summary className="cursor-pointer px-2 py-1.5 text-[11px] font-medium text-gray-700 flex items-center justify-between">
                   Outgoing relationships <span className="text-[10px] text-gray-500">{outgoingRelations.length}</span>
                 </summary>
@@ -213,7 +211,7 @@ export function DataObjectsPanel({ doc, roots, onClose }: Props) {
                 </div>
               </details>
 
-              <details className="bg-white border border-gray-200 rounded">
+              <details className="mac-double-outline">
                 <summary className="cursor-pointer px-2 py-1.5 text-[11px] font-medium text-gray-700 flex items-center justify-between">
                   Incoming relationships <span className="text-[10px] text-gray-500">{incomingRelations.length}</span>
                 </summary>
@@ -238,7 +236,7 @@ export function DataObjectsPanel({ doc, roots, onClose }: Props) {
                 </div>
               </details>
 
-              <details className="bg-white border border-gray-200 rounded">
+              <details className="mac-double-outline">
                 <summary className="cursor-pointer px-2 py-1.5 text-[11px] font-medium text-gray-700 flex items-center justify-between">
                   Raw JSON <span className="text-[10px] text-gray-500">view</span>
                 </summary>
@@ -259,4 +257,3 @@ export function DataObjectsPanel({ doc, roots, onClose }: Props) {
     </div>
   );
 }
-

@@ -277,13 +277,13 @@
   max-width: 100%;
 }
 
-/* Make tldraw's right panel wider in Vision */
-html[data-theme="vision"] .tlui-style-panel {
+/* Make tldraw's right panel wider in Vision (scoped to the Vision editor only). */
+.dg-vision-editor .tlui-style-panel {
   width: 296px;
   max-width: 296px;
 }
 
-html[data-theme="vision"] .tlui-style-panel__wrapper {
+.dg-vision-editor .tlui-style-panel__wrapper {
   overflow-x: hidden;
 }
 
@@ -464,4 +464,3 @@ html[data-theme="vision"] .tlui-style-panel__wrapper {
   background: rgba(26, 115, 232, 0.95);
   border-color: rgba(255, 255, 255, 0.95);
 }
-

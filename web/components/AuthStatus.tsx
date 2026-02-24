@@ -30,7 +30,7 @@ export function AuthStatus({ onlineCount, status }: Props) {
 
   if (!user) {
     return (
-      <button type="button" className="mac-btn" onClick={() => router.push('/login')}>
+      <button type="button" className="mac-btn mac-btn--primary mac-btn--lg" onClick={() => router.push('/login')}>
         Sign in
       </button>
     );
@@ -40,7 +40,7 @@ export function AuthStatus({ onlineCount, status }: Props) {
     <div className="flex items-center gap-2">
       <button
         type="button"
-        className="mac-btn flex items-center gap-1.5"
+        className="mac-btn h-8 px-3 flex items-center gap-1.5"
         onClick={() => router.push('/account')}
         title="Account"
       >
@@ -60,7 +60,7 @@ export function AuthStatus({ onlineCount, status }: Props) {
       </button>
       <button
         type="button"
-        className="mac-btn"
+        className="mac-btn h-8 px-2"
         onClick={async () => {
           await signOut();
           router.push('/');
@@ -73,4 +73,3 @@ export function AuthStatus({ onlineCount, status }: Props) {
     </div>
   );
 }
-

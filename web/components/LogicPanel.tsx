@@ -393,7 +393,7 @@ export function LogicPanel({
   const hasDimensions = effectiveKeyValues.size > 0;
 
   // Scenarios for read-only condition matrix overlay
-  const scenarios = useMemo(() => buildConditionMatrixScenarios(node), [node]);
+  const scenarios = useMemo(() => buildConditionMatrixScenarios(hubNode), [hubNode]);
 
   const tagGroups: NexusTagGroup[] = useMemo(() => {
     // Preserve persisted order (reorderable via the tag manager).
@@ -447,13 +447,13 @@ export function LogicPanel({
   }, [flatTags, tagInput]);
 
   const effectiveTagIds = useMemo(() => {
-    if (node.isHub && node.variants && node.variants.length > 0) {
+    if (hubNode.isHub && hubNode.variants && hubNode.variants.length > 0) {
       const s = new Set<string>();
-      node.variants.forEach((v) => (v.tags || []).forEach((id) => s.add(id)));
+      hubNode.variants.forEach((v) => (v.tags || []).forEach((id) => s.add(id)));
       return Array.from(s);
     }
-    return node.tags || [];
-  }, [node]);
+    return hubNode.tags || [];
+  }, [hubNode]);
 
   const addKey = () => {
     // Avoid colliding with locked keys (from linked Data Object status) or existing keys.
@@ -495,8 +495,8 @@ export function LogicPanel({
     // Otherwise, check if any variant being deleted has non-common children
     if (!isLastKey) {
       const variantsToDelete: NexusNode[] = [];
-      if (node.variants) {
-        node.variants.forEach(variant => {
+      if (hubNode.variants) {
+        hubNode.variants.forEach(variant => {
           if (variant.conditions && variant.conditions[key]) {
             variantsToDelete.push(variant);
           }
@@ -521,15 +521,15 @@ export function LogicPanel({
       }
     }
     
-    if (isLastKey && node.variants && node.variants.length > 0) {
+    if (isLastKey && hubNode.variants && hubNode.variants.length > 0) {
       // Convert back to regular node: take the first variant and remove its condition
-      const firstVariant = node.variants[0];
+      const firstVariant = hubNode.variants[0];
       const yText = doc.getText('nexus');
       const lines = yText.toString().split('\n');
       
       // Find all variant line indices (all variants since this is the last key)
       const variantIndices = new Set<number>();
-      node.variants.forEach(v => {
+      hubNode.variants.forEach(v => {
         variantIndices.add(v.lineIndex);
       });
       
@@ -573,8 +573,8 @@ export function LogicPanel({
       const indicesToRemove = new Set<number>();
       const childrenIndicesToRemove = new Set<number>();
       
-      if (node.variants) {
-        node.variants.forEach(variant => {
+      if (hubNode.variants) {
+        hubNode.variants.forEach(variant => {
           if (variant.conditions && variant.conditions[key]) {
             indicesToRemove.add(variant.lineIndex);
             
@@ -664,8 +664,8 @@ export function LogicPanel({
     const lines = yText.toString().split('\n');
     const updates: { index: number; text: string }[] = [];
     
-    if (node.variants) {
-      node.variants.forEach(variant => {
+    if (hubNode.variants) {
+      hubNode.variants.forEach(variant => {
         if (variant.conditions && variant.conditions[oldKey] && variant.lineIndex < lines.length) {
           const newConditions = { ...variant.conditions };
           newConditions[newKey] = newConditions[oldKey];
@@ -692,7 +692,7 @@ export function LogicPanel({
       const values = keyValues.get(oldKey) || [];
       const firstValue = values.length > 0 ? values[0] : 'default';
       // Create a new variant with the renamed key
-      structure.addHubVariants(node, activeVariantId, [{ [newKey]: firstValue }]);
+      structure.addHubVariants(hubNode, activeVariantId, [{ [newKey]: firstValue }]);
       } else {
       // Update lines in place
       updateLinesInPlace(updates);
@@ -723,9 +723,9 @@ export function LogicPanel({
       
       // If this key has no existing variants, create one immediately
       // This ensures new keys with values are persisted
-      const hasVariants = node.variants?.some(v => v.conditions?.[key]) || false;
+      const hasVariants = hubNode.variants?.some(v => v.conditions?.[key]) || false;
       if (!hasVariants) {
-        structure.addHubVariants(node, activeVariantId, [{ [key]: value.trim() }]);
+        structure.addHubVariants(hubNode, activeVariantId, [{ [key]: value.trim() }]);
       }
       // If key already has variants, the auto-generation useEffect will handle creating
       // all new combinations with this value. We don't need to do anything here.
@@ -745,8 +745,8 @@ export function LogicPanel({
     
     // Check if any variant being deleted has non-common children
     const variantsToDelete: NexusNode[] = [];
-    if (node.variants) {
-      node.variants.forEach(variant => {
+    if (hubNode.variants) {
+      hubNode.variants.forEach(variant => {
         if (variant.conditions && variant.conditions[key] === value) {
           variantsToDelete.push(variant);
         }
@@ -754,14 +754,14 @@ export function LogicPanel({
     }
     
     // If this will be the last condition and we have children, convert back to regular node
-    if (willBeLastCondition && node.variants && node.variants.length > 0) {
-      const firstVariant = node.variants[0];
+    if (willBeLastCondition && hubNode.variants && hubNode.variants.length > 0) {
+      const firstVariant = hubNode.variants[0];
       const yText = doc.getText('nexus');
       const lines = yText.toString().split('\n');
       
       // Find all variant line indices (all variants since this is the last condition)
       const variantIndices = new Set<number>();
-      node.variants.forEach(v => {
+      hubNode.variants.forEach(v => {
         variantIndices.add(v.lineIndex);
       });
       
@@ -834,8 +834,8 @@ export function LogicPanel({
     const childrenIndicesToRemove = new Set<number>();
     
     // Collect variant line indices and their common children
-    if (node.variants) {
-      node.variants.forEach(variant => {
+    if (hubNode.variants) {
+      hubNode.variants.forEach(variant => {
         if (variant.conditions && variant.conditions[key] === value) {
           indicesToRemove.add(variant.lineIndex);
           
@@ -886,8 +886,8 @@ export function LogicPanel({
     const lines = yText.toString().split('\n');
     const updates: { index: number; text: string }[] = [];
     
-    if (node.variants) {
-      node.variants.forEach(variant => {
+    if (hubNode.variants) {
+      hubNode.variants.forEach(variant => {
         if (variant.conditions && variant.conditions[key] === oldValue && variant.lineIndex < lines.length) {
           const newConditions = { ...variant.conditions };
           newConditions[key] = newValue.trim();
@@ -1462,8 +1462,8 @@ export function LogicPanel({
           type="button"
           onClick={toggleCommonFromPanel}
           className={`relative inline-flex h-4 w-8 items-center rounded-full border transition-colors ${
-            (node.isHub && activeVariantId 
-              ? node.variants?.find(v => v.id === activeVariantId)?.isCommon 
+            (hubNode.isHub && activeVariantId 
+              ? hubNode.variants?.find(v => v.id === activeVariantId)?.isCommon 
               : node.isCommon) 
               ? 'bg-blue-500 border-blue-500' 
               : 'bg-gray-200 border-gray-300'
@@ -1471,8 +1471,8 @@ export function LogicPanel({
         >
           <span
             className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${
-              (node.isHub && activeVariantId 
-                ? node.variants?.find(v => v.id === activeVariantId)?.isCommon 
+              (hubNode.isHub && activeVariantId 
+                ? hubNode.variants?.find(v => v.id === activeVariantId)?.isCommon 
                 : node.isCommon)
                 ? 'translate-x-4' 
                 : 'translate-x-1'

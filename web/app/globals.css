@@ -33,8 +33,8 @@ html[data-theme="mac3"] {
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: var(--font-lexend);
+  --font-mono: var(--font-sometype-mono);
 }
 
 
@@ -46,18 +46,26 @@ body {
 
 /* Desktop background (subtle 1-bit-ish grid) */
 html[data-theme="mac3"] .mac-desktop {
+  --canvas-plus-size: 12px;
   background-color: var(--mac-desktop);
   /* Plus pattern (arms don’t touch) */
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M6 3v6M3 6h6' stroke='%23000' stroke-opacity='0.12' stroke-width='1' stroke-linecap='square' shape-rendering='crispEdges'/%3E%3C/svg%3E");
   background-repeat: repeat;
+  background-size:
+    calc(var(--canvas-plus-size) * var(--canvas-zoom, 1))
+    calc(var(--canvas-plus-size) * var(--canvas-zoom, 1));
   background-position: 0 0;
 }
 
 /* Main-canvas “plus paper” background */
 html[data-theme="mac3"] .mac-canvas-bg {
+  --canvas-plus-size: 12px;
   background-color: var(--mac-white);
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M6 3v6M3 6h6' stroke='%23000' stroke-opacity='0.12' stroke-width='1' stroke-linecap='square' shape-rendering='crispEdges'/%3E%3C/svg%3E");
   background-repeat: repeat;
+  background-size:
+    calc(var(--canvas-plus-size) * var(--canvas-zoom, 1))
+    calc(var(--canvas-plus-size) * var(--canvas-zoom, 1));
   background-position: 0 0;
 }
 
@@ -331,6 +339,23 @@ html[data-theme="mac3"] .mac-diamond-outline {
 
 html[data-theme="mac3"] .mac-diamond-outline-svg {
   display: block;
+}
+
+/* Keep process-flow diamonds visible in the v2 theme as well. */
+html[data-theme="diregram-v2"] .mac-diamond-outline-svg {
+  display: block;
+}
+
+/* Keep inline process-node selects compact inside cards (goto/loop). */
+html[data-theme="diregram-v2"] select.dg-node-inline-select {
+  min-height: 0 !important;
+  height: auto !important;
+  padding: 0.1rem 0.3rem !important;
+}
+
+html[data-theme="diregram-v2"] select.dg-node-inline-select:focus {
+  outline: 1px solid color-mix(in oklab, var(--dg-accent) 42%, transparent) !important;
+  outline-offset: 0;
 }
 
 /* Node text readability plate */

@@ -40,7 +40,7 @@ export function SheetListPanel({ doc, onChange }: { doc: GridDoc; onChange: (nex
         <div className="text-[11px] opacity-70">Multi-sheet</div>
         <button
           type="button"
-          className="h-6 w-6 border flex items-center justify-center"
+          className="mac-btn mac-btn--icon-sm"
           title="Add sheet"
           onClick={() => {
             const id = nextSheetId(sheets);
@@ -60,7 +60,7 @@ export function SheetListPanel({ doc, onChange }: { doc: GridDoc; onChange: (nex
           return (
             <div
               key={s.id}
-              className={`mac-double-outline mb-2 ${active ? 'mac-shadow-hard' : ''} cursor-pointer`}
+              className={`mac-double-outline mac-interactive-row mb-2 ${active ? 'is-active' : ''} cursor-pointer`}
               role="button"
               tabIndex={0}
               onClick={() => {
@@ -112,7 +112,7 @@ export function SheetListPanel({ doc, onChange }: { doc: GridDoc; onChange: (nex
                 )}
                 <button
                   type="button"
-                  className="h-7 w-7 border flex items-center justify-center bg-white"
+                  className="mac-btn mac-btn--icon-sm"
                   title="Rename"
                   onClick={(e) => {
                     e.stopPropagation();
@@ -124,7 +124,7 @@ export function SheetListPanel({ doc, onChange }: { doc: GridDoc; onChange: (nex
                 </button>
                 <button
                   type="button"
-                  className="h-7 w-7 border flex items-center justify-center bg-white"
+                  className="mac-btn mac-btn--icon-sm"
                   title="Delete"
                   disabled={sheets.length <= 1}
                   onClick={(e) => {
@@ -141,7 +141,7 @@ export function SheetListPanel({ doc, onChange }: { doc: GridDoc; onChange: (nex
               <div className="px-2 pb-2 flex items-center justify-end gap-1">
                 <button
                   type="button"
-                  className="h-7 w-7 border flex items-center justify-center bg-white"
+                  className="mac-btn mac-btn--icon-sm"
                   title="Move up"
                   disabled={idx === 0}
                   onClick={(e) => {
@@ -158,7 +158,7 @@ export function SheetListPanel({ doc, onChange }: { doc: GridDoc; onChange: (nex
                 </button>
                 <button
                   type="button"
-                  className="h-7 w-7 border flex items-center justify-center bg-white"
+                  className="mac-btn mac-btn--icon-sm"
                   title="Move down"
                   disabled={idx === sheets.length - 1}
                   onClick={(e) => {
@@ -181,4 +181,3 @@ export function SheetListPanel({ doc, onChange }: { doc: GridDoc; onChange: (nex
     </div>
   );
 }
-

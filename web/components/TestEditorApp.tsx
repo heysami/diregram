@@ -299,38 +299,38 @@ export function TestEditorApp() {
       <EditorMenubar status={statusLabel} activeFileName={activeFile.name || 'Test'} onWorkspace={() => router.push('/workspace')} />
 
       <div className="flex-1 overflow-hidden flex">
-        <aside className="w-[360px] shrink-0 border-r border-slate-200 bg-white/70 overflow-auto">
+        <aside className="w-[360px] shrink-0 border-r border-black/10 bg-[#f0f0f0] overflow-auto">
           <div className="p-3 space-y-3">
-            <div className="rounded border border-slate-200 bg-white p-3 space-y-2">
-              <div className="text-xs font-semibold">Test</div>
+            <div className="border border-black/10 bg-white p-3 space-y-2">
+              <div className="text-xs font-semibold tracking-[0.06em] uppercase">Test</div>
               <label className="block">
-                <div className="text-[11px] opacity-70 mb-1">Name</div>
+                <div className="text-[11px] text-neutral-500 mb-1">Name</div>
                 <input className="mac-field w-full h-9" value={testDoc.name} onChange={(e) => updateTest({ name: e.target.value })} />
               </label>
               <div>
-                <div className="text-[11px] opacity-70 mb-1">Source diagram</div>
+                <div className="text-[11px] text-neutral-500 mb-1">Source diagram</div>
                 <div className="text-sm font-semibold truncate" title={sourceDiagramLabel}>
                   {sourceDiagramLabel}
                 </div>
                 {sourceFileId ? (
-                  <div className="mt-1 text-[11px] font-mono opacity-60 truncate" title={sourceFileId}>
+                  <div className="mt-1 text-[11px] font-mono text-neutral-500 truncate" title={sourceFileId}>
                     {sourceFileId}
                   </div>
                 ) : (
-                  <div className="mt-1 text-[11px] opacity-60">Choose a diagram file to configure Flow + run.</div>
+                  <div className="mt-1 text-[11px] text-neutral-500">Choose a diagram file to configure flow + run.</div>
                 )}
                 <div className="mt-2 flex items-center gap-2">
-                  <button type="button" className="mac-btn mac-btn--primary h-8" onClick={() => setShowSourcePicker(true)}>
+                  <button type="button" className="mac-btn mac-btn--primary" onClick={() => setShowSourcePicker(true)}>
                     Choose…
                   </button>
                 </div>
               </div>
             </div>
 
-            <div className="rounded border border-slate-200 bg-white p-3 space-y-2">
-              <div className="text-xs font-semibold">Flow</div>
+            <div className="border border-black/10 bg-white p-3 space-y-2">
+              <div className="text-xs font-semibold tracking-[0.06em] uppercase">Flow</div>
               <label className="block">
-                <div className="text-[11px] opacity-70 mb-1">Flow root</div>
+                <div className="text-[11px] text-neutral-500 mb-1">Flow root</div>
                 <select
                   className="mac-field w-full h-9"
                   value={testDoc.flowRootId}
@@ -345,23 +345,23 @@ export function TestEditorApp() {
                 </select>
               </label>
 
-              <div className="text-[11px] opacity-70">Flow node (must have reference)</div>
-              <div className="border border-slate-200 max-h-[48vh] overflow-auto bg-white">
+              <div className="text-[11px] text-neutral-500">Flow node (must have reference)</div>
+              <div className="border border-black/10 max-h-[48vh] overflow-auto bg-white">
                 {flowNodeOptions.length === 0 ? (
-                  <div className="p-3 text-xs text-slate-500">{sourceDoc ? 'No flow nodes found.' : 'Load source file to choose nodes.'}</div>
+                  <div className="p-3 text-xs text-neutral-500">{sourceDoc ? 'No flow nodes found.' : 'Load source file to choose nodes.'}</div>
                 ) : (
                   flowNodeOptions.map((o) => (
                     <button
                       key={o.id}
                       type="button"
                       onClick={() => updateTest({ flowNodeId: o.id })}
-                      className={`w-full text-left px-3 py-2 text-sm hover:bg-slate-50 ${testDoc.flowNodeId === o.id ? 'bg-blue-50' : ''} ${
-                        o.hasRef ? 'text-slate-900' : 'text-slate-400'
-                      }`}
+                      className={`w-full text-left py-2 pr-3 text-sm transition-colors hover:bg-black/5 border-b border-black/10 last:border-b-0 ${
+                        testDoc.flowNodeId === o.id ? 'bg-[#ffe4ec] text-neutral-900' : 'text-neutral-800'
+                      } ${o.hasRef ? '' : 'text-neutral-400'}`}
                       style={{ paddingLeft: 12 + o.depth * 14 }}
                       title={o.hasRef ? 'Selectable' : 'No reference assigned'}
                     >
-                      {o.label} {o.hasRef ? <span className="text-[11px] text-slate-500">(ref)</span> : null}
+                      {o.label} {o.hasRef ? <span className="text-[11px] text-neutral-500">(ref)</span> : null}
                     </button>
                   ))
                 )}
@@ -373,7 +373,7 @@ export function TestEditorApp() {
           </div>
         </aside>
 
-        <div className="flex-1 overflow-auto bg-white">
+        <div className="flex-1 overflow-auto mac-canvas-bg">
           <div className="p-4">
             {!sourceDoc ? (
               <div className="text-xs opacity-70">Loading source diagram…</div>
@@ -402,4 +402,3 @@ export function TestEditorApp() {
     </main>
   );
 }
-

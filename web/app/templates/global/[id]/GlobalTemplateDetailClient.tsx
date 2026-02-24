@@ -188,7 +188,7 @@ export default function GlobalTemplateDetailClient() {
               <div>
                 <button
                   type="button"
-                  className="mac-btn mac-btn--primary"
+                  className="mac-btn mac-btn--primary mac-btn--lg"
                   onClick={() => router.push(`/login?next=${encodeURIComponent(`/templates/global/${templateId}`)}`)}
                 >
                   Sign in
@@ -359,4 +359,3 @@ export default function GlobalTemplateDetailClient() {
     </main>
   );
 }
-

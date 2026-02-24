@@ -28,7 +28,8 @@ export interface NodeLayout {
 
 // Config
 export const NODE_WIDTH = 150;
-const NODE_HEIGHT_MIN = 40; // Minimum height for nodes
+const NODE_HEIGHT_MIN = 112; // Minimum height for nodes (taller card baseline)
+const NODE_CARD_CHROME_EXTRA_PX = 30; // Meta row + inset title plate + bottom placeholder rail
 const GAP_X = 50; 
 // Base vertical gap between sibling subtrees
 const GAP_Y = 32; 
@@ -227,7 +228,7 @@ export function calculateTreeLayout(
       baseCardHeight = size;
     } else {
       const baseTextHeight = calculateTextHeight(node.content, NODE_WIDTH);
-      baseCardHeight = Math.max(NODE_HEIGHT_MIN, baseTextHeight + iconExtra);
+      baseCardHeight = Math.max(NODE_HEIGHT_MIN, baseTextHeight + iconExtra + NODE_CARD_CHROME_EXTRA_PX);
     }
     const diamondGeometrySizePx = isDiamond && isProcessFlowModeEnabled ? baseCardHeight : DIAMOND_SIZE;
     
@@ -554,7 +555,7 @@ function calculateTreeLayoutVertical(
       baseCardHeight = size;
     } else {
       const baseTextHeight = calculateTextHeight(node.content, NODE_WIDTH);
-      baseCardHeight = Math.max(NODE_HEIGHT_MIN, baseTextHeight + iconExtra);
+      baseCardHeight = Math.max(NODE_HEIGHT_MIN, baseTextHeight + iconExtra + NODE_CARD_CHROME_EXTRA_PX);
     }
     const diamondGeometrySizePx = isDiamond && isProcessFlowModeEnabled ? baseCardHeight : DIAMOND_SIZE;
 

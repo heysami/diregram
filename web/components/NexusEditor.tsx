@@ -9,7 +9,7 @@ interface Props {
 export function NexusEditor({ doc }: Props) {
   const [text, setText] = useState('');
   const [isVisible, setIsVisible] = useState(false);
-  
+
   useEffect(() => {
     const yText = doc.getText('nexus');
     setText(yText.toString());
@@ -20,18 +20,19 @@ export function NexusEditor({ doc }: Props) {
 
   return (
     <div
-      className={`mac-window flex flex-col h-full transition-all duration-300 ${
-        isVisible ? 'w-[420px] max-w-[calc(100vw-2rem)]' : 'w-12 items-center'
+      className={`mac-window pointer-events-auto flex flex-col transition-all duration-300 ${
+        isVisible ? 'h-full w-[400px] max-w-[calc(100vw-2rem)]' : 'h-auto w-[3.2rem] items-center'
       }`}
     >
       <div className="mac-titlebar">
-        <div className="mac-title">{isVisible ? 'Source' : 'Src'}</div>
-        <div className="absolute right-1 top-1/2 -translate-y-1/2">
+        {isVisible ? <div className="mac-title">Source</div> : null}
+        <div className={isVisible ? 'absolute right-1 top-1/2 -translate-y-1/2' : ''}>
           <button
             type="button"
             onClick={() => setIsVisible(!isVisible)}
-            className="mac-btn"
+            className="mac-btn mac-btn--icon-sm"
             title={isVisible ? 'Hide Markdown' : 'Show Markdown'}
+            aria-label={isVisible ? 'Hide Markdown' : 'Show Markdown'}
           >
             {isVisible ? <EyeOff size={16} /> : <Eye size={16} />}
           </button>

@@ -789,8 +789,10 @@ export function SpreadsheetView({
 
   const controlsTable: GridTableV1 | null = useMemo(() => {
     if (tableDrag) return tables.find((t) => t.id === tableDrag.tableId) || null;
-    return hoverTable;
-  }, [tableDrag, tables, hoverTable]);
+    if (hoverTable) return hoverTable;
+    if (activeTableId) return tables.find((t) => t.id === activeTableId) || null;
+    return null;
+  }, [tableDrag, tables, hoverTable, activeTableId]);
 
   const controlsTableInfo = useMemo(() => {
     if (!controlsTable) return null;
@@ -2860,8 +2862,8 @@ export function SpreadsheetView({
           </tbody>
         </table>
 
-        {/* Table edge controls (hover near first row/col only, but stay visible during drag) */}
-        {controlsTable && controlsTableInfo && (tableDrag || tableControlsHover) ? (
+        {/* Table edge controls (hover near first row/col, or always for active table) */}
+        {controlsTable && controlsTableInfo ? (
           <div className="absolute inset-0 pointer-events-none">
             {(() => {
               const t = controlsTable;
@@ -2874,11 +2876,16 @@ export function SpreadsheetView({
 
               const tableTop = rowTop(info.r0);
               const tableLeft = colLeft(info.c0);
+              const dragActiveForTable = !!tableDrag && tableDrag.tableId === t.id;
+              const hoverActiveForTable = tableControlsHover?.tableId === t.id ? tableControlsHover : null;
+              const activeFallbackForTable = !dragActiveForTable && !hoverActiveForTable && activeTableId === t.id;
+              const showColumnControls = dragActiveForTable || (hoverActiveForTable ? hoverActiveForTable.showCols : activeFallbackForTable);
+              const showRowControls = dragActiveForTable || (hoverActiveForTable ? hoverActiveForTable.showRows : activeFallbackForTable);
 
               return (
                 <>
                   {/* Column controls */}
-                  {(tableDrag?.tableId === t.id || tableControlsHover?.showCols)
+                  {showColumnControls
                     ? t.colIds.map((colId) => {
                     const gIdx = colIndexById.get(colId);
                     if (gIdx === undefined) return null;
@@ -2889,13 +2896,13 @@ export function SpreadsheetView({
                       <div
                         key={`colctl-${colId}`}
                         className="absolute pointer-events-auto"
-                        style={{ left: x, top: Math.max(0, tableTop - 18), width: w, height: 18, zIndex: 120 }}
+                        style={{ left: x, top: Math.max(0, tableTop - 22), width: w, height: 22, zIndex: 140 }}
                         onMouseEnter={() => setTableControlsHover({ tableId: t.id, showCols: true, showRows: false })}
                       >
                         <div className="h-full flex items-center justify-between gap-1 px-0.5">
                           <button
                             type="button"
-                            className={`mac-btn h-4 w-4 px-0 ${disabled ? 'opacity-40 pointer-events-none' : ''}`}
+                            className={`mac-btn h-5 w-5 px-0 text-black ${disabled ? 'opacity-40 pointer-events-none' : ''}`}
                             title={disabled ? 'Blocked by spanning card/merge' : 'Drag to reorder within table'}
                             onPointerDown={(e) => {
                               e.preventDefault();
@@ -2912,8 +2919,9 @@ export function SpreadsheetView({
                                 startScrollTop: host?.scrollTop ?? 0,
                               });
                             }}
+                            style={{ width: 16, height: 16, minWidth: 16, minHeight: 16, padding: 0, lineHeight: 1 }}
                           >
-                            <GripVertical size={10} />
+                            <GripVertical size={12} />
                           </button>
                           <button
                             type="button"
@@ -2924,6 +2932,7 @@ export function SpreadsheetView({
                               e.stopPropagation();
                               insertTableColumnAfter(colId);
                             }}
+                            style={{ width: 14, height: 14, minWidth: 14, minHeight: 14, padding: 0, lineHeight: 1 }}
                           >
                             +
                           </button>
@@ -2934,7 +2943,7 @@ export function SpreadsheetView({
                     : null}
 
                   {/* Row controls */}
-                  {(tableDrag?.tableId === t.id || tableControlsHover?.showRows)
+                  {showRowControls
                     ? t.rowIds.map((rowId) => {
                     const gIdx = rowIndexById.get(rowId);
                     if (gIdx === undefined) return null;
@@ -2945,13 +2954,13 @@ export function SpreadsheetView({
                       <div
                         key={`rowctl-${rowId}`}
                         className="absolute pointer-events-auto"
-                        style={{ left: tableLeft + 2, top: y, width: 30, height: h, zIndex: 120 }}
+                        style={{ left: Math.max(0, tableLeft - 24), top: y, width: 22, height: h, zIndex: 140 }}
                         onMouseEnter={() => setTableControlsHover({ tableId: t.id, showCols: false, showRows: true })}
                       >
                         <div className="relative h-full w-full">
                           <button
                             type="button"
-                            className={`mac-btn h-4 w-4 px-0 absolute left-0 top-0 ${disabled ? 'opacity-40 pointer-events-none' : ''}`}
+                            className={`mac-btn h-5 w-5 px-0 text-black absolute left-0 top-0 ${disabled ? 'opacity-40 pointer-events-none' : ''}`}
                             title={disabled ? 'Blocked by spanning card/merge' : 'Drag to reorder within table'}
                             onPointerDown={(e) => {
                               e.preventDefault();
@@ -2968,8 +2977,9 @@ export function SpreadsheetView({
                                 startScrollTop: host?.scrollTop ?? 0,
                               });
                             }}
+                            style={{ width: 16, height: 16, minWidth: 16, minHeight: 16, padding: 0, lineHeight: 1 }}
                           >
-                            <GripVertical size={10} />
+                            <GripVertical size={12} />
                           </button>
                           <button
                             type="button"
@@ -2980,6 +2990,7 @@ export function SpreadsheetView({
                               e.stopPropagation();
                               insertTableRowAfter(rowId);
                             }}
+                            style={{ width: 14, height: 14, minWidth: 14, minHeight: 14, padding: 0, lineHeight: 1 }}
                           >
                             +
                           </button>
@@ -3393,4 +3404,3 @@ export function SpreadsheetView({
     </div>
   );
 }
-

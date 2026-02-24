@@ -812,13 +812,14 @@ export function EditorApp() {
           // Match by content + parentPath.
           // Do NOT match by lineIndex: inserting nodes changes line indices and can reattach
           // running numbers (and thus types) to the wrong nodes.
-          const matchingEntry = flowNodeData.entries.find((e) => {
+          const matchingByContentAndPath = flowNodeData.entries.find((e) => {
             return (
               e.content === node.content.trim() &&
               e.parentPath.length === nodeParentPath.length &&
               e.parentPath.every((p, i) => p === nodeParentPath[i])
             );
           });
+          const matchingEntry = matchingByContentAndPath || flowNodeData.entries.find((e) => e.lineIndex === node.lineIndex);
 
           if (matchingEntry) {
             flowRunningNumberToNodeId.set(matchingEntry.runningNumber, node.id);
@@ -826,13 +827,14 @@ export function EditorApp() {
           }
         } else if (node.isFlowNode && node.isCommon) {
           const nodeParentPath = buildParentPath(node, nodeMapLocal);
-          const matchingEntry = flowNodeData.entries.find((e) => {
+          const matchingByContentAndPath = flowNodeData.entries.find((e) => {
             return (
               e.content === node.content.trim() &&
               e.parentPath.length === nodeParentPath.length &&
               e.parentPath.every((p, i) => p === nodeParentPath[i])
             );
           });
+          const matchingEntry = matchingByContentAndPath || flowNodeData.entries.find((e) => e.lineIndex === node.lineIndex);
 
           if (matchingEntry) {
             flowRunningNumberToNodeId.set(matchingEntry.runningNumber, node.id);
@@ -864,6 +866,23 @@ export function EditorApp() {
           if (isRootProcessNode) rootProcessNodeIds.add(nodeId);
         }
       });
+
+      // If process type metadata exists but matching failed, keep root flows visible by default.
+      if (rootProcessNodeIds.size === 0 && /```process-node-type-\d+\n/.test(currentText)) {
+        const collectRootProcessNodes = (nodes: NexusNode[], parentIsProcess = false) => {
+          nodes.forEach((node) => {
+            const isProcessNode = !!node.isFlowNode;
+            if (isProcessNode && !parentIsProcess) rootProcessNodeIds.add(node.id);
+            const nextParentIsProcess = parentIsProcess || isProcessNode;
+            if (node.isHub && node.variants) {
+              node.variants.forEach((v) => collectRootProcessNodes(v.children, nextParentIsProcess));
+            } else {
+              collectRootProcessNodes(node.children, nextParentIsProcess);
+            }
+          });
+        };
+        collectRootProcessNodes(roots, false);
+      }
 
       setProcessFlowModeNodes((prev) => {
         const prevSet = prev || new Set<string>();
@@ -1044,12 +1063,21 @@ export function EditorApp() {
     const traverseForMatching = (nodes: NexusNode[]) => {
       nodes.forEach((node) => {
         if (node.isFlowNode) {
-          const matchingEntry = flowNodeData.entries.find((e) => e.lineIndex === node.lineIndex && e.content === node.content.trim());
+          const nodeParentPath = node.isCommon ? buildParentPath(node, nodeMap) : buildFlowNodeParentPath(node, nodeMap, roots);
+          const matchingByContentAndPath = flowNodeData.entries.find((e) => {
+            return (
+              e.content === node.content.trim() &&
+              e.parentPath.length === nodeParentPath.length &&
+              e.parentPath.every((p, i) => p === nodeParentPath[i])
+            );
+          });
+          const matchingEntry = matchingByContentAndPath || flowNodeData.entries.find((e) => e.lineIndex === node.lineIndex);
 
           if (matchingEntry) {
             entryMap.set(matchingEntry.runningNumber, {
               ...matchingEntry,
-              parentPath: buildParentPath(node, nodeMap),
+              content: node.content.trim(),
+              parentPath: nodeParentPath,
               lineIndex: node.lineIndex,
             });
             processRunningNumberMapRef.current.set(node.id, matchingEntry.runningNumber);
@@ -1367,7 +1395,7 @@ export function EditorApp() {
               <div className="relative group">
                 <button
                   type="button"
-                  className={`mac-btn h-8 w-8 flex items-center justify-center ${activeView === 'main' ? 'mac-btn--primary' : ''}`}
+                  className={`mac-btn mac-btn--icon-sm ${activeView === 'main' ? 'mac-btn--primary' : ''}`}
                   onClick={() => changeView('main')}
                   aria-label="Site Map"
                 >
@@ -1380,7 +1408,7 @@ export function EditorApp() {
               <div className="relative group">
                 <button
                   type="button"
-                  className={`mac-btn h-8 w-8 flex items-center justify-center ${activeView === 'flows' ? 'mac-btn--primary' : ''}`}
+                  className={`mac-btn mac-btn--icon-sm ${activeView === 'flows' ? 'mac-btn--primary' : ''}`}
                   onClick={() => changeView('flows')}
                   aria-label="Flow"
                 >
@@ -1393,7 +1421,7 @@ export function EditorApp() {
               <div className="relative group">
                 <button
                   type="button"
-                  className={`mac-btn h-8 w-8 flex items-center justify-center ${activeView === 'systemFlow' ? 'mac-btn--primary' : ''}`}
+                  className={`mac-btn mac-btn--icon-sm ${activeView === 'systemFlow' ? 'mac-btn--primary' : ''}`}
                   onClick={() => changeView('systemFlow')}
                   aria-label="Tech Flow"
                 >
@@ -1406,7 +1434,7 @@ export function EditorApp() {
               <div className="relative group">
                 <button
                   type="button"
-                  className={`mac-btn h-8 w-8 flex items-center justify-center ${activeView === 'dataObjects' ? 'mac-btn--primary' : ''}`}
+                  className={`mac-btn mac-btn--icon-sm ${activeView === 'dataObjects' ? 'mac-btn--primary' : ''}`}
                   onClick={() => changeView('dataObjects')}
                   aria-label="Data Relationship"
                 >
@@ -1593,17 +1621,17 @@ export function EditorApp() {
           )}
         </div>
 
-        {/* Floating left window: markdown source (only on main canvas) */}
-          {activeView === 'main' ? (
-          <div
-            className="absolute left-4 top-14 bottom-24 z-50 pointer-events-auto"
-            data-editor-left-panel
-            data-safe-panel="left"
-            data-safe-panel-view="main"
-          >
-              <NexusEditor doc={doc} />
-            </div>
-          ) : null}
+	        {/* Floating left window: markdown source (only on main canvas) */}
+	        {activeView === 'main' ? (
+	          <div
+	            className="absolute left-4 top-14 bottom-24 z-50 pointer-events-none"
+	            data-editor-left-panel
+	            data-safe-panel="left"
+	            data-safe-panel-view="main"
+	          >
+	            <NexusEditor doc={doc} />
+	          </div>
+	        ) : null}
 
           {/* Floating right window(s) */}
           <div
@@ -1741,4 +1769,3 @@ export function EditorApp() {
     </main>
   );
 }
-

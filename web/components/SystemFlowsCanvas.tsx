@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import * as Y from 'yjs';
-import { Pencil, Plus, Trash2 } from 'lucide-react';
+import { Pencil, Plus, Save, LayoutTemplate, Trash2 } from 'lucide-react';
 import type { NexusNode } from '@/types/nexus';
 import type { PresenceController } from '@/lib/presence';
 import { SystemFlowEditor } from '@/components/SystemFlowEditor';
@@ -196,27 +196,35 @@ export function SystemFlowsCanvas({
             {selectedRoot && onSaveTemplateFile ? (
               <button
                 type="button"
-                className="mac-btn"
+                className="mac-btn mac-btn--icon-sm"
                 onClick={() => {
                   void saveSelectedSystemFlowAsTemplate().catch(() => {});
                 }}
                 title="Save this tech flow as a template"
+                aria-label="Save template"
               >
-                Save template
+                <Save size={16} />
               </button>
             ) : null}
             {templateFiles && loadTemplateMarkdown ? (
               <button
                 type="button"
-                className="mac-btn"
+                className="mac-btn mac-btn--icon-sm"
                 onClick={() => setInsertSystemFlowFromTemplateOpen(true)}
                 title="Create a new tech flow from a template"
+                aria-label="New from template"
               >
-                Template…
+                <LayoutTemplate size={16} />
               </button>
             ) : null}
-            <button type="button" onClick={createNewSystemFlow} className="mac-btn" title="Create new tech flow">
-              <Plus size={14} />
+            <button
+              type="button"
+              onClick={createNewSystemFlow}
+              className="mac-btn mac-btn--icon-sm"
+              title="Create new tech flow"
+              aria-label="New tech flow"
+            >
+              <Plus size={16} />
             </button>
           </div>
         </div>
@@ -234,9 +242,8 @@ export function SystemFlowsCanvas({
                     key={sfid}
                     type="button"
                     onClick={() => setSelectedSfid(sfid)}
-                    className={`w-full px-2 py-2 text-left text-xs border mac-double-outline ${
-                      selectedSfid === sfid ? 'mac-shadow-hard mac-fill--hatch' : 'bg-white'
-                    }`}
+                    className="w-full px-2 py-2 text-left text-xs mac-interactive-row"
+                    aria-selected={selectedSfid === sfid}
                   >
                     <div className="font-medium truncate">{r.content}</div>
                     <div className="text-[10px] text-slate-400 truncate">{sfid}</div>
@@ -374,4 +381,3 @@ export function SystemFlowsCanvas({
     </div>
   );
 }
-
