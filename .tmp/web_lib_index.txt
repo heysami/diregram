@@ -1,0 +1,608 @@
+26 web/lib/access-control.ts
+    11:export function canEditFromAccess(access: unknown, userEmail: string | null): boolean {
+22 web/lib/ai-checklists/post-generation-completeness.ts
+    1:export const POST_GEN_CHECKLIST_COMPLETENESS = `Post-Generation Checklist — Completeness Summary (counts; do not shrink scope to pass)
+57 web/lib/ai-checklists/post-generation-conditional.ts
+    1:export const POST_GEN_CHECKLIST_CONDITIONAL = `Post-Generation Checklist — Conditional Nodes / Hubs Usage (must be intentional)
+104 web/lib/ai-checklists/post-generation-data-objects.ts
+    1:export const POST_GEN_CHECKLIST_DATA_OBJECTS = `Post-Generation Checklist — Data Relationship UI Realization (logical + wired + visible in UI)
+59 web/lib/ai-checklists/post-generation-expanded-nodes.ts
+    1:export const POST_GEN_CHECKLIST_EXPANDED_NODES = `Post-Generation Checklist — Expanded Nodes (Expanded Screens UI Blueprint)
+36 web/lib/ai-checklists/post-generation-ia.ts
+    1:export const POST_GEN_CHECKLIST_IA = `Post-Generation Checklist — IA Correctness (main canvas non-#flow# area must be IA only)
+37 web/lib/ai-checklists/post-generation-index.ts
+    25:export const POST_GEN_CHECKLIST_ALL = [
+53 web/lib/ai-checklists/post-generation-process-flows.ts
+    1:export const POST_GEN_CHECKLIST_PROCESS_FLOWS = `Post-Generation Checklist — Main Canvas Process Flows (#flow# trees + registries)
+54 web/lib/ai-checklists/post-generation-swimlane.ts
+    1:export const POST_GEN_CHECKLIST_SWIMLANE = `Post-Generation Checklist — Swimlane Correctness + Coverage (journey map; must reflect main canvas processes)
+54 web/lib/ai-checklists/post-generation-system-flow.ts
+    1:export const POST_GEN_CHECKLIST_SYSTEM_FLOW = `Post-Generation Checklist — Tech Flow (system/integration diagrams)
+40 web/lib/ai-checklists/post-generation-tags.ts
+    1:export const POST_GEN_CHECKLIST_TAGS = `Post-Generation Checklist — Tags (tag-store + node tagging + pinned tags)
+95 web/lib/ai-checklists/post-generation-technical.ts
+    1:export const POST_GEN_CHECKLIST_TECHNICAL = `Post-Generation Checklist — Technical Markdown Correctness (structural; must be import-ready)
+39 web/lib/ai-checklists/post-generation-vision-component-library.ts
+    1:export const POST_GEN_CHECKLIST_VISION_COMPONENT_LIBRARY = `Post-Generation Checklist — Vision Component Library (tokens + coverage)
+24 web/lib/ai-checklists/post-generation-vision.ts
+    1:export const POST_GEN_CHECKLIST_VISION_IMPORT = `Post-Generation Checklist — Vision Importability (file opens correctly)
+47 web/lib/ai-guides/download-guides-and-checklists.ts
+    9:export function downloadDiagramGuidesAndChecklistsBundle() {
+    27:export function downloadVisionGuidesAndChecklistsBundle() {
+54 web/lib/ai-guides/expanded-node-planning.ts
+    1:export const EXPANDED_NODE_PLANNING_PROMPT = `===============================================================================
+173 web/lib/ai-guides/vision-guidance.ts
+    1:export const VISION_AI_GUIDANCE_PROMPT_FROM_RESOURCES = `===============================================================================
+    104:export const VISION_AI_GUIDANCE_PROMPT_FROM_WEBSITE = `===============================================================================
+24 web/lib/array-utils.ts
+    1:export function isStringArrayEqual(a: string[] | null | undefined, b: string[] | null | undefined): boolean {
+    14:export function moveIdInArray(list: string[], fromId: string, toId: string): string[] {
+105 web/lib/bulk-convert-nodes-to-data-objects.ts
+    43:export function bulkConvertNodesToDataObjects(doc: Y.Doc, nodes: NexusNode[]): void {
+47 web/lib/bulk-delete-nodes.ts
+    4:export type BulkDeleteResult = {
+    9:export function bulkDeleteNodes(doc: Y.Doc, nodes: NexusNode[]): BulkDeleteResult {
+54 web/lib/canvas-coordinates.ts
+    1:export type Point = { x: number; y: number };
+    3:export function clientToWorldPoint(opts: {
+179 web/lib/canvas-link-routing.ts
+    3:export type Point = { x: number; y: number };
+    5:export function cubicBezierPath(opts: { start: Point; c1: Point; c2: Point; end: Point }): string {
+    10:export function buildStandardConnectorBezier(opts: {
+    40:export function buildValidationConnectorBezier(opts: {
+13 web/lib/client-download.ts
+    1:export function downloadTextFile(filename: string, content: string) {
+58 web/lib/client-identity.ts
+    1:export type ClientIdentity = {
+    22:export function getOrCreateClientIdentity(): ClientIdentity {
+137 web/lib/collapsed-goto-paths.ts
+    1:export type Box = {
+    8:export type CollapsedGotoPaths = {
+    35:export function buildCollapsedGotoPaths(opts: {
+445 web/lib/common-node-logic.ts
+    39:export const toggleCommonNodeImpl = (
+36 web/lib/common-node-utils.ts
+    24:export function normalizeNodeContent(content: string): string {
+    34:export function hasCommonTag(line: string | undefined): boolean {
+118 web/lib/condition-matrix.ts
+    4:export interface ConditionMatrixScenario {
+    21:export function buildConditionMatrixScenarios(hub: NexusNode): ConditionMatrixScenario[] {
+191 web/lib/conditional-hub-notes.ts
+    5:export interface ConditionalHubNoteEntry {
+    14:export interface ConditionalHubNotesData {
+    23:export function extractHubNoteRunningNumbersFromMarkdown(markdown: string): Map<number, number> {
+    35:export function loadConditionalHubNotes(doc: Y.Doc): ConditionalHubNotesData {
+104 web/lib/connector-points.ts
+    4:export type Point = { x: number; y: number };
+    46:export function getOutgoingConnectionPoint(
+    82:export function getIncomingConnectionPoint(
+85 web/lib/data-object-attribute-descriptions.ts
+    1:export type DataObjectAttributeDescriptionMode = 'flow' | 'table';
+    3:export interface DataObjectAttributeDescriptionBlock {
+    14:export function parseDataObjectAttributeDescriptions(markdown: string): {
+    61:export function upsertDataObjectAttributeDescription(
+2 web/lib/data-object-attribute-ids.ts
+    1:export const OBJECT_NAME_ATTR_ID = '__objectName__';
+63 web/lib/data-object-attributes.ts
+    1:export type DataObjectAttributeType = 'text' | 'status';
+    3:export type DataObjectAttribute =
+    27:export function loadDataObjectAttributes(data: unknown): DataObjectAttribute[] {
+    53:export function upsertDataObjectAttributes(data: unknown, attrs: DataObjectAttribute[]): unknown {
+244 web/lib/data-object-graph.ts
+    11:export type DataObjectEdgeKind = 'attribute' | 'relation';
+    12:export type DataObjectCardinality = ExpandedGridRelationCardinality | 'unknown';
+    14:export type DataObjectEdgeSource =
+    18:export type DataObjectNode = {
+339 web/lib/data-object-storage.ts
+    6:export interface NexusDataObject {
+    15:export interface NexusDataObjectStore {
+    25:export function loadDataObjects(doc: Y.Doc): NexusDataObjectStore {
+    51:export function saveDataObjects(doc: Y.Doc, store: NexusDataObjectStore): void {
+364 web/lib/data-objects-layout.ts
+    3:export type LayoutNode = {
+    212:export function layoutGraphWeb(
+    303:export function edgePath(
+    343:export function computeParallelOffsets(edges: DataObjectEdge[]): Map<number, number> {
+11 web/lib/dataobjects-tool-events.ts
+    1:export const DATAOBJECTS_TOOL_EVENT = 'diregram:dataobjectsTool' as const;
+    3:export type DataObjectsTool = 'new' | 'manage' | 'zoomIn' | 'zoomOut' | 'center';
+    5:export type DataObjectsToolEventDetail = { tool?: DataObjectsTool };
+    7:export function dispatchDataObjectsTool(tool: DataObjectsTool) {
+200 web/lib/dimension-description-matcher.ts
+    17:export interface DimensionDescriptionMatch {
+    27:export function extractDimensionDescriptionRunningNumbersFromMarkdown(markdown: string): Map<number, Array<{ mode: DimensionDescriptionMode; dimensionKey: string; runningNumber: number }>> {
+    63:export function matchNodeByDimensionDescriptionComment(
+    109:export function matchNodeByDimensionDescriptionContent(
+140 web/lib/dimension-description-storage.ts
+    12:export type DimensionDescriptionMode = 'flow' | 'table';
+    14:export interface DimensionDescriptionEntry {
+    23:export interface DimensionDescriptionData {
+    33:export function loadDimensionDescriptions(doc: Y.Doc): DimensionDescriptionData {
+130 web/lib/dimension-descriptions.ts
+    1:export type DimensionDescriptionMode = 'flow' | 'table';
+    3:export interface DimensionDescriptionBlock {
+    19:export function parseDimensionDescriptions(markdown: string): {
+    96:export function upsertDimensionDescription(markdown: string, block: DimensionDescriptionBlock): string {
+9 web/lib/doc-kinds.ts
+    1:export type DocKind = 'diagram' | 'note' | 'grid' | 'vision' | 'template' | 'test';
+    3:export type NexusDocHeaderV1 = {
+    8:export type NexusDocHeader = NexusDocHeaderV1;
+57 web/lib/docling-files-supabase.ts
+18 web/lib/dom/isFromEditableTarget.ts
+    1:export function isFromEditableTarget(target: EventTarget | null): boolean {
+168 web/lib/expanded-connector-anchors.ts
+    10:export type NodeLayoutLike = { x: number; y: number; width: number; height: number };
+    12:export type ExpandedInnerAnchorMap = Map<string, Point>; // key = `${parentId}__${dataObjectId}`
+    14:export function buildExpandedInnerAnchorLookup(opts: {
+    71:export type ExpandedConnectorStub = {
+420 web/lib/expanded-grid-storage.ts
+    7:export interface ExpandedGridNodePersisted {
+    55:export interface ExpandedGridNodeRuntime extends ExpandedGridNodePersisted {
+    59:export type ExpandedGridSource = 'runningNumber' | 'legacyNodeId' | 'none';
+    61:export type ExpandedGridUiType =
+101 web/lib/expanded-node-metadata.ts
+    3:export interface ExpandedNodeMetadata {
+    24:export function loadExpandedNodeMetadata(doc: Y.Doc, runningNumber: number): ExpandedNodeMetadata {
+    65:export function saveExpandedNodeMetadata(doc: Y.Doc, runningNumber: number, metadata: ExpandedNodeMetadata): void {
+    78:export function saveExpandedNodeMetadataToMarkdown(markdown: string, runningNumber: number, metadata: ExpandedNodeMetadata): string {
+47 web/lib/expanded-running-number-lookup.ts
+    9:export function buildExpandedNodeIdToRunningNumberLookup(opts: {
+174 web/lib/expanded-state-matcher.ts
+    16:export interface ExpandedStateMatch {
+    26:export function extractRunningNumbersFromMarkdown(markdown: string): Map<number, number> {
+    46:export function matchNodeByRunningNumberComment(
+    85:export function matchNodeByContent(
+266 web/lib/expanded-state-storage.ts
+    8:export const EXPANDED_ID_COMMENT_RE = /<!--\s*expid:(\d+)\s*-->/;
+    10:export function extractExpandedIdsFromMarkdown(markdown: string): Map<number, number> {
+    22:export function stripExpandedIdComment(line: string): string {
+    26:export function upsertExpandedIdComment(line: string, rn: number): string {
+107 web/lib/expanded-state-sync.ts
+    22:export interface ExpandedStateSyncResult {
+    45:export function syncExpandedState(
+199 web/lib/export-bundle.ts
+    196:export function downloadProjectBundleZip(res: { blob: Blob; filename: string }) {
+59 web/lib/flow-branch-ordering.ts
+    3:export type FlowBranch = { id: string; label: string };
+    4:export type ForkMeta = Record<string, { sourceNodeId: string; offsetColumns: number }>;
+    14:export function getBranchInsertIndexForFork(opts: {
+119 web/lib/flow-node-logic.ts
+    8:export const toggleFlowNodeImpl = (
+41 web/lib/flow-node-registry.ts
+    14:export function upsertFlowNodeRegistryEntryByRunningNumber(opts: {
+242 web/lib/flow-node-storage.ts
+    11:export interface FlowNodeEntry {
+    18:export interface FlowNodeData {
+    49:export function loadFlowNodeStates(doc: Y.Doc): FlowNodeData {
+    77:export function saveFlowNodeStates(doc: Y.Doc, data: FlowNodeData): void {
+49 web/lib/flow-serialization.ts
+    3:export interface SerializedFlowData {
+    13:export function parseFlowFromMarkdown(bodyLines: string[]): {
+    38:export function serializeFlowToMarkdown(payload: {
+70 web/lib/flowtab-process-references.ts
+    3:export type FlowTabProcessReference =
+    27:export type FlowTabProcessReferenceMap = Record<string, FlowTabProcessReference>;
+    47:export function loadFlowTabProcessReferences(doc: Y.Doc): FlowTabProcessReferenceMap {
+    60:export function saveFlowTabProcessReferences(doc: Y.Doc, refs: FlowTabProcessReferenceMap): void {
+55 web/lib/flowtab-reference-anchors.ts
+    20:export function computeFlowTabReferenceAnchors(opts: {
+91 web/lib/flowtab-reference-resolver.ts
+    42:export function resolveFlowTabProcessReference(opts: {
+237 web/lib/flowtab-swimlane-layout.ts
+    4:export type SwimlaneLayoutSpec = {
+    11:export type SwimlaneBandMetrics = {
+    68:export function computeSwimlaneLayoutOverride(params: {
+109 web/lib/flowtab-swimlane-storage.ts
+    3:export interface FlowTabSwimlaneData {
+    54:export function loadFlowTabSwimlane(doc: Y.Doc, fid: string): FlowTabSwimlaneData | null {
+    89:export function saveFlowTabSwimlane(doc: Y.Doc, data: FlowTabSwimlaneData): void {
+    100:export function buildDefaultFlowTabSwimlane(fid: string): FlowTabSwimlaneData {
+45 web/lib/geometry.ts
+    1:export type Point = { x: number; y: number };
+    2:export type Rect = { x: number; y: number; width: number; height: number };
+    8:export function getExitPointOnRectBorder(rect: Rect, from: Point, to: Point): Point | null {
+276 web/lib/global-templates.ts
+    5:export type GlobalTemplateListEntry = { id: string; name: string };
+    7:export type GlobalTemplateBrowserEntry = {
+    19:export type GlobalTemplateFullRow = {
+64 web/lib/google-fonts.ts
+487 web/lib/grid-cell-macros.ts
+    1:export type NxMacroName =
+    20:export type ScannedMacro = {
+    118:export function listRecognizedMacros(input: string): ScannedMacro[] {
+    359:export function macrosToHtml(input: string): string {
+50 web/lib/grid-comments.ts
+    1:export type GridCommentTarget =
+    14:export function buildGridCellCommentTargetKey(sheetId: string, rowId: string, colId: string): string {
+    18:export function buildGridCardCommentTargetKey(sheetId: string, cardId: string): string {
+    22:export function parseGridCommentTargetKey(targetKey: string): GridCommentTarget | null {
+37 web/lib/grid-starter.ts
+    9:export function makeStarterGridMarkdown(): string {
+380 web/lib/grid/clipboard/gridRangeClipboard.ts
+    3:export type GridRect = { r0: number; r1: number; c0: number; c1: number };
+    5:export type GridRangeClipboardPayloadV1 = {
+    37:export function coerceGridRangeClipboardPayloadV1(x: unknown): GridRangeClipboardPayloadV1 | null {
+    49:export function buildGridRangeClipboardPayloadV1(opts: {
+73 web/lib/grid/csv.ts
+    7:export function parseCsv(text: string): string[][] {
+87 web/lib/grid/databaseModel.ts
+    12:export function addDbProperty(sheet: GridSheetV1, type: GridDatabasePropertyType): GridSheetV1 {
+    23:export function deleteDbProperty(sheet: GridSheetV1, propId: string): GridSheetV1 {
+    36:export function addDbRow(sheet: GridSheetV1): GridSheetV1 {
+    46:export function setDbCellValue(sheet: GridSheetV1, rowId: string, propId: string, value: unknown): GridSheetV1 {
+289 web/lib/grid/linked-data-object-table.ts
+    48:export function syncLinkedDataObjectTableStructure(opts: {
+    151:export function materializeLinkedDataObjectTable(opts: {
+102 web/lib/grid/linked-data-object-writeback.ts
+    45:export function applyLinkedColumnsModeCellEditToDataObject(opts: {
+38 web/lib/grid/nxSemanticColor.ts
+    1:export type NxSemanticKind = 'r' | 'g' | 'y' | 'b' | 's';
+    3:export function nxNormalizeKind(kind: string | undefined): NxSemanticKind {
+    9:export function nxSemanticTextColor(kind: string | undefined): string {
+    24:export function nxSemanticBgColor(kind: string | undefined): string {
+25 web/lib/grid/sheetFactory.ts
+    3:export function createDefaultSheet(opts: { id: string; name: string; mode?: GridSheetMode }): GridSheetV1 {
+429 web/lib/grid/spreadsheetModel.ts
+    3:export type SelectionRect = { r0: number; r1: number; c0: number; c1: number };
+    5:export function parseCoordKey(key: string): { rowId: string; colId: string } | null {
+    23:export function setCellValue(sheet: GridSheetV1, rowId: string, colId: string, value: string): GridSheetV1 {
+    31:export function addRow(sheet: GridSheetV1): GridSheetV1 {
+55 web/lib/grid/stripDefaultSizing.ts
+    12:export function stripDefaultSizingFromSheet(
+    44:export function stripDefaultSizingFromDoc(
+50 web/lib/grid/table-filter-options.ts
+    5:export type TableFilterOption = { group: string; value: string; count: number };
+    7:export function buildTableColumnFilterOptions(opts: {
+    33:export function buildTableColumnAllFilterValues(opts: {
+99 web/lib/grid/table-filter-view.ts
+    4:export type TableColumnFilterV1 = NonNullable<GridTableV1['filters']>[string];
+    6:export type TableFilterView = {
+    13:export function getTableDataRowIds(t: GridTableV1): string[] {
+    25:export function rowMatchesColumnFilter(cellValue: string, filter: TableColumnFilterV1 | undefined): boolean {
+35 web/lib/grid/table-hidden-columns.ts
+    3:export type TableHiddenColumnView = {
+    12:export function computeTableHiddenColumnView(t: GridTableV1): TableHiddenColumnView | null {
+    27:export function computeAllTableHiddenColumnViews(tables: GridTableV1[]): Map<string, TableHiddenColumnView> {
+157 web/lib/grid/tableFilterItems.ts
+    3:export type TableFilterItemKind =
+    15:export type TableFilterItem = { kind: TableFilterItemKind; label: string };
+    45:export function encodeFilterItem(it: TableFilterItem): string {
+    49:export function decodeFilterItem(s: string): TableFilterItem | null {
+198 web/lib/grid/tableSemanticTree.ts
+    100:export function buildGroupingSemanticTreeForSheet(sheet: GridSheetV1, opts?: { maxRows?: number; maxCols?: number; maxCells?: number }): string {
+78 web/lib/grid/tsv.ts
+    8:export function encodeTsvGrid(grid: string[][]): string {
+    17:export function parseTsv(text: string): string[][] {
+703 web/lib/gridjson.ts
+    4:export type GridDocV1 = {
+    12:export type GridSheetMode = 'spreadsheet' | 'database';
+    14:export type GridColumnV1 = { id: string; width?: number };
+    15:export type GridRowV1 = { id: string; height?: number };
+110 web/lib/install-global-template.ts
+6 web/lib/is-uuid.ts
+    1:export function isUuid(s: unknown): boolean {
+24 web/lib/jsonish.ts
+    1:export function parseJsonish(raw: string): unknown | null {
+1205 web/lib/kg-vector-export.ts
+    18:export type KgEntityRecord = {
+    25:export type KgEdgeRecord = {
+    34:export type EmbeddingChunkRecord = {
+    1200:export function downloadKgVectors(res: { graphJsonl: string; embeddingsJsonl: string; basename?: string }) {
+29 web/lib/layout-direction-supabase.ts
+6 web/lib/layout-direction.ts
+    1:export type LayoutDirection = 'horizontal' | 'vertical';
+    3:export function normalizeLayoutDirection(v: unknown): LayoutDirection {
+676 web/lib/layout-engine.ts
+    16:export interface Point {
+    21:export interface NodeLayout {
+    30:export const NODE_WIDTH = 150;
+    47:export const ANNOTATION_GAP_PX = 8;
+43 web/lib/local-admin-session.ts
+    1:export const LOCAL_ADMIN_USERNAME = 'samiadmin';
+    4:export type LocalAdminSession = {
+    10:export function isLocalAdminLoginEnabled() {
+    15:export function getLocalAdminSession(): LocalAdminSession | null {
+24 web/lib/local-doc-snapshots.ts
+    7:export function loadFileSnapshot(fileId: string): string | null {
+    16:export function saveFileSnapshot(fileId: string, markdown: string) {
+373 web/lib/local-file-store.ts
+    1:export type LocalFolder = {
+    9:export type LocalFile = {
+    24:export type LocalFileStore = {
+    33:export type AccessRole = 'view' | 'edit';
+1309 web/lib/markdown-import-validator.ts
+    7:export type ImportValidationIssue = {
+    13:export type ImportValidationResult = {
+    172:export function validateNexusMarkdownImport(markdown: string): ImportValidationResult {
+10 web/lib/markdown-normalize.ts
+    6:export function normalizeMarkdownNewlines(text: string): string {
+73 web/lib/mermaid/import/convert.ts
+    18:export function convertMermaidToNexusMarkdown(
+133 web/lib/mermaid/import/converters/architecture.ts
+    6:export function convertArchitectureDiagram(src: string): { title: string; kind: 'diagram'; markdown: string } | { error: string } {
+53 web/lib/mermaid/import/converters/block.ts
+    6:export function convertBlockLikeSystemFlow(
+98 web/lib/mermaid/import/converters/c4.ts
+    6:export function convertC4(src: string): { title: string; kind: 'diagram'; markdown: string } | { error: string } {
+122 web/lib/mermaid/import/converters/class.ts
+    6:export function convertClassDiagram(src: string): { title: string; kind: 'diagram'; markdown: string } | { error: string } {
+136 web/lib/mermaid/import/converters/er.ts
+    6:export function convertErDiagram(src: string): { title: string; kind: 'diagram'; markdown: string } | { error: string } {
+128 web/lib/mermaid/import/converters/journey.ts
+    6:export function convertJourney(src: string): { title: string; kind: 'diagram'; markdown: string } | { error: string } {
+39 web/lib/mermaid/import/converters/mindmap.ts
+    6:export function convertMindmap(src: string): { title: string; kind: 'diagram'; markdown: string } | { error: string } {
+75 web/lib/mermaid/import/converters/packet.ts
+    6:export function convertPacketDiagram(src: string): { title: string; kind: 'diagram'; markdown: string } | { error: string } {
+103 web/lib/mermaid/import/converters/sequence.ts
+    6:export function convertSequenceDiagram(src: string): { title: string; kind: 'diagram'; markdown: string } | { error: string } {
+28 web/lib/mermaid/import/detect.ts
+    4:export function detectMermaidDiagramType(src: string): MermaidDiagramType | 'unknown' {
+331 web/lib/mermaid/import/flowchart.ts
+    5:export function parseFlowchartToken(rawToken: string): FlowNode {
+    38:export function parseFlowchartEdges(src: string): { nodes: Map<string, FlowNode>; edges: FlowEdge[] } {
+    171:export function buildProcessFlowFromMermaidFlowchart(src: string, opts?: { title?: string; ensureEndNode?: boolean }): FlowBuildResult {
+    294:export function buildFlowNodesBlock(flowNodeByKey: Map<string, { lineIndex: number; runningNumber: number; parentPath: string[]; label: string }>) {
+4 web/lib/mermaid/import/index.ts
+    1:export type { MermaidDiagramType } from './types';
+28 web/lib/mermaid/import/markdown.ts
+    3:export function renderNodeLines(lines: NodeLine[]): { markdown: string; lineIndexByKey: Map<string, number> } {
+    14:export function nodeIdForLineIndex(lineIndex: number) {
+    18:export function makeSeparatorAndBlocks(blocks: Array<{ type: string; body: unknown }>): string {
+4 web/lib/mermaid/import/math.ts
+    1:export function clamp(n: number, lo: number, hi: number) {
+43 web/lib/mermaid/import/state.ts
+    3:export function stateDiagramToFlowchart(stateSrc: string) {
+74 web/lib/mermaid/import/systemflow.ts
+    4:export function makeSystemFlowState(opts: {
+    51:export function layoutBoxesInGrid(
+77 web/lib/mermaid/import/text.ts
+    3:export function normalizeNewlines(s: string) {
+    7:export function safeSingleLine(s: string) {
+    11:export function stripMermaidComments(line: string) {
+    17:export function stripCodeFencesAndFrontmatter(src: string) {
+62 web/lib/mermaid/import/types.ts
+    1:export type MermaidDiagramType =
+    14:export type NodeLine = {
+    19:export type FlowEdge = { from: string; to: string; label?: string; dashed?: boolean };
+    21:export type FlowNode = { id: string; label: string; validation?: boolean; end?: boolean };
+4 web/lib/mermaid/importMermaid.ts
+    1:export type { MermaidDiagramType } from './import/types';
+27 web/lib/newline-encoding.ts
+    15:export function encodeNewlines(content: string): string {
+    23:export function decodeNewlines(content: string): string {
+80 web/lib/nexus-doc-header.ts
+    3:export type ReadNexusDocHeaderResult = {
+    51:export function readHeader(markdown: string): ReadNexusDocHeaderResult {
+    65:export function upsertHeader(markdown: string, header: NexusDocHeader): string {
+16 web/lib/nexus-embed-kind.ts
+    1:export type NexusEmbedKind = 'canvas' | 'flowTab' | 'processFlow' | 'systemflow' | 'dataObjects' | 'visionCard';
+    3:export function normalizeNexusEmbedKind(kind: unknown): NexusEmbedKind {
+    13:export function isVisionCardEmbedKind(kind: unknown): boolean {
+166 web/lib/nexus-flows-storage.ts
+    4:export type FlowId = string;
+    6:export interface NexusFlowIndexEntry {
+    12:export interface NexusFlowsIndex {
+    17:export interface StageDef {
+90 web/lib/nexus-flowtab-ops.ts
+    8:export function getFlowTabFid(root: NexusNode) {
+    12:export function collectFlowTabRootsFromMarkdown(markdown: string) {
+    16:export function dedupeFlowTabRootsByFid(roots: NexusNode[]) {
+    25:export function nextFlowTabFid(existingRoots: NexusNode[]) {
+115 web/lib/nexus-internal-clipboard.ts
+    1:export type NexusInternalClipboardKind = 'diagramSubtree' | 'gridRange' | 'noteRich' | 'visionSvg';
+    3:export type NexusInternalClipboardEnvelopeV1 = {
+    18:export const NEXUS_INTERNAL_CLIPBOARD_MIME = 'application/x-diregram-internal+json';
+    49:export function writeInternalClipboardEnvelope(
+63 web/lib/nexus-markdown-edit.ts
+    7:export function findLineIndexByToken(lines: string[], token: string, fallbackIndex: number) {
+    13:export function computeIndentedBlockEndExclusive(lines: string[], startIdx: number) {
+    26:export function replaceLineTitleKeepingSuffix(line: string, nextTitleRaw: string) {
+    38:export function renameLineByTokenOrIndex(opts: {
+424 web/lib/nexus-parser.ts
+    62:export function parseNexusMarkdown(text: string): NexusNode[] {
+30 web/lib/nexus-root-collect.ts
+    22:export function collectRootsFromMarkdown(markdown: string, predicate: (n: NexusNode) => boolean) {
+44 web/lib/nexus-systemflow-ops.ts
+    6:export function getSystemFlowSfid(root: NexusNode) {
+    10:export function collectSystemFlowRootsFromMarkdown(markdown: string) {
+    14:export function nextSystemFlowSfid(existingRoots: NexusNode[]) {
+    24:export function deleteSystemFlowFromDoc(opts: { doc: Y.Doc; sfid: string; root: NexusNode }) {
+305 web/lib/nexus-table-embed.ts
+    3:export type NexusTableSource =
+    7:export type NexusTableSpec = {
+    13:export type NormalizedTable = {
+    206:export function normalizeNexusTableSource(markdown: string, src: NexusTableSource): NormalizedTable | null {
+310 web/lib/nexus-template.ts
+    3:export type TemplateTargetKind = Exclude<DocKind, 'template'> | 'test';
+    4:export type NexusTemplateMode = 'createFile' | 'appendFragment';
+    6:export type NexusTemplateVarV1 = {
+    13:export type NexusProcessNodeType = 'step' | 'time' | 'loop' | 'action' | 'validation' | 'branch' | 'end' | 'goto';
+54 web/lib/node-annotations.ts
+    6:export function extractAnnotationFromLine(line: string): string | undefined {
+    21:export function stripAnnotationComment(line: string): string {
+    25:export function upsertAnnotationComment(line: string, annotation: string | null | undefined): string {
+    34:export function saveNodeAnnotation(opts: {
+233 web/lib/node-comments.ts
+    3:export type CommentReply = {
+    9:export type CommentAnchor =
+    19:export type CommentThread = {
+    102:export function buildNexusNodeCommentTargetKey(runningNumber: number): string {
+54 web/lib/node-data-object-attribute-links.ts
+    16:export function parseDoAttrsFromLine(line: string): string[] {
+    35:export function stripDoAttrsFromLine(line: string): string {
+    39:export function upsertDoAttrsInLine(line: string, attributeIds: string[]): string {
+    51:export function isValidSpecialAttrId(id: string): boolean {
+28 web/lib/node-line-comments.ts
+    12:export const KNOWN_NODE_LINE_COMMENT_RE =
+    15:export function extractKnownNodeLineComments(line: string): string[] {
+    23:export function buildPreservedNodeLineCommentSuffix(previousLine: string): string {
+151 web/lib/node-running-numbers.ts
+    4:export const RN_COMMENT_RE = /<!--\s*rn:(\d+)\s*-->/;
+    6:export function extractRunningNumbersFromMarkdown(markdown: string): Map<number, number> {
+    22:export function extractRnCommentsFromMarkdown(markdown: string): Map<number, number> {
+    26:export function stripRunningNumberComment(line: string): string {
+136 web/lib/node-tags.ts
+    15:export function parseTagIdsFromLine(line: string): string[] {
+    56:export function setNodeTags(doc: Y.Doc, node: NexusNode, tagIds: string[]): void {
+    71:export function bulkAddTag(doc: Y.Doc, nodes: NexusNode[], tagId: string): void {
+    94:export function bulkRemoveTag(doc: Y.Doc, nodes: NexusNode[], tagId: string): void {
+23 web/lib/note-comments.ts
+    1:export function buildNoteHeadingCommentTargetKey(params: { slug: string; occurrence: number }): string {
+    7:export function parseNoteHeadingIdToKey(headingId: string): { targetKey: string; slug: string; occurrence: number } | null {
+    19:export function buildNoteEmbedCommentTargetKey(embedId: string): string {
+8 web/lib/note-starter.ts
+    3:export function makeStarterNoteMarkdown(): string {
+17 web/lib/persist-markdown-now.ts
+    5:export function persistMarkdownNow(opts: {
+69 web/lib/pinned-tags.ts
+    3:export type PinnedTagsData = {
+    40:export function loadPinnedTags(doc: Y.Doc | null | undefined): PinnedTagsData {
+    58:export function savePinnedTags(doc: Y.Doc | null | undefined, data: PinnedTagsData): void {
+30 web/lib/presence.ts
+    3:export type PresenceView = 'main' | 'dataObjects' | 'flows' | 'systemFlow' | 'testing';
+    5:export type PresenceCursor = {
+    11:export type PresenceState = {
+    19:export type PresencePeer = {
+81 web/lib/process-connector-labels.ts
+    7:export interface ConnectorLabel {
+    16:export function loadConnectorLabels(doc: Y.Doc): Record<string, ConnectorLabel> {
+    41:export function saveConnectorLabels(
+99 web/lib/process-flow-diamond.ts
+    10:export const DIAMOND_SIZE = 120;
+    12:export function isProcessFlowDiamondType(nodeType?: string | null): boolean {
+    21:export function getDiamondChildStartY(opts: {
+    37:export function getDiamondSubtreeExtraTop(opts: {
+92 web/lib/process-goto-storage.ts
+    13:export function loadGotoTargets(
+    51:export function saveGotoTarget(
+56 web/lib/process-loop-logic.ts
+    3:export function isDescendantOf(opts: {
+    19:export function getLoopTargetOptions(opts: {
+    39:export function computePaddedSpanBounds(opts: {
+104 web/lib/process-loop-storage.ts
+    13:export function loadLoopTargets(
+    51:export function saveLoopTarget(
+40 web/lib/process-node-render-rect.ts
+    7:export type RenderedRect = { x: number; y: number; w: number; h: number };
+    14:export function getRenderedRectForMainCanvasNode(opts: {
+142 web/lib/process-node-type-storage.ts
+    16:export function loadProcessNodeTypes(
+    62:export function saveProcessNodeType(
+87 web/lib/process-running-number-map.ts
+    19:export function buildProcessRunningNumberMap(opts: {
+23 web/lib/running-number-maps.ts
+    14:export function buildNodeIdToRunningNumberMap(
+100 web/lib/safe-viewport.ts
+    17:export type SafePanelSide = 'left' | 'right';
+    19:export type SafeViewport = {
+    60:export function computeSafeViewport(opts: {
+16 web/lib/server/jsonl.ts
+    1:export function parseJsonl<T = unknown>(input: string): T[] {
+35 web/lib/server/openai-chat.ts
+38 web/lib/server/openai-embeddings.ts
+9 web/lib/server/rag-auth.ts
+    1:export function hasValidRagApiKey(request: Request): boolean {
+22 web/lib/server/supabase-admin.ts
+    5:export function getAdminSupabaseClient(): SupabaseClient {
+33 web/lib/server/supabase-user.ts
+45 web/lib/structure-move-guard.ts
+    3:export type BlockedMoveReason =
+    18:export function getBlockedCmdUnindentReason(
+112 web/lib/style-engine.ts
+    23:export interface NodeStyle {
+    31:export function getNodeStyle(
+    102:export function getHubGroupStyle(hueIndex: number | undefined) {
+15 web/lib/supabase.ts
+    3:export function isSupabaseConfigured() {
+    7:export const createClient = () => {
+252 web/lib/system-flow-storage.ts
+    3:export type SystemFlowSide = 'left' | 'right' | 'top' | 'bottom';
+    5:export type SystemFlowBoxPersisted = {
+    20:export type SystemFlowZonePersisted = {
+    27:export type SystemFlowLinkPersisted = {
+142 web/lib/table-serialization.ts
+    10:export interface SerializedTableData {
+    36:export function serializeTableToMarkdown(
+    91:export function parseTableFromMarkdown(bodyLines: string[]): {
+24 web/lib/tablejson-upsert.ts
+    12:export function upsertTableJson(markdown: string, serializedLines: string[]): string {
+297 web/lib/tag-store.ts
+    3:export interface NexusTagGroup {
+    13:export interface NexusTag {
+    19:export interface NexusTagStore {
+    123:export function loadTagStore(doc: Y.Doc): NexusTagStore {
+43 web/lib/template-flow-meta-markdown.ts
+    3:export function renderTemplateFlowMetaMarkdown(flowMeta: NexusTemplateHeader['flowMeta'] | undefined): string {
+86 web/lib/template-flow-meta.ts
+    9:export function buildTemplateFlowMetaForSubtree(opts: {
+38 web/lib/template-global-publish-record.ts
+    1:export type LastGlobalPublishRecord = {
+    11:export function loadLastGlobalPublishRecord(fileId: string | null | undefined): LastGlobalPublishRecord | null {
+    29:export function saveLastGlobalPublishRecord(fileId: string | null | undefined, record: LastGlobalPublishRecord): void {
+107 web/lib/template-grid.ts
+    22:export function parseGridSheetTemplatePayload(rendered: string): { version: 1; sheet: Omit<GridSheetV1, 'id'> & { id?: string } } {
+    31:export type GridTableTemplateV1 = {
+    41:export function parseGridTableTemplatePayload(rendered: string): GridTableTemplateV1 {
+    72:export function buildPreviewDocFromGridTableTemplate(tpl: GridTableTemplateV1): GridDoc {
+89 web/lib/template-library.ts
+    4:export type TemplateLibraryScope = 'project' | 'account';
+    6:export const ACCOUNT_TEMPLATES_FOLDER_NAME = 'Account Templates';
+    7:export const PROJECT_TEMPLATES_FOLDER_NAME = 'Templates';
+    9:export type FolderAccess = { people?: AccessPerson[] } | null;
+26 web/lib/template-vars.ts
+    3:export function computeEffectiveTemplateVars(header: NexusTemplateHeader | null | undefined, payload: string): NexusTemplateVarV1[] {
+    8:export function buildTemplateVarDefaults(vars: NexusTemplateVarV1[]): Record<string, string> {
+    18:export function computeTemplateVarsAndDefaults(
+17 web/lib/test-starter.ts
+    3:export function makeStarterTestMarkdown(res?: Partial<Omit<TestDoc, 'version'>>): string {
+9 web/lib/testing-store.ts
+    1:export type TestingTest = {
+4 web/lib/testing/text.ts
+    1:export function singleLine(s: string): string {
+125 web/lib/testing/tree-test-model.ts
+    12:export type InnerFlowStep = {
+    19:export type TreeTestModel =
+    28:export function buildTreeTestModel(opts: {
+93 web/lib/testjson.ts
+    3:export type TestDocV1 = {
+    16:export type TestDoc = TestDocV1;
+    59:export function extractTestJsonPayload(markdown: string): string | null {
+    68:export function parseTestJsonPayload(payload: string): TestDoc | null {
+131 web/lib/text-measurement.ts
+    40:export function calculateTextHeightCustom(opts: TextHeightOpts): number {
+    111:export function calculateTextHeight(text: string, nodeWidth: number = NODE_WIDTH): number {
+    129:export function clearMeasurementCache(): void {
+87 web/lib/tree-testing.ts
+    5:export type TreeTestUiType = UiTypeTagValue;
+    7:export type TreeTestRunState =
+    57:export function runTreeTest(opts: { roots: NexusNode[]; reference: FlowTabProcessReference }): TreeTestRunState {
+98 web/lib/ui-type-tags.ts
+    5:export type UiTypeTagValue = 'view-item' | 'list' | 'form' | 'popup';
+    7:export const UI_TYPE_GROUP_ID = 'tg-uiType';
+    9:export const UI_TYPE_TAG_BY_VALUE: Record<UiTypeTagValue, string> = {
+    16:export const UI_TYPE_TAG_IDS = new Set<string>(Object.values(UI_TYPE_TAG_BY_VALUE));
+6 web/lib/utils.ts
+    4:export function cn(...inputs: ClassValue[]) {
+82 web/lib/variant-detection.ts
+    32:export function isNodeInsideVariant(
+80 web/lib/vision-assets-supabase.ts
+38 web/lib/vision-card-embed-config.ts
+    3:export type VisionCardEmbedSpecLike = {
+    11:export const VISION_CARD_PENDING_CONFIG_KEY = 'pendingConfig' as const;
+    13:export function withVisionCardPendingConfig<T extends Record<string, unknown>>(spec: T): T & { pendingConfig: true } {
+    17:export function shouldAutoOpenVisionCardConfig(opts: {
+15 web/lib/vision-starter.ts
+    9:export function makeStarterVisionMarkdown(): string {
+106 web/lib/vision-thumbs.ts
+    1:export type NormalizedCropRect = { x: number; y: number; w: number; h: number };
+    8:export function normalizeCropRect(r: NormalizedCropRect | null | undefined): NormalizedCropRect {
+70 web/lib/vision/vision-markdown-import-validator.ts
+    4:export type VisionImportIssue = { level: 'error' | 'warning'; message: string };
+    29:export function validateVisionMarkdownImport(md: string): { errors: VisionImportIssue[]; warnings: VisionImportIssue[]; reportText: string } {
+153 web/lib/visionjson.ts
+    8:export type VisionCellKind = 'vector' | 'ui' | 'image';
+    10:export type VisionCropRectV1 = {
+    21:export type VisionAnnotatorV1 = {
+    26:export type VisionExtraV1 = {
+20 web/lib/visionjson.worker.ts

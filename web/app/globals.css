@@ -44,6 +44,27 @@ body {
   font-family: var(--mac-font, Arial, Helvetica, sans-serif);
 }
 
+/* ============================================================
+   Button typography baseline (all themes), excluding tldraw UI
+   ============================================================ */
+html[data-theme] button,
+html[data-theme] .mac-btn,
+html[data-theme] .mac-toolbtn,
+html[data-theme] .mac-seg-btn {
+  font-weight: 700;
+}
+
+/* Keep tldraw button typography untouched. */
+html[data-theme] .tldraw button,
+html[data-theme] .tlui button,
+html[data-theme] button[class*="tlui"],
+html[data-theme] .nx-tldraw-floating button,
+html[data-theme] .nx-tlui-btn,
+html[data-theme] .nx-tlui-iconbtn,
+html[data-theme] .nx-tlui-squarebtn {
+  font-weight: inherit;
+}
+
 /* Desktop background (subtle 1-bit-ish grid) */
 html[data-theme="mac3"] .mac-desktop {
   --canvas-plus-size: 12px;

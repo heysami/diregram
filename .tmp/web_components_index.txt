@@ -1,0 +1,882 @@
+154 web/components/AccessPeopleEditor.tsx
+    39:export function AccessPeopleEditor({ label, value, onChange, error, onError, compact }: Props) {
+33 web/components/AppHeader.tsx
+    6:export type AppView = 'main' | 'flows' | 'systemFlow' | 'dataObjects';
+    18:export function AppHeader({ status, onClearDatabase, onOpenImportMarkdown, onExportKgVectors, onExportBundleZip, activeFileName, onlineCount }: Props) {
+75 web/components/AuthStatus.tsx
+    14:export function AuthStatus({ onlineCount, status }: Props) {
+259 web/components/CommentsPanel.tsx
+    17:export function CommentsPanel({
+135 web/components/ConditionMatrixOverlay.tsx
+    19:export function ConditionMatrixOverlay({
+92 web/components/DataObjectAttributeMultiSelect.tsx
+    10:export function DataObjectAttributeMultiSelect({
+371 web/components/DataObjectInspectorPanel.tsx
+    28:export function DataObjectInspectorPanel({
+191 web/components/DataObjectSearchSelect.tsx
+    7:export type DataObjectOption = { id: string; name: string };
+    19:export function DataObjectSearchSelect({
+898 web/components/DataObjectsCanvas.tsx
+    85:export function DataObjectsCanvas({
+259 web/components/DataObjectsPanel.tsx
+    21:export function DataObjectsPanel({ doc, roots, onClose }: Props) {
+2012 web/components/DimensionFlowEditor.tsx
+    8:export type FlowNodeType = 'step' | 'time' | 'loop' | 'action' | 'validation' | 'branch' | 'end' | 'goto';
+    10:export interface FlowNode {
+    43:export function DimensionFlowEditor({
+512 web/components/DimensionTableEditor.tsx
+    21:export type RowType = 'header' | 'content';
+    23:export interface TableColumn {
+    29:export interface MergedCell {
+    36:export interface TableRow {
+69 web/components/DiregramMark.tsx
+    11:export function DiregramMark({ size = 14, ...props }: Props) {
+1750 web/components/EditorApp.tsx
+    140:export function EditorApp() {
+122 web/components/EditorMenubar.tsx
+    9:export type MenubarItem = {
+    16:export function EditorMenubar({
+84 web/components/EditorRouter.tsx
+    19:export function EditorRouter() {
+21 web/components/ExpandedConnectorStubOverlay.tsx
+    3:export function ExpandedConnectorStubOverlay({ stubs }: { stubs: ExpandedConnectorStub[] }) {
+146 web/components/ExpandedGridMultiSelectPanel.tsx
+    12:export type SelectedExpandedGridNodes = {
+    26:export function ExpandedGridMultiSelectPanel({ doc, selection, nodeMap, onClose }: Props) {
+1308 web/components/ExpandedGridNodePanel.tsx
+    53:export type SelectedExpandedGridNode = {
+    68:export function ExpandedGridNodePanel({ doc, selection, nodeMap, onClose }: Props) {
+974 web/components/ExpandedNodeView.tsx
+    29:export function ExpandedNodeView({ node, doc, styleClass, nodeMap, runningNumber, onAddNode, onDeleteNode, onSelectGridNode, selectedGridNodeKey, gridWidth = 4, gridHeight = 4, onGridSizeChange }: ExpandedNodeViewProps) {
+284 web/components/FilesPanel.tsx
+    21:export function FilesPanel({ activeFileId, onOpenFile }: Props) {
+65 web/components/FlowNodeView.tsx
+    14:export function FlowNodeView({ node, doc, runningNumber, styleClass }: FlowNodeViewProps) {
+1916 web/components/FlowsCanvas.tsx
+    130:export function FlowsCanvas({
+447 web/components/GridEditorApp.tsx
+    35:export function GridEditorApp() {
+2345 web/components/ImportMarkdownModal.tsx
+    1512:export const PYTHON_MARKDOWN_VERIFIER_SCRIPT = String.raw`#!/usr/bin/env python3
+    2100:export const FULL_AI_PROMPT = `${AI_PROMPT}
+
+${AI_PROMPT_ADDON}
+
+${PRE_GENERATION_CHECKLIST}`;
+    2110:export function ImportMarkdownModal({ doc, isOpen, onClose, onDidReplace }: Props) {
+1846 web/components/LogicPanel.tsx
+    76:export function LogicPanel({
+383 web/components/MainNodeMultiSelectPanel.tsx
+    18:export function MainNodeMultiSelectPanel({ doc, selectedNodeIds, nodeMap, onClose }: Props) {
+89 web/components/ManageDataObjectsModal.tsx
+    17:export function ManageDataObjectsModal({
+5759 web/components/NexusCanvas.tsx
+    213:export function NexusCanvas({ 
+59 web/components/NexusEditor.tsx
+    9:export function NexusEditor({ doc }: Props) {
+172 web/components/NodeInlineControls.tsx
+    28:export function NodeInlineControls({
+380 web/components/NoteEditorApp.tsx
+    30:export function NoteEditorApp() {
+619 web/components/ProcessFlowSwimlaneEditor.tsx
+    8:export type LaneDef = { id: string; label: string };
+    45:export function ProcessFlowSwimlaneEditor({
+45 web/components/RequireAuth.tsx
+    18:export function RequireAuth({ children }: Props) {
+1817 web/components/SystemFlowEditor.tsx
+    34:export function SystemFlowEditor({
+377 web/components/SystemFlowsCanvas.tsx
+    18:export function SystemFlowsCanvas({
+783 web/components/TemplateEditorApp.tsx
+    460:export function TemplateEditorApp() {
+404 web/components/TestEditorApp.tsx
+    47:export function TestEditorApp() {
+331 web/components/Toolbar.tsx
+    11:export type ToolType = 'select' | 'node' | 'line' | 'comment' | 'annotation';
+    50:export function Toolbar({
+420 web/components/VisionEditorApp.tsx
+    34:export function VisionEditorApp() {
+832 web/components/WorkspaceBrowser.tsx
+    63:export function WorkspaceBrowser() {
+1466 web/components/WorkspaceBrowserSupabase.tsx
+    124:export function WorkspaceBrowserSupabase() {
+118 web/components/data-objects/StatusValuesEditor.tsx
+    10:export function StatusValuesEditor({
+154 web/components/diagram/hooks/useDiagramClipboard.ts
+    10:export function useDiagramClipboard(opts: {
+240 web/components/docling/DoclingImportPanel.tsx
+    25:export function DoclingImportPanel({
+46 web/components/expanded-grid-node-panel/main-attrs-editor.tsx
+    6:export function ExpandedGridNodePanelMainAttrsEditor({
+196 web/components/expanded-grid-node-panel/ui-config-editor.tsx
+    7:export function ExpandedGridNodePanelUiConfigEditor({
+754 web/components/expanded-grid-node-panel/ui-modal.tsx
+    14:export type UiTabsType = 'tabs' | 'wizard' | 'sideNav' | 'dropdown';
+    16:export type UiItemDraft = {
+    25:export type UiModal =
+    37:export function ExpandedGridNodePanelUiModal({
+12 web/components/expanded-grid-node-panel/ui-utils.ts
+    3:export function makeId(prefix: string): string {
+    7:export function sanitizeItems<T extends { id: string }>(items: unknown): T[] {
+27 web/components/global-templates/GlobalTemplateAdminPanel.tsx
+    5:export function GlobalTemplateAdminPanel(props: { onDelete: () => void }) {
+74 web/components/global-templates/GlobalTemplateCard.tsx
+    8:export function GlobalTemplateCard(props: {
+42 web/components/global-templates/GlobalTemplatesAdminPanel.tsx
+    5:export function GlobalTemplatesAdminPanel(props: {
+61 web/components/global-templates/GlobalTemplatesToolbar.tsx
+    5:export function GlobalTemplatesToolbar(props: {
+37 web/components/global-templates/GlobalTemplatesTopNav.tsx
+    7:export function GlobalTemplatesTopNav(props: { titleSuffix: string; backToGlobalList?: boolean }) {
+22 web/components/global-templates/LazyTemplateThumbnail.tsx
+    7:export function LazyTemplateThumbnail(props: { header: NexusTemplateHeader | null; rendered: string; heightPx: number; label: string }) {
+37 web/components/global-templates/PaginationBar.tsx
+    5:export function PaginationBar(props: {
+12 web/components/global-templates/ToastBanner.tsx
+    3:export function ToastBanner(props: { toast: string | null }) {
+22 web/components/global-templates/index.ts
+38 web/components/global-templates/templateCardModel.ts
+    5:export type GlobalTemplateCardModel = {
+    16:export function computeTypeKey(header: NexusTemplateHeader | null): string {
+    22:export function computeTypeLabel(header: NexusTemplateHeader | null): string {
+    29:export function computeRendered(markdown: string): { header: NexusTemplateHeader | null; rendered: string } {
+13 web/components/global-templates/useDebouncedValue.ts
+    5:export function useDebouncedValue<T>(value: T, delayMs: number): T {
+33 web/components/global-templates/useGlobalTemplatesAdmin.ts
+    8:export function useGlobalTemplatesAdmin(opts: { enabled: boolean; supabase: SupabaseClient | null; userId: string | null | undefined }) {
+36 web/components/global-templates/useInViewOnce.ts
+    5:export function useInViewOnce<T extends HTMLElement>(opts?: { rootMargin?: string }) {
+41 web/components/global-templates/useOwnerEmails.ts
+    7:export function useOwnerEmails(opts: { enabled: boolean; supabase: SupabaseClient | null; ownerIds: string[] }) {
+17 web/components/global-templates/useToast.ts
+    5:export function useToast(opts?: { durationMs?: number }) {
+282 web/components/grid/CardLayer.tsx
+    38:export function CardLayer({
+179 web/components/grid/DatabaseView.tsx
+    8:export function DatabaseView({ sheet, onChange }: { sheet: GridSheetV1; onChange: (next: GridSheetV1) => void }) {
+461 web/components/grid/GridEditor.tsx
+    22:export function GridEditor({
+99 web/components/grid/MarkdownDocModal.tsx
+    3:export type MarkdownDocView = { id: string; label: string; text: string };
+    5:export function MarkdownDocModal({
+183 web/components/grid/SheetListPanel.tsx
+    17:export function SheetListPanel({ doc, onChange }: { doc: GridDoc; onChange: (next: GridDoc) => void }) {
+3396 web/components/grid/SpreadsheetView.tsx
+    117:export function SpreadsheetView({
+50 web/components/grid/cell/CellMarkdown.tsx
+    13:export const CellMarkdown = memo(function CellMarkdown({
+253 web/components/grid/cell/MacroPopovers.tsx
+    25:export const PillsPopover = memo(function PillsPopover({
+    112:export const PeoplePopover = memo(function PeoplePopover({
+    210:export const DatePopover = memo(function DatePopover({
+46 web/components/grid/cell/markdown/MarkdownHelpModal.tsx
+    3:export function MarkdownHelpModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
+75 web/components/grid/cell/markdown/markdownSyntax.ts
+    1:export type MarkdownSyntaxEntry = {
+    9:export const GRID_MARKDOWN_SYNTAX: MarkdownSyntaxEntry[] = [
+    73:export const GRID_MARKDOWN_LOOKS_RICH_RE =
+390 web/components/grid/cell/markdown/nxMarkdownComponents.tsx
+    56:export type MacroPopoverKind = 'pills' | 'people' | 'date';
+    58:export function createNxMarkdownComponents(opts: {
+34 web/components/grid/cell/markdown/nxMarkdownSchema.ts
+    3:export const NX_SANITIZE_SCHEMA = (() => {
+26 web/components/grid/comments/CommentEar.tsx
+    3:export function CommentEar({
+35 web/components/grid/markdown/markdownDocViews.ts
+    6:export function buildMarkdownDocViews(opts: {
+70 web/components/grid/spreadsheet/autoColumnWidth.ts
+    58:export function maybeAutoExpandColumnWidth(sheet: GridSheetV1, colIdx: number, value: string): GridSheetV1 {
+66 web/components/grid/spreadsheet/autoRowHeight.ts
+    35:export function estimateDesiredRowHeight(value: string, opts?: { colWidthPx?: number }): number | null {
+    49:export function maybeAutoExpandRowHeight(
+173 web/components/grid/spreadsheet/components/StickyBars.tsx
+    3:export function StickyBars({
+134 web/components/grid/spreadsheet/components/TableFilterPopover.tsx
+    3:export function TableFilterPopover({
+272 web/components/grid/spreadsheet/components/TableVisibilityPopover.tsx
+    1:export function TableVisibilityPopover({
+5 web/components/grid/spreadsheet/editShortcuts.ts
+    1:export function isEnterEditShortcut(e: KeyboardEvent): boolean {
+51 web/components/grid/spreadsheet/gridClipboard.ts
+    4:export function isCopyShortcut(e: KeyboardEvent): boolean {
+    9:export function isPasteShortcut(e: KeyboardEvent): boolean {
+    14:export function buildCopyTsv(opts: {
+    28:export function applyPasteTsvToCells(opts: {
+36 web/components/grid/spreadsheet/hooks/useAnchoredPopover.ts
+    3:export type AnchorRect = { left: number; top: number; width: number; height: number };
+    5:export function useAnchoredPopover<T extends { anchor: AnchorRect }>(opts?: { popoverSelector?: string }) {
+50 web/components/grid/spreadsheet/hooks/useAutoFitRowHeights.ts
+    5:export function useAutoFitRowHeights(opts: {
+83 web/components/grid/spreadsheet/hooks/useDragRectSelection.ts
+    5:export type CellPos = { r: number; c: number };
+    7:export function useDragRectSelection(opts: {
+195 web/components/grid/spreadsheet/hooks/useGridClipboard.ts
+    17:export function useGridClipboard(opts: {
+38 web/components/grid/spreadsheet/hooks/useTableDragDeleteKeys.ts
+    3:export type TableDragState = {
+    12:export function useTableDragDeleteKeys(opts: {
+85 web/components/grid/spreadsheet/hooks/useTableFilterPopover.ts
+    8:export type TableFilterPopoverState = {
+    14:export function useTableFilterPopover(opts: {
+36 web/components/grid/spreadsheet/selectionStyles.ts
+    3:export function selectedMonochromeBoxShadow(): string {
+    8:export function activeCellOutlineStyle(isActive: boolean): React.CSSProperties {
+    12:export function selectedCellStyle(opts: { isSelected: boolean; isActive: boolean }): React.CSSProperties {
+    20:export function stickyInnerCellStyle(opts: {
+15 web/components/grid/spreadsheet/semanticCellBackground.ts
+    4:export function getCellSemanticBackground(value: string): { bg: string; fg: string } | null {
+43 web/components/import/CollapsibleCopyPanel.tsx
+    5:export function CollapsibleCopyPanel(props: {
+816 web/components/kg/SemanticKgViewerModal.tsx
+    88:export function SemanticKgViewerModal({
+54 web/components/landing/DotGridOverlay.tsx
+    5:export function DotGridOverlay({ className = '' }: { className?: string }) {
+160 web/components/landing/ShaderFlowBackground.tsx
+    77:export function ShaderFlowBackground() {
+121 web/components/mermaid/ImportMermaidModal.tsx
+    13:export function ImportMermaidModal({ open, onClose, onCreate }: Props) {
+1082 web/components/note/NoteEditor.tsx
+    53:export function NoteEditor({
+174 web/components/note/NoteMarkdownRenderer.tsx
+    29:export function NoteMarkdownRenderer({
+34 web/components/note/comments/noteCommentEvents.ts
+    3:export const NOTE_OPEN_COMMENT_TARGET_EVENT = 'note:openCommentTarget' as const;
+    5:export type NoteOpenCommentTargetDetail = {
+    10:export function dispatchNoteOpenCommentTarget(detail: NoteOpenCommentTargetDetail) {
+    24:export function listenNoteOpenCommentTarget(cb: (detail: NoteOpenCommentTargetDetail) => void): () => void {
+22 web/components/note/comments/useHasCommentThread.ts
+    7:export function useHasCommentThread(doc: Y.Doc | null, targetKey: string): boolean {
+19 web/components/note/comments/useYDocThreads.ts
+    7:export function useYDocThreads(doc: Y.Doc): Record<string, CommentThread> {
+236 web/components/note/drag/useNoteDragHandle.ts
+    8:export type DragHandleState = {
+    16:export function useNoteDragHandle(opts: {
+271 web/components/note/embed-config/EmbedLinkModal.tsx
+    9:export type EmbedLinkKind = 'canvas' | 'flowTab' | 'processFlow' | 'systemflow' | 'dataObjects';
+    11:export type EmbedLinkResult =
+    18:export function EmbedLinkModal({
+120 web/components/note/embed-config/NoteLinkModal.tsx
+    7:export function NoteLinkModal({
+74 web/components/note/embed-config/TestFileLinkModal.tsx
+    7:export function TestFileLinkModal({
+169 web/components/note/embed-config/VisionCardLinkModal.tsx
+    11:export function VisionCardLinkModal({
+75 web/components/note/embed-config/WorkspaceFilePicker.tsx
+    6:export function WorkspaceFilePicker({
+110 web/components/note/embed-config/diagramIndex.ts
+    6:export type DiagramIndex = {
+    15:export function buildDiagramIndexFromMarkdown(markdown: string): DiagramIndex {
+52 web/components/note/embed-config/useFileMarkdown.ts
+    7:export function useFileMarkdown(fileId: string | null) {
+67 web/components/note/embed-config/useWorkspaceFiles.ts
+    8:export type WorkspaceFile = { id: string; name: string; kind: DocKind };
+    10:export function useWorkspaceFiles(opts?: { kinds?: DocKind[] }) {
+293 web/components/note/embeds/NexusEmbedBlock.tsx
+    17:export type NexusEmbedSpec =
+    70:export function NexusEmbedBlock({
+213 web/components/note/embeds/NexusTableBlock.tsx
+    19:export function NexusTableBlock({
+163 web/components/note/embeds/NexusTestBlock.tsx
+    14:export type NexusTestSpec = {
+    31:export function NexusTestBlock({
+73 web/components/note/embeds/ProcessFlowEmbedPreview.tsx
+    8:export function ProcessFlowEmbedPreview({
+116 web/components/note/embeds/SwimlaneFlowEmbedPreview.tsx
+    9:export function SwimlaneFlowEmbedPreview({
+81 web/components/note/embeds/useParsedNexusDoc.ts
+    8:export function useParsedNexusDoc(doc: Y.Doc | null): {
+97 web/components/note/hooks/useNoteInternalClipboardGuard.ts
+    10:export function useNoteInternalClipboardGuard(opts: {
+15 web/components/note/slash/README.md
+155 web/components/note/slash/SlashMenu.tsx
+    6:export type SlashItem = { id: string; label: string };
+    8:export function SlashMenu({
+6 web/components/note/slash/constants.ts
+    1:export const NOTE_SLASH_EVENT = 'note:slash' as const;
+    4:export const SLASH_MENU_ROOT_ATTR = 'data-note-slash-menu' as const;
+    5:export const SLASH_MENU_ROOT_SELECTOR = `[${SLASH_MENU_ROOT_ATTR}="1"]` as const;
+12 web/components/note/slash/filterSlashItems.ts
+    3:export function filterSlashItems(items: SlashItem[], query: string): SlashItem[] {
+199 web/components/note/slash/runNoteSlashCommand.ts
+    7:export function runNoteSlashCommand(opts: {
+6 web/components/note/slash/types.ts
+    1:export type SlashMenuOpenDetail = {
+21 web/components/note/slash/useNoteSlashMenu.ts
+    7:export type { SlashMenuState };
+    9:export function useNoteSlashMenu(opts: {
+218 web/components/note/slash/useSlashMenuController.ts
+    10:export type SlashMenuState = { open: boolean; x: number; y: number; pos: number };
+    12:export function useSlashMenuController(opts: {
+32 web/components/note/tiptap/clipboard.ts
+    4:export function serializeProseMirrorSelection(view: EditorView): { html: string; text: string } | null {
+    20:export function replaceSelectionWithHtml(view: EditorView, htmlRaw: string): boolean {
+149 web/components/note/tiptap/commentIndicatorExtension.ts
+    9:export const NOTE_COMMENT_INDICATOR_META = 'noteCommentIndicators:tick';
+    63:export const NoteCommentIndicatorExtension = Extension.create({
+66 web/components/note/tiptap/dragHandlePlugin.ts
+    6:export function selectNearestBlockAtCoords(editor: Editor, coords: { left: number; top: number }): number | null {
+    25:export function moveSelectedBlock(editor: Editor, dir: 'up' | 'down'): void {
+163 web/components/note/tiptap/editor.ts
+    27:export function useNoteEditor(opts: {
+564 web/components/note/tiptap/markdownCodec.ts
+    203:export function parseMarkdownToTiptap(markdown: string): JSONContent {
+    373:export function serializeTiptapToMarkdown(doc: JSONContent): string {
+31 web/components/note/tiptap/marks/commentMark.ts
+    5:export const CommentMark = Mark.create({
+45 web/components/note/tiptap/nodes/NexusBoxNode.tsx
+    6:export const NexusBoxNode = Node.create({
+83 web/components/note/tiptap/nodes/NexusColumnsNode.tsx
+    34:export const NexusColumnsNode = Node.create({
+    54:export const NexusColumnNode = Node.create({
+330 web/components/note/tiptap/nodes/NexusEmbedNode.tsx
+    34:export const NexusEmbedNode = Node.create({
+226 web/components/note/tiptap/nodes/NexusNoteLinkNode.tsx
+    27:export const NexusNoteLinkNode = Node.create({
+408 web/components/note/tiptap/nodes/NexusTableNode.tsx
+    29:export const NexusTableNode = Node.create({
+266 web/components/note/tiptap/nodes/NexusTabsNode.tsx
+    214:export const NexusTabsNode = Node.create({
+    240:export const NexusTabNode = Node.create({
+197 web/components/note/tiptap/nodes/NexusTestNode.tsx
+    31:export const NexusTestNode = Node.create({
+136 web/components/note/tiptap/nodes/NexusToggleNode.tsx
+    104:export const NexusToggleNode = Node.create({
+38 web/components/note/tiptap/slashMenuExtension.ts
+    7:export const SlashMenuExtension = Extension.create({
+41 web/components/systemflow/systemflow-geometry.ts
+    3:export const CELL_PX = 32;
+    4:export const GAP_PX = 2;
+    6:export function clamp(n: number, min: number, max: number) {
+    10:export function snapPx(v: number): number {
+173 web/components/table-editor/TableDataCell.tsx
+    34:export function TableDataCell({
+264 web/components/table-editor/TableHeaderCell.tsx
+    33:export function TableHeaderCell({
+64 web/components/table-editor/TableRowLabelCell.tsx
+    15:export function TableRowLabelCell({ row, rowIndex, totalRows, onLabelChange, onRemoveRow, onMoveRow }: Props) {
+30 web/components/table-editor/cellStyles.ts
+    4:export const getCellBackgroundColor = (
+    14:export const getCellOutlineClasses = (isSelected: boolean): string => {
+    20:export const getRowLabelCellBackground = (rowType: RowType): string => {
+    24:export const isEditing = (
+133 web/components/table-editor/mergeUtils.ts
+    3:export const mergeCells = (
+    116:export const unmergeCell = (
+244 web/components/table-editor/moveUtils.ts
+    4:export const hasMergedCellsInRow = (
+    16:export const hasMergedCellsInColumn = (
+    49:export const moveRow = (
+    114:export const moveColumn = (
+87 web/components/table-editor/selectionUtils.ts
+    3:export interface CellSelection {
+    8:export const isCellInSelection = (
+102 web/components/table-editor/tableOperations.ts
+    3:export const addRow = (
+    12:export const removeRow = (
+    38:export const addColumn = (
+    46:export const removeColumn = (
+78 web/components/table-editor/tableUtils.ts
+    3:export const getAllColumnIds = (
+    13:export const getMergedCell = (
+    26:export const isMergedCell = (
+    34:export const isMergedCellSpan = (
+166 web/components/table-editor/useTableEditing.ts
+    12:export function useTableEditing({
+77 web/components/table-editor/useTableMove.ts
+    15:export function useTableMove({
+110 web/components/table-editor/useTableSelection.ts
+    13:export function useTableSelection({
+220 web/components/tagging/NodeTagsEditor.tsx
+    16:export function NodeTagsEditor({ doc, node, compact = true }: Props) {
+166 web/components/tagging/PinnedTagsPopover.tsx
+    14:export function PinnedTagsPopover({ doc, pinnedTagIds, onPinnedTagIdsChange }: Props) {
+277 web/components/tagging/TagManagerModal.tsx
+    25:export function TagManagerModal({ doc, isOpen, onClose }: Props) {
+140 web/components/tagging/TagViewPopover.tsx
+    15:export function TagViewPopover({ doc, tagView, onTagViewChange, onOpenManager }: Props) {
+279 web/components/templates/CreateTemplateModal.tsx
+    31:export function CreateTemplateModal({ open, onClose, onCreateTemplateFile }: Props) {
+398 web/components/templates/InsertFromTemplateModal.tsx
+    15:export type WorkspaceFileLite = { id: string; name: string; kind: DocKind };
+    44:export function InsertFromTemplateModal({ open, title = 'Insert from template', files, loadMarkdown, accept, scope, onClose, onInsert }: Props) {
+65 web/components/templates/InstallDestinationControls.tsx
+    3:export function InstallDestinationControls({
+290 web/components/templates/NewFromTemplateModal.tsx
+    14:export type WorkspaceFileLite = { id: string; name: string; kind: DocKind };
+    26:export function NewFromTemplateModal({ open, title = 'New from template', files, loadMarkdown, scope, onClose, onCreate }: Props) {
+105 web/components/templates/SaveTemplateModal.tsx
+    5:export type TemplateSaveScope = 'project' | 'account';
+    7:export function SaveTemplateModal({
+64 web/components/templates/TemplateGlobalPublishControls.tsx
+    6:export function TemplateGlobalPublishControls(props: {
+34 web/components/templates/TemplateGlobalPublishPanel.tsx
+    5:export function TemplateGlobalPublishPanel(props: { lastPublish: LastGlobalPublishRecord | null }) {
+40 web/components/templates/TemplateMoveControls.tsx
+    5:export function TemplateMoveControls({
+556 web/components/templates/TemplateRenderedPreview.tsx
+    509:export function TemplateRenderedPreview({
+101 web/components/templates/useGlobalTemplatePublisher.ts
+    9:export type GlobalTemplatePublisher = {
+    21:export function useGlobalTemplatePublisher(opts: {
+123 web/components/testing/CreateTestFileModal.tsx
+    8:export function CreateTestFileModal({
+193 web/components/testing/ExpandedGridLayout.tsx
+    19:export function ExpandedGridLayout({
+58 web/components/testing/TreeTestPopupModal.tsx
+    8:export function TreeTestPopupModal({
+365 web/components/testing/TreeTestRunner.tsx
+    16:export function TreeTestRunner({
+29 web/components/testing/expanded-grid/preview-types.ts
+    4:export type ExpandedGridPreviewCommonProps = {
+    10:export type ExpandedGridTabsState = {
+    15:export type ExpandedGridCollapsedState = {
+    20:export type ExpandedGridDropdownState = {
+29 web/components/testing/expanded-grid/previews/ButtonPreview.tsx
+    5:export function ButtonPreview({
+70 web/components/testing/expanded-grid/previews/CollapsiblePreview.tsx
+    7:export function CollapsiblePreview({
+83 web/components/testing/expanded-grid/previews/DropdownPreview.tsx
+    6:export function DropdownPreview({
+56 web/components/testing/expanded-grid/previews/FilterPreview.tsx
+    6:export function FilterPreview({
+94 web/components/testing/expanded-grid/previews/TabsLikePreview.tsx
+    7:export function TabsLikePreview({
+32 web/components/testing/expanded-grid/previews/TextPreview.tsx
+    5:export function TextPreview({ node }: { node: ExpandedGridNodeRuntime }) {
+41 web/components/testing/hooks/useDataObjectAttributeLabels.ts
+    9:export type GetDataObjectAttributeLabel = (dataObjectId: string, attributeId: string) => string;
+    11:export function useDataObjectAttributeLabels(doc: Y.Doc): {
+39 web/components/testing/navigation/NavigationCardGrid.tsx
+    6:export function NavigationCardGrid({
+40 web/components/vision/PERFORMANCE.md
+5 web/components/vision/VisionCanvas.tsx
+5 web/components/vision/VisionCardEditorModal.tsx
+54 web/components/vision/VisionCellModal.tsx
+    5:export function VisionCellModal({
+5 web/components/vision/VisionEditor.tsx
+60 web/components/vision/VisionGrid.tsx
+    5:export function visionCellKey(row: number, col: number) {
+    9:export function VisionGrid({
+92 web/components/vision/VisionMonitoringPanel.tsx
+    7:export function VisionMonitoringPanel({
+1312 web/components/vision/VisionTileEditor.tsx
+    60:export function VisionTileEditor({
+358 web/components/vision/fabric/FabricCanvas.tsx
+    7:export type FabricCanvasApi = {
+    43:export function FabricCanvas({
+339 web/components/vision/fabric/tools/actions.ts
+    4:export type FabricCanvasLike = any;
+    5:export type FabricLike = any;
+    11:export function setSelectMode(canvas: FabricCanvasLike) {
+    17:export function setPenMode(canvas: FabricCanvasLike, fabric: FabricLike, opts: { color: string; width: number }) {
+993 web/components/vision/fabric/tools/booleanOps.ts
+    21:export type BooleanOp = 'union' | 'subtract' | 'intersect';
+    23:export type BooleanBundle = {
+    654:export function enterBooleanEdit(canvas: unknown, bundleId: string): void {
+    923:export function finishBooleanEdit(canvas: unknown, fabric: unknown, bundleId: string): void {
+4 web/components/vision/fabric/tools/index.ts
+224 web/components/vision/fabric/tools/layers.ts
+    16:export function toggleVisible(canvas: FabricCanvasLike, obj: FabricObjectLike, next?: boolean) {
+    27:export function setLocked(canvas: FabricCanvasLike, obj: FabricObjectLike, locked: boolean) {
+    50:export function renameLayer(canvas: FabricCanvasLike, obj: FabricObjectLike, name: string) {
+    60:export function moveLayer(canvas: FabricCanvasLike, obj: FabricObjectLike, direction: 'up' | 'down') {
+190 web/components/vision/layers/layerTree.ts
+    1:export type BooleanMeta = { id: string; op: 'union' | 'subtract' | 'intersect' };
+    3:export type LayerTreeNode = {
+    101:export function buildLayerTree(canvas: any): LayerTreeNode[] {
+    179:export function flattenLayerTree(nodes: LayerTreeNode[]): LayerTreeNode[] {
+82 web/components/vision/monitoring/color.ts
+    1:export type Rgb = { r: number; g: number; b: number; a: number };
+    3:export function parseColor(input: unknown): Rgb | null {
+    42:export function quantizeColor(c: Rgb, step = 16): string {
+    50:export function rgbToHue(c: Rgb): number {
+124 web/components/vision/monitoring/uiMetrics.ts
+    17:export type UiMetrics = {
+    35:export function computeUiMetrics(json: FabricJson): UiMetrics {
+108 web/components/vision/monitoring/vectorMetrics.ts
+    26:export type VectorMetrics = {
+    33:export function computeVectorMetrics(json: FabricJson, canvasArea: number): VectorMetrics {
+94 web/components/vision/tldraw/TldrawBooleanPanel.tsx
+    8:export function TldrawBooleanPanel({ editor }: { editor: Editor | null }) {
+484 web/components/vision/tldraw/TldrawLayersPanel.tsx
+    104:export function TldrawLayersPanel({ editor, embedded }: { editor: Editor | null; embedded?: boolean }) {
+148 web/components/vision/tldraw/TldrawTileEditor.tsx
+    16:export type TldrawTileEditorValue = {
+    21:export function TldrawTileEditor({
+263 web/components/vision/tldraw/VisionColorCompositionPanel.tsx
+    170:export function VisionColorCompositionPanel({ editor }: { editor: Editor | null }) {
+257 web/components/vision/tldraw/annotations/installVisionAnnotationSemanticSync.ts
+    164:export function installVisionAnnotationSemanticSync(editor: Editor): () => void {
+188 web/components/vision/tldraw/annotations/installVisionAnnotationToolInteractions.ts
+    29:export function installVisionAnnotationToolInteractions(editor: Editor): () => void {
+87 web/components/vision/tldraw/annotations/visionAnnotationTools.ts
+    5:export const VISION_ANNOT_LINE_TOOL_ID = 'visionAnnotLine';
+    6:export const VISION_ANNOT_RECT_TOOL_ID = 'visionAnnotRect';
+    8:export const NX_VISION_ANNOT_MODE_META_KEY = 'nxVisionAnnotMode' as const;
+    9:export type VisionAnnotMode = 'line' | 'rect' | null;
+17 web/components/vision/tldraw/autoconvert/colors.ts
+    5:export function getTheme(editor: any) {
+    9:export function tokenToSolidHex(theme: any, token: string, fallback: string) {
+    13:export function tokenToFillHex(theme: any, token: string, fillStyle: string, fallback: string) {
+198 web/components/vision/tldraw/autoconvert/convertAnyToPath.ts
+159 web/components/vision/tldraw/autoconvert/convertArrow.ts
+    8:export type ArrowConversion = {
+49 web/components/vision/tldraw/autoconvert/convertEllipse.ts
+    7:export type EllipseConversion = {
+    19:export function isEllipseGeo(rec: any) {
+    23:export function makeVisionEllipseFromGeo(editor: Editor, rec: any): EllipseConversion | null {
+57 web/components/vision/tldraw/autoconvert/convertRect.ts
+    6:export type RectConversion = {
+    18:export function isRectGeo(rec: any) {
+    22:export function makeVisionRectFromGeo(editor: Editor, rec: any): RectConversion | null {
+114 web/components/vision/tldraw/autoconvert/convertText.ts
+    6:export type TextConversion = {
+    18:export function makeVisionTextFromTldrawText(editor: Editor, rec: any): TextConversion | null {
+59 web/components/vision/tldraw/autoconvert/geom.ts
+    3:export type Pt = { x: number; y: number };
+    5:export function pt(x: unknown, y: unknown): Pt {
+    9:export function add(a: Pt, b: Pt): Pt {
+    13:export function sub(a: Pt, b: Pt): Pt {
+10 web/components/vision/tldraw/autoconvert/index.ts
+18 web/components/vision/tldraw/autoconvert/shapePredicates.ts
+    3:export function isShapeRecordId(rid: string) {
+    7:export function isDragging(editor: any) {
+    15:export function getId(rec: any) {
+120 web/components/vision/tldraw/autoconvert/svgExtract.ts
+    3:export type SvgViewBox = { x: number; y: number; w: number; h: number };
+    4:export type SvgBBox = { x: number; y: number; w: number; h: number };
+    6:export function extractPathDFromSvg(svgFragment: string): string {
+    20:export function readSvgViewBox(svg: string): SvgViewBox | null {
+66 web/components/vision/tldraw/boolean/booleanSourceState.ts
+    14:export const NX_BOOLEAN_SOURCE_META_KEY = 'nxBooleanSource';
+    16:export function isBooleanSourceMeta(meta: any): boolean {
+    20:export function setBooleanSourceFlagForSubtree(editor: Editor, rootId: TLShapeId, enabled: boolean): void {
+    51:export function setBooleanSourcesHidden(editor: Editor, rootIds: TLShapeId[], hidden: boolean): void {
+344 web/components/vision/tldraw/boolean/bundles.ts
+    8:export type BooleanOp = 'union' | 'subtract' | 'intersect';
+    14:export type FlattenInfo = {
+    160:export function getFlattenInfoFromSelection(editor: Editor, selectedIds: string[]): FlattenInfo | null {
+273 web/components/vision/tldraw/boolean/computeBoolean.ts
+116 web/components/vision/tldraw/boolean/installBooleanEditOnSelect.ts
+    13:export function installBooleanEditOnSelect(editor: Editor): () => void {
+149 web/components/vision/tldraw/boolean/useAutoRecomputeBooleans.ts
+    7:export function installAutoRecomputeBooleans(editor: Editor): () => void {
+    143:export function useAutoRecomputeBooleans(editor: Editor | null) {
+263 web/components/vision/tldraw/core/visionAnnotatorMirror.ts
+    16:export const NX_MIRROR_SOURCE_META_KEY = 'nxMirrorSourceId' as const;
+    17:export const NX_MIRROR_ROOT_META_KEY = 'nxMirrorRoot' as const;
+    63:export function syncAnnotatorMirror(editor: Editor, ids: { assetId: string; annotatorId: string }): void {
+203 web/components/vision/tldraw/core/visionCoreContainers.ts
+    8:export type VisionCoreSection = 'asset' | 'thumb' | 'annotator';
+    10:export const NX_CORE_SECTION_META_KEY = 'nxCoreSection' as const;
+    113:export function findCoreFrameId(editor: Editor, section: VisionCoreSection): string | null {
+    124:export function ensureCoreFrames(editor: Editor): { assetId: string; thumbId: string; annotatorId: string } {
+4 web/components/vision/tldraw/core/visionCoreFrames.ts
+15 web/components/vision/tldraw/core/visionCoreSections.ts
+115 web/components/vision/tldraw/core/visionTldrawTraversal.ts
+    5:export function coerceId(x: any): string {
+    9:export function getCurrentPageId(editor: Editor): any {
+    17:export function getShape(editor: Editor, id: string): any | null {
+    25:export function getAllPageShapeIds(editor: Editor): string[] {
+31 web/components/vision/tldraw/frame/visionFrameShapeUtil.ts
+    11:export function createVisionFrameShapeUtil() {
+    24:export function withVisionFrameShapeUtil(shapeUtils: any[]): any[] {
+93 web/components/vision/tldraw/fx/NxFxShapeUtil.tsx
+    7:export type NxFxShape = TLBaseShape<
+    23:export class NxFxShapeUtil extends BaseBoxShapeUtil<any> {
+41 web/components/vision/tldraw/fx/fxInteractionStore.ts
+    20:export function setFxInteractionActive(active: boolean) {
+    27:export function getFxInteractionState(): FxInteractionState {
+    31:export function useFxInteractionState(): FxInteractionState {
+15 web/components/vision/tldraw/fx/fxVisibilityOverride.ts
+    3:export function isFxVisibilityOverrideActive(): boolean {
+517 web/components/vision/tldraw/fx/installVisionFxProxy.ts
+    29:export function installVisionFxProxy(editor: Editor): () => void {
+    512:export function toggleNxFxEditMode(editor: Editor, sourceId: TLShapeId): void {
+53 web/components/vision/tldraw/fx/nxFxRasterCache.ts
+    1:export type NxFxRaster = {
+    18:export function getNxFxRaster(shapeId: string): NxFxRaster | null {
+    22:export function setNxFxRaster(shapeId: string, raster: NxFxRaster | null): void {
+    40:export function clearAllNxFxRasters(): void {
+364 web/components/vision/tldraw/fx/nxfxTypes.ts
+    6:export const NX_FX_META_KEY = 'nxFx' as const;
+    8:export type NxFxRampStop = { t: number; v: number }; // t: 0..1 position, v: 0..1 strength
+    9:export type NxFxRamp = {
+    14:export type NxFxDropShadow = {
+42 web/components/vision/tldraw/fx/proxy/fxProxyEligibility.ts
+    23:export function requiresFxProxy(editor: Editor, shape: any): boolean {
+65 web/components/vision/tldraw/fx/proxy/fxProxyInteractionMonitor.ts
+    30:export function startFxInteractionMonitor(
+39 web/components/vision/tldraw/fx/proxy/fxProxyRasterParams.ts
+    7:export function computeFxRasterParams(editor: Editor, sourceId: string): { maxDim: number; pixelRatio: number } {
+25 web/components/vision/tldraw/fx/proxy/fxProxyTimeout.ts
+    3:export function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
+50 web/components/vision/tldraw/fx/proxy/proxyBounds.ts
+    6:export type PageBounds = { x: number; y: number; w: number; h: number };
+    8:export function getParentSpacePoint(
+    22:export function getShapePageBounds(editor: Editor, id: TLShapeId): PageBounds | null {
+    38:export function computeExpandedBoundsForFx(editor: Editor, sourceShape: any, b: PageBounds, pixelRatio: number): PageBounds {
+80 web/components/vision/tldraw/fx/proxy/proxySignature.ts
+    5:export function computeRenderSignature(editor: Editor, source: any): string {
+71 web/components/vision/tldraw/fx/proxy/proxyUtil.ts
+    3:export type ProxyMeta = { nxFxProxy?: { sourceId?: string } };
+    5:export function debounce(fn: () => void, ms: number) {
+    21:export function isProxy(shape: any): boolean {
+    25:export function isGroupLike(shape: any): boolean {
+47 web/components/vision/tldraw/fx/proxy/proxyVisibility.ts
+    3:export function setHiddenForSubtree(editor: Editor, rootId: TLShapeId, hidden: boolean, opts?: { includeRoot?: boolean }): void {
+    33:export function setProxyReadyFlag(editor: Editor, source: any, ready: boolean): void {
+483 web/components/vision/tldraw/fx/raster/applyStack.ts
+    433:export function scaleNxFxForRaster(fx: NxFxStack | null, pixelRatio: number): NxFxStack | null {
+56 web/components/vision/tldraw/fx/raster/canvasUtil.ts
+    1:export type AnyCanvas = HTMLCanvasElement | OffscreenCanvas;
+    3:export function createCanvas(width: number, height: number): AnyCanvas {
+    19:export function get2d(canvas: AnyCanvas): CanvasRenderingContext2D {
+    25:export function clear(canvas: AnyCanvas) {
+46 web/components/vision/tldraw/fx/raster/evalRamp.ts
+    12:export function evalRampAtT(ramp: NxFxRamp, t: number): number {
+    33:export function rampTForPixel(angleDeg: number, x: number, y: number, w: number, h: number): number {
+44 web/components/vision/tldraw/fx/raster/fxMargin.ts
+    3:export type FxMarginPx = { l: number; r: number; t: number; b: number };
+    6:export function computeFxMarginPx(fx: NxFxStack | null): FxMarginPx {
+399 web/components/vision/tldraw/fx/raster/renderNode.ts
+    11:export type PageBounds = { x: number; y: number; w: number; h: number };
+30 web/components/vision/tldraw/fx/sourceSuppression.ts
+    8:export function shouldSuppressVectorSourceRender(meta: any): boolean {
+146 web/components/vision/tldraw/fx/vectorShapeMask.tsx
+    67:export function getVectorShapeMaskDef(opts: {
+149 web/components/vision/tldraw/hooks/useTldrawCoreContainerSelectionGuard.ts
+    11:export function useTldrawCoreContainerSelectionGuard(editor: Editor | null) {
+156 web/components/vision/tldraw/hooks/useTldrawSvgPaste.ts
+    19:export function useTldrawSvgPaste(opts: {
+187 web/components/vision/tldraw/installAutoConvertVisionShapes.ts
+    29:export function installAutoConvertVisionShapes(editor: Editor): () => void {
+786 web/components/vision/tldraw/layout/installNxLayout.ts
+    514:export function installNxLayout(editor: Editor): () => void {
+129 web/components/vision/tldraw/layout/nxLayoutCreateAutoGroup.ts
+    24:export function createAutoLayoutGroupFromSelection(editor: Editor, ids: TLShapeId[]): TLShapeId | null {
+345 web/components/vision/tldraw/layout/nxLayoutEngine.ts
+    9:export type NxLayoutSizeOverride = { w?: number; h?: number; linePoints?: XY[] };
+    11:export function getChildSize(editor: Editor, shape: any, ov?: NxLayoutSizeOverride | null): { w: number; h: number } {
+    63:export function applyAutoLayout(
+    235:export function applyManualConstraints(editor: Editor, from: any, to: any, childFromById?: Map<string, any> | null): any[] {
+30 web/components/vision/tldraw/layout/nxLayoutFillConflict.ts
+    3:export type NxAxis = 'x' | 'y';
+    9:export function ensureParentAxisFixedForFill(editor: Editor, parent: any, axis: NxAxis): void {
+106 web/components/vision/tldraw/layout/nxLayoutLinePoints.ts
+    3:export type XY = { x: number; y: number };
+    9:export function tryReadLinePoints(
+    47:export function boundsOfPoints(points: XY[]): { minX: number; minY: number; w: number; h: number } | null {
+    65:export function scalePointsAroundMin(points: XY[], sx: number, sy: number): XY[] {
+40 web/components/vision/tldraw/layout/nxLayoutMeta.ts
+    1:export const NX_LAYOUT_CHILD_META_KEY = 'nxLayoutChild' as const;
+    2:export const NX_LAYOUT_CONSTRAINTS_META_KEY = 'nxConstraints' as const;
+    4:export type NxLayoutChildSizeMode = 'fixed' | 'hug' | 'fill';
+    6:export type NxLayoutChildMeta = {
+57 web/components/vision/tldraw/layout/nxLayoutRefresh.ts
+    19:export function touchNxLayoutAutoRefresh(editor: Editor, layoutShapeId: any): boolean {
+327 web/components/vision/tldraw/layout/nxLayoutResizeEnforcement.ts
+    27:export function finalizeManualConstraintsAfterResize(opts: { editor: Editor; setMutating: (next: boolean) => void }): boolean {
+    82:export function enforceAutoLayoutDuringResize(opts: {
+    186:export function enforceManualConstraintsDuringResize(opts: {
+    291:export function tickManualConstraintsWhileResizing(opts: { editor: Editor; setMutating: (next: boolean) => void }): void {
+55 web/components/vision/tldraw/layout/nxLayoutUtils.ts
+    6:export function asNum(v: any, fallback: number) {
+    11:export function clamp(v: number, lo: number, hi: number) {
+    16:export function isNxLayout(shape: any): boolean {
+    20:export function getParentShapeId(parentId: any): TLShapeId | null {
+42 web/components/vision/tldraw/lib/gradient-stops.ts
+    5:export type GradientStop = { offset: number; color: string };
+    7:export function clamp01(n: number) {
+    12:export function normalizeStops(stops: GradientStop[]) {
+    21:export function parseStopsJson(json: any, fallbackA: string, fallbackB: string): GradientStop[] {
+219 web/components/vision/tldraw/paint/nxPaintLayers.ts
+    9:export type NxPaintMode = 'solid' | 'linear' | 'radial' | 'pattern';
+    10:export type NxPatternKind = 'stripes' | 'dots' | 'checker';
+    12:export type NxLineCap = 'round' | 'butt' | 'square';
+    13:export type NxLineJoin = 'round' | 'miter' | 'bevel';
+129 web/components/vision/tldraw/paint/paintDefs.tsx
+    6:export type PaintMode = 'solid' | 'linear' | 'radial' | 'pattern';
+    7:export type PatternKind = 'stripes' | 'dots' | 'checker';
+    19:export function safeSvgId(id: string) {
+    23:export function paintUrl(kind: 'fill' | 'stroke', sid: string, layerId?: string) {
+529 web/components/vision/tldraw/shapes/NXPathShapeUtil.tsx
+    22:export type NXPathShape = TLBaseShape<
+    79:export class NXPathShapeUtil extends ShapeUtil<any> {
+6 web/components/vision/tldraw/shapes/NxCardShapeUtil.tsx
+    5:export type { NxCardShape } from '@/components/vision/v2/tldraw/shapes/NxCardShapeUtil';
+533 web/components/vision/tldraw/shapes/NxLayoutShapeUtil.tsx
+    19:export type NxLayoutShape = TLBaseShape<
+    115:export class NxLayoutShapeUtil extends BaseBoxShapeUtil<any> {
+660 web/components/vision/tldraw/shapes/NxRectShapeUtil.tsx
+    23:export type NxRectShape = TLBaseShape<
+    123:export class NxRectShapeUtil extends BaseBoxShapeUtil<any> {
+493 web/components/vision/tldraw/shapes/NxTextShapeUtil.tsx
+    21:export type NxTextShape = TLBaseShape<
+    76:export class NxTextShapeUtil extends BaseBoxShapeUtil<any> {
+202 web/components/vision/tldraw/svg/importSvgAsEditableNxpath.ts
+    27:export function extractBasicPaintFromSvg(svgText: string): { fill: string | null; stroke: string | null; strokeWidth: number | null } {
+    63:export function computeViewportCenteredPastePoint(editor: EditorLike, w: number, h: number): { x: number; y: number } {
+    82:export function importSvgAsEditableNxpath(editor: unknown, svgText: string, opts?: { nxName?: string }): boolean {
+18 web/components/vision/tldraw/ui/TldrawOverlayPanel.tsx
+    5:export function TldrawOverlayPanel({
+5 web/components/vision/tldraw/ui/VisionCanvasToolbar.tsx
+4 web/components/vision/tldraw/ui/VisionGradientHandles.tsx
+43 web/components/vision/tldraw/ui/VisionHandles.tsx
+    10:export function VisionHandles({ children }: TLHandlesProps) {
+5 web/components/vision/tldraw/ui/VisionStylePanel.tsx
+46 web/components/vision/tldraw/ui/VisionToolbar.tsx
+    7:export function VisionToolbar() {
+349 web/components/vision/tldraw/ui/gradient-handles/VisionGradientHandles.tsx
+    18:export function VisionGradientHandles() {
+7 web/components/vision/tldraw/ui/gradient-handles/math.ts
+    3:export function clamp01(n: number) {
+53 web/components/vision/tldraw/ui/gradient-handles/visionGradientUiStore.ts
+    5:export type VisionGradientPaintTarget = 'fill' | 'stroke';
+    7:export type VisionGradientUiState = {
+    29:export function setVisionGradientUiState(next: VisionGradientUiState) {
+    34:export function clearVisionGradientUiState() {
+907 web/components/vision/tldraw/ui/style-panel/VisionStylePanel.tsx
+    53:export const VisionStylePanel = track(function VisionStylePanel(props: TLUiStylePanelProps) {
+125 web/components/vision/tldraw/ui/style-panel/color-utils.ts
+    6:export function clamp01(v: number) {
+    11:export function toHexOrEmpty(v: string) {
+    19:export function toHex8OrEmpty(v: string) {
+    26:export function hex8ToRgbaCss(v: string) {
+20 web/components/vision/tldraw/ui/style-panel/getVisionActionVisibility.ts
+    5:export function getVisionActionVisibility(selectedIds: string[], selectedShapes: any[], flattenInfo: any) {
+73 web/components/vision/tldraw/ui/style-panel/resolvePanelTargets.ts
+    26:export function isNxFxProxy(s: any): boolean {
+    30:export function getProxySourceId(s: any): string | null {
+    42:export function resolveStylePanelTargets(editor: Editor, selectedShapes: any[]): any[] {
+326 web/components/vision/tldraw/ui/style-panel/sections/ActionsSection.tsx
+    24:export function ActionsSection({
+126 web/components/vision/tldraw/ui/style-panel/sections/MaskSection.tsx
+    5:export function MaskSection({
+600 web/components/vision/tldraw/ui/style-panel/sections/NxFxDistortionSection.tsx
+    119:export function NxFxDistortionSection({
+290 web/components/vision/tldraw/ui/style-panel/sections/NxFxEffectsSection.tsx
+    34:export function NxFxEffectsSection({
+    283:export function makeDefaultDropShadow(id: string): NxFxDropShadow {
+    287:export function makeDefaultInnerShadow(id: string): NxFxInnerShadow {
+246 web/components/vision/tldraw/ui/style-panel/sections/NxLayoutChildSection.tsx
+    13:export function NxLayoutChildSection({
+421 web/components/vision/tldraw/ui/style-panel/sections/NxLayoutContainerSection.tsx
+    17:export function NxLayoutContainerSection({
+698 web/components/vision/tldraw/ui/style-panel/sections/NxPaintStacksSection.tsx
+    93:export function NxFillStackSection({
+    341:export function NxStrokeStackSection({
+189 web/components/vision/tldraw/ui/style-panel/sections/NxPathSections.tsx
+    7:export function NxPathFillSection({
+    91:export function NxPathOutlineSection({
+62 web/components/vision/tldraw/ui/style-panel/sections/NxRectLabelSection.tsx
+    6:export function NxRectLabelSection({
+360 web/components/vision/tldraw/ui/style-panel/sections/NxRectSections.tsx
+    42:export function NxRectCornersSection({
+    151:export function NxRectStrokeSidesSection({
+    236:export function NxRectPaintSection({
+70 web/components/vision/tldraw/ui/style-panel/sections/NxTextFillSection.tsx
+    7:export function NxTextFillSection({
+86 web/components/vision/tldraw/ui/style-panel/sections/NxTextOutlineSection.tsx
+    7:export function NxTextOutlineSection({
+64 web/components/vision/tldraw/ui/style-panel/sections/NxTextTypographySection.tsx
+    3:export function NxTextTypographySection({
+43 web/components/vision/tldraw/ui/style-panel/sections/OpacitySection.tsx
+    5:export function OpacitySection({
+189 web/components/vision/tldraw/ui/style-panel/sections/TldrawSections.tsx
+    6:export function TldrawFrameSection({
+    52:export function TldrawFillSection({
+    92:export function TldrawOutlineSection({
+    146:export function TldrawTextSection({
+101 web/components/vision/tldraw/ui/style-panel/sections/TldrawTypeSections.tsx
+    7:export function TldrawTypeSections({
+68 web/components/vision/tldraw/ui/style-panel/sections/VisionFrameTypeSections.tsx
+    14:export function VisionFrameTypeSections({
+30 web/components/vision/tldraw/ui/style-panel/sections/VisionFxSections.tsx
+    7:export function VisionFxSections({
+154 web/components/vision/tldraw/ui/style-panel/sections/VisionLayerSection.tsx
+    10:export function VisionLayerSection({
+77 web/components/vision/tldraw/ui/style-panel/sections/VisionPathTypeSections.tsx
+    5:export function VisionPathTypeSections({
+40 web/components/vision/tldraw/ui/style-panel/sections/VisionRectLabelSection.tsx
+    5:export function VisionRectLabelSection({
+109 web/components/vision/tldraw/ui/style-panel/sections/VisionRectTypeSections.tsx
+    6:export function VisionRectTypeSections({
+85 web/components/vision/tldraw/ui/style-panel/sections/VisionTextTypeSections.tsx
+    6:export function VisionTextTypeSections({
+349 web/components/vision/tldraw/ui/style-panel/ui-primitives.tsx
+    19:export function Swatch({
+    51:export function StopSwatch({
+    80:export function ColorHexField({
+    106:export function ColorPickerRow({
+28 web/components/vision/tldraw/ui/visionToolAllowlist.ts
+    10:export function filterVisionTools(tools: Record<string, any>) {
+606 web/components/vision/tldraw/useTldrawTileController.ts
+    92:export type UseTldrawTileControllerOpts = {
+    103:export function useTldrawTileController(opts: UseTldrawTileControllerOpts): {
+6 web/components/vision/tldraw/useTldrawVisionCanvasController.ts
+    5:export type { UseTldrawVisionCanvasControllerOpts } from '@/components/vision/v2/tldraw/useTldrawVisionCanvasController';
+91 web/components/vision/tldraw/vector-pen/RectCornerRoundnessSection.tsx
+    6:export function RectCornerRoundnessSection({
+551 web/components/vision/tldraw/vector-pen/conversion.ts
+    247:export function canConvertSelectionToVectorPoints(editor: Editor): boolean {
+232 web/components/vision/tldraw/vector-pen/editablePath.ts
+    3:export type NxBezierNode = {
+    13:export type NxEditablePathData =
+    55:export function editableToSvgPath(data: NxEditablePathData): string {
+    76:export function tryParseEditable(json: unknown): NxEditablePathData | null {
+9 web/components/vision/tldraw/vector-pen/index.ts
+266 web/components/vision/tldraw/vector-pen/interactions.ts
+    128:export function installVectorPenInteractions(editor: Editor): () => void {
+    265:export const installEditablePathPointEditing = installVectorPenInteractions;
+57 web/components/vision/tldraw/vector-pen/meta.ts
+    5:export const VECTOR_PEN_TOOL_ID = 'nxvectorpen' as const;
+    7:export const META_VECTOR_PEN = 'nxVectorPen' as const;
+    8:export const META_SELECTED_NODE_ID = 'nxSelectedNodeId' as const;
+    10:export type VectorPenMeta = {
+124 web/components/vision/tldraw/vector-pen/nxpathHandles.ts
+    9:export function getNxpathEditableHandles(editor: Editor | null | undefined, shape: any): TLHandle[] {
+    61:export function onNxpathEditableHandleDrag(editor: Editor | null | undefined, shape: any, info: TLHandleDragInfo<any>) {
+26 web/components/vision/tldraw/vector-pen/tooling.ts
+    6:export const vectorPenTranslations = {
+    12:export function addVectorPenTool(editor: Editor, tools: Record<string, any>) {
+5 web/components/vision/tldraw/vectorize/convertSelectionToEditablePath.ts
+5 web/components/vision/tldraw/vectorize/installEditablePathPointEditing.ts
+5 web/components/vision/tldraw/vectorize/nxEditablePath.ts
+5 web/components/vision/tldraw/visionCardTool.ts
+16 web/components/vision/v2/README.md
+308 web/components/vision/v2/VisionCanvas.tsx
+    59:export function VisionCanvas({
+236 web/components/vision/v2/VisionCardEditorModal.tsx
+    19:export function VisionCardEditorModal({
+301 web/components/vision/v2/VisionEditor.tsx
+    21:export function VisionEditor({
+23 web/components/vision/v2/hooks/useCardCount.ts
+    6:export function useCardCount(doc: VisionDoc): number {
+15 web/components/vision/v2/index.ts
+    8:export type { UseTldrawVisionCanvasControllerOpts } from './tldraw/useTldrawVisionCanvasController';
+    11:export type { NxCardShape } from './tldraw/shapes/NxCardShapeUtil';
+54 web/components/vision/v2/shell/MarkdownPopup.tsx
+    5:export function MarkdownPopup({
+81 web/components/vision/v2/shell/TldrawHeaderActions.tsx
+    6:export function TldrawHeaderActions({ editor }: { editor: Editor | null }) {
+192 web/components/vision/v2/shell/VisionImportModal.tsx
+    9:export function VisionImportModal({ doc, isOpen, onClose }: { doc: Y.Doc; isOpen: boolean; onClose: () => void }) {
+105 web/components/vision/v2/tldraw/shapes/NxCardShapeUtil.tsx
+    6:export type NxCardShape = TLBaseShape<
+    32:export class NxCardShapeUtil extends BaseBoxShapeUtil<any> {
+21 web/components/vision/v2/tldraw/toolAllowlist.ts
+    11:export function filterVisionCanvasTools(tools: Record<string, any>) {
+16 web/components/vision/v2/tldraw/ui/VisionCanvasToolbar.tsx
+    6:export function VisionCanvasToolbar() {
+255 web/components/vision/v2/tldraw/useTldrawVisionCanvasController.ts
+    36:export type UseTldrawVisionCanvasControllerOpts = {
+    52:export function useTldrawVisionCanvasController(opts: UseTldrawVisionCanvasControllerOpts): {
+60 web/components/vision/v2/tldraw/visionCardTool.ts
+    6:export const VISION_CARD_TOOL_ID = 'visionCard';
+    8:export const visionCardTranslations = {
+    14:export function addVisionCardTool(editor: Editor, tools: Record<string, any>) {
+282 web/components/workspace/AiUsageHelpModal.tsx
+    54:export function AiUsageHelpModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+232 web/components/workspace/ProjectActionMenus.tsx
+    86:export function ProjectActionMenus({

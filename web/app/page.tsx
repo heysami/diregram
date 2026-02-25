@@ -91,23 +91,38 @@ export default function Home() {
       </div>
 
       <div className="relative z-10">
-      <header className="fixed left-0 right-0 top-0 z-50 flex h-16 items-center justify-between border-b border-black/10 bg-[#f0f0f0]/90 px-6 backdrop-blur-md">
-        <div className="flex items-center gap-3">
+      <header className="fixed left-0 right-0 top-0 z-50 flex h-16 items-center justify-between border-b border-black/10 bg-[#f0f0f0]/90 px-3 sm:px-6 backdrop-blur-md">
+        <div className="flex items-center gap-2 sm:gap-3">
           <div className="flex h-9 w-9 items-center justify-center mac-double-outline bg-white">
             <img src="/diregram-icon.svg" alt="Diregram" className="h-6 w-6" />
           </div>
-          <span className="text-lg font-semibold tracking-tight">Diregram</span>
+          <span className="text-base font-semibold tracking-tight sm:text-lg">Diregram</span>
         </div>
 
         <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => router.push(signedIn ? '/workspace' : `/login?next=${encodeURIComponent('/workspace')}`)}
-            className="mac-btn mac-btn--dark mac-btn--lg"
-          >
-            Launch App
-          </button>
-          <AuthStatus />
+          <div className="md:hidden">
+            <button
+              type="button"
+              onClick={() => router.push(signedIn ? '/workspace' : `/login?next=${encodeURIComponent('/workspace')}`)}
+              className="mac-btn mac-btn--dark mac-btn--icon"
+              aria-label="Launch app"
+              title="Launch app"
+            >
+              <ArrowRight className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="hidden md:block">
+            <button
+              type="button"
+              onClick={() => router.push(signedIn ? '/workspace' : `/login?next=${encodeURIComponent('/workspace')}`)}
+              className="mac-btn mac-btn--dark mac-btn--lg"
+            >
+              Launch App
+            </button>
+          </div>
+          <div className="hidden md:block">
+            <AuthStatus />
+          </div>
         </div>
       </header>
 
@@ -172,7 +187,7 @@ export default function Home() {
             <FeatureCard
               icon={<FileText className="h-6 w-6" />}
               title="Real Files, Not Screenshots"
-              description="Your work stays in editable files you can diff and review instead of relying on static screenshots."
+              description="Your work stays in editable files with plain-text Markdown source that you can diff, review, and use directly with AI."
               code="FILES: EDITABLE"
             />
             <FeatureCard
