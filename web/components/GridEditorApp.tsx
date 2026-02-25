@@ -37,9 +37,10 @@ export function GridEditorApp() {
   const searchParams = useSearchParams();
   const { configured, ready, supabase, user } = useAuth();
   const supabaseMode = configured && !user?.isLocalAdmin;
+  const fileIdFromUrl = searchParams?.get('file') || '';
 
   const [activeFile, setActiveFile] = useState<ActiveFileMeta | null>(null);
-  const activeRoomName = activeFile?.roomName || 'grid-demo';
+  const activeRoomName = activeFile?.roomName || (fileIdFromUrl ? `file-${fileIdFromUrl}` : 'grid-demo');
 
   const [templateScope, setTemplateScope] = useState<'project' | 'account' | 'global'>('project');
 
@@ -249,7 +250,6 @@ export function GridEditorApp() {
 
   // Load file metadata based on ?file=...
   useEffect(() => {
-    const fileIdFromUrl = searchParams?.get('file');
     if (!fileIdFromUrl) {
       router.replace('/workspace');
       return;
@@ -329,9 +329,9 @@ export function GridEditorApp() {
     return () => {
       cancelled = true;
     };
-  }, [searchParams, supabaseMode, ready, supabase, user?.id, user?.email, router]);
+  }, [fileIdFromUrl, supabaseMode, ready, supabase, user?.id, user?.email, router]);
 
-  useYjsNexusTextPersistence({
+  const { contentReady } = useYjsNexusTextPersistence({
     doc: yDoc,
     provider,
     activeRoomName,
@@ -410,8 +410,9 @@ export function GridEditorApp() {
     return 'Offline';
   }, [status]);
 
-  if (!yDoc || !activeFile) return <div className="flex h-screen items-center justify-center text-xs opacity-80">Loading…</div>;
-  if (!gridDoc) return <div className="flex h-screen items-center justify-center text-xs opacity-80">Loading grid…</div>;
+  const roomReady = !!activeFile && !!yDoc && connectedRoomName === activeRoomName;
+  if (!roomReady || !contentReady) return <div className="mac-desktop dg-screen-loading h-screen w-screen" aria-hidden="true" />;
+  if (!gridDoc) return <div className="mac-desktop dg-screen-loading h-screen w-screen" aria-hidden="true" />;
 
   return (
     <GridEditor
@@ -444,4 +445,3 @@ export function GridEditorApp() {
     />
   );
 }
-

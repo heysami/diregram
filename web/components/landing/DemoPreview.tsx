@@ -1,12 +1,12 @@
 'use client';
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Boxes, Eye, FileText, Network, Table2, TestTube } from 'lucide-react';
+import { type CSSProperties, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Eye, FileText, Network, Table2 } from 'lucide-react';
 
 type Size = { w: number; h: number };
 type Point = { x: number; y: number };
 
-type DemoKind = 'diagram' | 'note' | 'grid' | 'vision' | 'template' | 'test';
+type DemoKind = 'diagram' | 'note' | 'grid' | 'vision';
 
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
@@ -41,7 +41,7 @@ function cubicBetween(a: Point, b: Point): string {
 }
 
 export function DemoPreview() {
-  const order: DemoKind[] = useMemo(() => ['diagram', 'note', 'grid', 'vision', 'template', 'test'], []);
+  const order: DemoKind[] = useMemo(() => ['diagram', 'note', 'grid', 'vision'], []);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const processRef = useRef<HTMLDivElement | null>(null);
   const gotoRef = useRef<HTMLDivElement | null>(null);
@@ -52,8 +52,6 @@ export function DemoPreview() {
     note: null,
     grid: null,
     vision: null,
-    template: null,
-    test: null,
   });
 
   const [activeKind, setActiveKind] = useState<DemoKind>('diagram');
@@ -158,13 +156,13 @@ export function DemoPreview() {
   return (
     <div className="mac-window overflow-hidden">
       <div className="mac-titlebar">
-        <div className="mac-title">demo_preview.exe</div>
+        <div className="mac-title">workspace_preview.exe</div>
       </div>
 
       <div
         ref={containerRef}
         className="relative aspect-video overflow-hidden mac-canvas-bg"
-        style={{ '--canvas-zoom': 1 } as any}
+        style={{ '--canvas-zoom': 1 } as CSSProperties}
       >
         <div className="absolute left-4 top-3 z-10">
           <div className="inline-flex items-center gap-1 mac-double-outline bg-white px-2 py-1">
@@ -232,42 +230,10 @@ export function DemoPreview() {
             >
               <Eye size={16} />
             </button>
-            <button
-              ref={(el) => {
-                kindButtonById.current.template = el;
-              }}
-              type="button"
-              className={`mac-btn mac-btn--icon-sm ${activeKind === 'template' ? 'mac-btn--primary' : ''}`}
-              aria-label="Template file"
-              title="Template"
-              onClick={() => {
-                setDidInteract(true);
-                setPulseTick((n) => n + 1);
-                setActiveKind('template');
-              }}
-            >
-              <Boxes size={16} />
-            </button>
-            <button
-              ref={(el) => {
-                kindButtonById.current.test = el;
-              }}
-              type="button"
-              className={`mac-btn mac-btn--icon-sm ${activeKind === 'test' ? 'mac-btn--primary' : ''}`}
-              aria-label="Test file"
-              title="Test"
-              onClick={() => {
-                setDidInteract(true);
-                setPulseTick((n) => n + 1);
-                setActiveKind('test');
-              }}
-            >
-              <TestTube size={16} />
-            </button>
           </div>
         </div>
 
-        {cursor.visible && !reduceMotion ? (
+        {cursor.visible && !reduceMotion && activeKind === 'diagram' ? (
           <div
             className="pointer-events-none absolute z-20 transition-[left,top,opacity] duration-500 ease-out"
             style={{ left: cursor.x, top: cursor.y, opacity: 0.95 }}
@@ -313,7 +279,7 @@ export function DemoPreview() {
                   <span className="dg-node-card__meta-label">Process</span>
                   <span className="dg-node-card__meta-id">L:97</span>
                 </div>
-                <div className="dg-node-card__title">New account registration</div>
+                <div className="dg-node-card__title">Define onboarding steps</div>
                 <div className="dg-node-card__placeholder" />
               </div>
             </div>
@@ -324,7 +290,7 @@ export function DemoPreview() {
                   <span className="dg-node-card__meta-label">Go to</span>
                   <span className="dg-node-card__meta-id">L:96</span>
                 </div>
-                <div className="dg-node-card__title">Route</div>
+                <div className="dg-node-card__title">Link decision note</div>
                 <div className="dg-node-card__placeholder" />
               </div>
             </div>
@@ -342,179 +308,133 @@ export function DemoPreview() {
                 />
               </svg>
               <div className="absolute inset-0 flex items-center justify-center p-5 text-center">
-                <div className="text-[12px] font-semibold leading-tight text-white">Conditional</div>
+                <div className="text-[12px] font-semibold leading-tight text-white">Ready to proceed?</div>
               </div>
             </div>
           </>
         ) : activeKind === 'note' ? (
-          <div className="absolute left-[10%] top-[18%] w-[520px] max-w-[84%]">
-            <div className="mac-window overflow-hidden">
-              <div className="mac-titlebar">
-                <div className="mac-title">Note</div>
-              </div>
-              <div className="bg-white">
-                <div className="px-4 py-3 border-b border-black/10">
-                  <div className="text-[10px] uppercase tracking-[0.08em] text-neutral-500 font-mono">onboarding.md</div>
-                  <div className="mt-1 text-sm font-semibold text-neutral-900">Registration flow notes</div>
-                  <div className="mt-1 text-[12px] text-neutral-600 leading-relaxed">
-                    Keep decisions next to the diagram. Link to nodes and routes so context stays attached.
-                  </div>
+          <div className="absolute inset-0 bg-[#eef0f3]">
+            <div className="absolute inset-x-0 bottom-0 top-[54px]">
+              <aside className="absolute inset-y-0 left-0 w-[200px] border-r border-black/15 bg-[#f6f7f9]">
+                <div className="border-b border-black/10 px-3 py-2 text-[10px] font-mono uppercase tracking-[0.08em] text-[#607084]">Outline</div>
+                <div className="space-y-2 px-3 py-3 text-xs text-neutral-700">
+                  <div className="font-semibold">Untitled</div>
+                  <div className="pl-2">Sections</div>
+                  <div className="pl-2">Embeds</div>
                 </div>
-                <div className="p-4 space-y-3">
-                  <div className="text-xs text-neutral-700">
-                    <span className="font-mono text-[11px] text-neutral-500">-</span> Validate email
-                    <span className="font-mono text-[11px] text-neutral-500"> (L:97)</span>
+              </aside>
+              <div className="absolute inset-y-0 left-[200px] right-0">
+                <div className="absolute left-[16%] top-[58%] w-[72%] -translate-y-1/2">
+                  <div className="rounded-sm border border-black/10 bg-[#e8ebf0] p-3 font-mono text-[10px] leading-5 text-neutral-600">
+                    {'{'}
+                    <br />
+                    {'  "kind": "note",'}
+                    <br />
+                    {'  "version": 1'}
+                    <br />
+                    {'}'}
                   </div>
-                  <div className="text-xs text-neutral-700">
-                    <span className="font-mono text-[11px] text-neutral-500">-</span> Route to
-                    <span className="font-mono text-[11px] text-neutral-500"> /auth/register</span>
-                  </div>
-                  <div className="mac-double-outline bg-[#f0f0f0] p-3">
-                    <div className="text-[10px] uppercase tracking-[0.08em] text-neutral-500 font-mono">embed</div>
-                    <div className="mt-2 inline-flex items-center gap-2">
-                      <div className="h-2 w-2 rounded-full bg-[#E11D48]" />
-                      <div className="text-xs font-semibold text-neutral-800">Diagram: Registration flow</div>
-                      <div className="text-[10px] font-mono text-neutral-500">ref: L:96</div>
-                    </div>
-                  </div>
-                  <div className="text-[11px] font-mono text-neutral-500 border-l border-black/10 pl-3">
-                    {'// exportable, diffable, linkable'}
-                  </div>
+                  <h3 className="mt-5 text-[44px] font-bold tracking-tight text-[#171a1f]">Untitled</h3>
+                  <p className="mt-2 text-[33px] leading-[1.15] text-[#171a1f]">Write here.</p>
+                  <h4 className="mt-4 text-[24px] font-bold text-[#171a1f]">Sections</h4>
+                  <p className="mt-1 text-[16px] text-neutral-700">Use headings to structure your brief and keep everyone aligned.</p>
                 </div>
               </div>
             </div>
           </div>
         ) : activeKind === 'grid' ? (
-          <div className="absolute left-[8%] top-[18%] w-[680px] max-w-[90%]">
-            <div className="mac-window overflow-hidden">
-              <div className="mac-titlebar">
-                <div className="mac-title">Grid</div>
-              </div>
-              <div className="bg-white p-3">
-                <div className="mac-double-outline overflow-hidden bg-white">
-                  <div className="px-3 py-2 border-b border-black/10 bg-[#eaedf1]">
-                    <div className="text-[10px] uppercase tracking-[0.08em] text-neutral-600 font-mono">api_spec.grid</div>
+          <div className="absolute inset-0 bg-[#eef0f3]">
+            <div className="absolute inset-x-0 bottom-0 top-[54px]">
+              <aside className="absolute inset-y-0 left-0 w-[168px] border-r border-black/15 bg-[#f6f7f9]">
+                <div className="px-3 py-2 text-[10px] font-mono uppercase tracking-[0.08em] text-[#607084]">Sheets</div>
+                <div className="border-t border-black/10 px-2 py-3">
+                  <div className="rounded-md border border-[#d64a68]/60 bg-[#ecd7dc] px-3 py-3 text-xs font-semibold text-neutral-900">
+                    Sheet 1
                   </div>
-                  <table className="w-full text-[11px]">
+                </div>
+              </aside>
+              <div className="absolute inset-y-0 left-[168px] right-0">
+                <div className="flex h-[34px] items-center gap-2 border-b border-black/15 bg-[#f7f8fa] px-3">
+                  <span className="rounded-md border border-black/20 bg-white px-2 py-1 text-[10px] font-semibold text-neutral-900">Sheet 1</span>
+                  <span className="rounded-md bg-[#e11d48] px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-white">Spreadsheet</span>
+                  <span className="rounded-md border border-black/20 bg-white px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-neutral-600">Database</span>
+                </div>
+                <div className="flex h-[34px] items-center gap-2 border-b border-black/10 bg-white px-3 text-[10px] font-mono uppercase tracking-[0.08em] text-neutral-600">
+                  {['+ Row', '+ Col', '+ Card', 'Merge'].map((a) => (
+                    <span key={a} className="rounded-md border border-black/20 bg-[#f7f8fa] px-2 py-1">{a}</span>
+                  ))}
+                </div>
+                <div className="overflow-hidden bg-white">
+                  <table className="w-full table-fixed text-[10px]">
                     <thead>
-                      <tr className="border-b border-black/10 text-neutral-600 font-mono uppercase tracking-[0.08em] text-[10px]">
-                        <th className="text-left px-3 py-2">Field</th>
-                        <th className="text-left px-3 py-2">Type</th>
-                        <th className="text-left px-3 py-2">Owner</th>
-                        <th className="text-left px-3 py-2">Link</th>
+                      <tr className="border-b border-black/10 bg-[#f8f9fb] text-neutral-700">
+                        <th className="w-8 border-r border-black/10 py-1" />
+                        {['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L'].map((c) => (
+                          <th key={c} className="border-r border-black/10 py-1 font-semibold">{c}</th>
+                        ))}
                       </tr>
                     </thead>
-                    <tbody className="text-neutral-800">
-                      <tr className="border-b border-black/5">
-                        <td className="px-3 py-2 font-semibold">email</td>
-                        <td className="px-3 py-2 font-mono text-neutral-600">string</td>
-                        <td className="px-3 py-2">Auth</td>
-                        <td className="px-3 py-2 font-mono text-[#E11D48]">L:97</td>
-                      </tr>
-                      <tr className="border-b border-black/5">
-                        <td className="px-3 py-2 font-semibold">password_hash</td>
-                        <td className="px-3 py-2 font-mono text-neutral-600">string</td>
-                        <td className="px-3 py-2">Auth</td>
-                        <td className="px-3 py-2 font-mono text-neutral-500">do-6</td>
-                      </tr>
-                      <tr>
-                        <td className="px-3 py-2 font-semibold">status</td>
-                        <td className="px-3 py-2 font-mono text-neutral-600">enum</td>
-                        <td className="px-3 py-2">Product</td>
-                        <td className="px-3 py-2 font-mono text-neutral-500">cond:reg</td>
-                      </tr>
+                    <tbody>
+                      {Array.from({ length: 16 }).map((_, i) => (
+                        <tr key={i} className="border-b border-black/5">
+                          <td className="border-r border-black/10 bg-[#f8f9fb] text-center font-semibold text-neutral-600">{i + 1}</td>
+                          {Array.from({ length: 12 }).map((__, j) => (
+                            <td key={j} className="h-7 border-r border-black/5">
+                              {i === 0 && j === 0 ? <div className="mx-auto h-5 w-16 rounded border border-black/25 bg-white" /> : null}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
                     </tbody>
                   </table>
-                </div>
-                <div className="mt-3 text-[11px] text-neutral-600 border-l border-black/10 pl-3">
-                  Structured specs that link back to flows and data objects.
                 </div>
               </div>
             </div>
           </div>
         ) : activeKind === 'vision' ? (
-          <div className="absolute left-[10%] top-[18%] w-[560px] max-w-[88%]">
-            <div className="mac-window overflow-hidden">
-              <div className="mac-titlebar">
-                <div className="mac-title">Vision</div>
-              </div>
-              <div className="p-5 mac-fill--hatch">
-                <div className="text-[10px] uppercase tracking-[0.08em] text-neutral-600 font-mono">Vision card</div>
-                <div className="mt-2 text-2xl font-semibold tracking-tight text-neutral-900">
-                  Reduce onboarding time by 30%
+          <div className="absolute inset-0 bg-[#ececef]">
+            <div className="absolute inset-x-0 bottom-0 top-[54px]">
+              <div className="absolute inset-4 rounded-2xl border border-black/15 bg-[#f7f8fb]">
+                <svg className="absolute inset-0" viewBox="0 0 1000 560" preserveAspectRatio="none" aria-hidden="true">
+                  <path d="M162 148 C 260 148, 312 220, 410 220" fill="none" stroke="rgba(23,26,31,0.28)" strokeWidth="3" />
+                  <path d="M410 220 C 530 220, 560 318, 680 318" fill="none" stroke="rgba(23,26,31,0.18)" strokeWidth="3" strokeDasharray="10 10" />
+                </svg>
+
+                <div className="absolute left-7 top-7 flex items-center gap-2">
+                  <button type="button" className="rounded-md bg-[#e11d48] px-3 py-2 text-[11px] font-semibold text-white">Primary Button</button>
+                  <button type="button" className="rounded-md border border-black/20 bg-white px-3 py-2 text-[11px] font-semibold text-neutral-800">Secondary</button>
                 </div>
-                <div className="mt-3 text-sm text-neutral-700 leading-relaxed border-l border-black/10 pl-3">
-                  Align the team on the outcome, then link implementation details back to diagrams and specs.
+
+                <div className="absolute left-8 top-24 w-[260px] rounded-xl border border-black/15 bg-white p-4 shadow-sm">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-neutral-500">UI CARD</div>
+                  <div className="mt-2 text-sm font-semibold text-neutral-900">Signup module</div>
+                  <div className="mt-1 text-xs text-neutral-600">Drop components on canvas and align flows visually.</div>
+                  <div className="mt-3 inline-flex items-center gap-2 rounded-md border border-black/15 bg-[#eef0f4] px-2 py-1 text-[11px] text-neutral-700">
+                    <span className="h-2 w-2 rounded-full bg-[#22c55e]" />
+                    Ready state
+                  </div>
                 </div>
-                <div className="mt-4 inline-flex items-center gap-2 mac-double-outline bg-white px-3 py-2">
-                  <div className="h-2 w-2 rounded-full bg-[#E11D48]" />
-                  <div className="text-[11px] font-mono text-neutral-700">linked: onboarding.md · api_spec.grid · L:97</div>
-                </div>
-              </div>
-            </div>
-          </div>
-        ) : activeKind === 'template' ? (
-          <div className="absolute left-[10%] top-[18%] w-[560px] max-w-[88%]">
-            <div className="mac-window overflow-hidden">
-              <div className="mac-titlebar">
-                <div className="mac-title">Template</div>
-              </div>
-              <div className="bg-white p-4">
-                <div className="text-[10px] uppercase tracking-[0.08em] text-neutral-500 font-mono">template library</div>
-                <div className="mt-3 space-y-2">
-                  {[
-                    { name: 'Signup flow', meta: 'diagram + flowtab', code: 'TPL-01' },
-                    { name: 'Payment integration', meta: 'tech flow', code: 'TPL-02' },
-                    { name: 'Data object spec', meta: 'grid + data graph', code: 'TPL-03' },
-                  ].map((t) => (
-                    <div key={t.code} className="mac-interactive-row px-3 py-2 flex items-center justify-between">
-                      <div className="min-w-0">
-                        <div className="text-xs font-semibold text-neutral-900 truncate">{t.name}</div>
-                        <div className="text-[11px] text-neutral-500 truncate">{t.meta}</div>
-                      </div>
-                      <div className="text-[10px] font-mono text-neutral-500">{t.code}</div>
-                    </div>
-                  ))}
-                </div>
-                <div className="mt-3 text-[11px] text-neutral-600 border-l border-black/10 pl-3">
-                  Standardize delivery so teams stay consistent across projects.
-                </div>
+
+                <div className="absolute right-20 top-20 h-24 w-24 rounded-2xl bg-[#2563eb]" />
+                <div className="absolute right-40 top-44 h-16 w-16 rounded-full bg-[#22c55e]" />
+                <div className="absolute right-64 top-24 h-16 w-16 rotate-45 rounded-md bg-[#f59e0b]" />
+                <div className="absolute right-28 top-52 rounded-md border border-black/20 bg-white px-3 py-2 text-[11px] font-semibold text-neutral-800">CTA / Buy now</div>
               </div>
             </div>
-          </div>
-        ) : (
-          <div className="absolute left-[10%] top-[18%] w-[560px] max-w-[88%]">
-            <div className="mac-window overflow-hidden">
-              <div className="mac-titlebar">
-                <div className="mac-title">Test</div>
-              </div>
-              <div className="bg-white p-4">
-                <div className="text-[10px] uppercase tracking-[0.08em] text-neutral-500 font-mono">tree tests</div>
-                <div className="mt-2 text-sm font-semibold text-neutral-900">T1: Registration is valid</div>
-                <div className="mt-3 space-y-2">
-                  {[
-                    { label: 'Process node exists', ref: 'L:97', status: 'PASS' },
-                    { label: 'Go to route configured', ref: 'L:96', status: 'PASS' },
-                    { label: 'Conditional paths covered', ref: 'cond:reg', status: 'TODO' },
-                  ].map((s) => (
-                    <div key={s.ref} className="mac-interactive-row px-3 py-2 flex items-center justify-between">
-                      <div className="min-w-0">
-                        <div className="text-xs font-semibold text-neutral-900 truncate">{s.label}</div>
-                        <div className="text-[11px] font-mono text-neutral-500 truncate">{s.ref}</div>
-                      </div>
-                      <div className={`text-[10px] font-mono ${s.status === 'PASS' ? 'text-neutral-800' : 'text-[#E11D48]'}`}>
-                        {s.status}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                <div className="mt-3 text-[11px] text-neutral-600 border-l border-black/10 pl-3">
-                  Tests stay bound to the system map, so validations don’t drift.
-                </div>
-              </div>
+            <div className="absolute bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-2 rounded-xl border border-black/15 bg-white px-3 py-2 shadow-sm">
+              {['◥', '✋', '✎', '↗', 'T', '▢', '⛶', '?'].map((tool) => (
+                <span
+                  key={tool}
+                  className={`flex h-7 w-7 items-center justify-center rounded-md border text-xs ${
+                    tool === '◥' ? 'border-[#2563eb]/30 bg-[#2563eb] text-white' : 'border-black/15 bg-white text-neutral-700'
+                  }`}
+                >
+                  {tool}
+                </span>
+              ))}
             </div>
           </div>
-        )}
+        ) : null}
       </div>
     </div>
   );

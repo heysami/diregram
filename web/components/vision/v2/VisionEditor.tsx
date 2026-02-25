@@ -130,7 +130,7 @@ export function VisionEditor({
   }, [activeTool, canvasEditor]);
 
   return (
-    <main className="mac-desktop h-screen w-screen relative overflow-hidden dg-vision-editor">
+    <main className="mac-desktop dg-screen-fade-in h-screen w-screen relative overflow-hidden dg-vision-editor">
       <header className="mac-menubar h-12 px-4 flex items-center justify-between gap-3 shrink-0 z-[100] relative">
         <div className="flex items-center gap-2 min-w-0">
           <button type="button" className="mac-btn h-8 flex items-center gap-1.5" onClick={onBack} title="Back to workspace">

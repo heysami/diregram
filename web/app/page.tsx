@@ -99,18 +99,6 @@ export default function Home() {
           <span className="text-lg font-semibold tracking-tight">Diregram</span>
         </div>
 
-        <nav className="hidden items-center gap-2 text-[11px] tracking-[0.02em] md:flex">
-          <a href="#features" className="rounded-sm px-3 py-2 text-neutral-600 transition-colors hover:text-black">
-            Why Diregram?
-          </a>
-          <a href="#system" className="rounded-sm px-3 py-2 text-neutral-600 transition-colors hover:text-black">
-            Demo
-          </a>
-          <a href="#footer" className="rounded-sm px-3 py-2 text-neutral-600 transition-colors hover:text-black">
-            Contact
-          </a>
-        </nav>
-
         <div className="flex items-center gap-2">
           <button
             type="button"
@@ -137,7 +125,7 @@ export default function Home() {
           <div className="mb-8 flex justify-center">
             <div className="flex items-center gap-2 rounded-full border border-black/25 bg-white px-4 py-1.5 text-[10px] uppercase tracking-[0.08em] text-neutral-600">
               <span className="h-2 w-2 animate-pulse rounded-full bg-[#E11D48]" />
-              System Online
+              Built for product teams
             </div>
           </div>
 
@@ -147,9 +135,9 @@ export default function Home() {
           </div>
 
           <p className="mx-auto mb-12 max-w-xl text-center text-[17px] leading-relaxed text-neutral-600 md:text-[21px]">
-            {'// Build app systems that stay correct at scale.'}
+            {'// Build faster with fewer mistakes.'}
             <br />
-            Markdown-first diagrams with linked flows, data, and context. AI-ready when you are.
+            Practical context engineering keeps diagrams, notes, specs, and visuals connected so people and AI stay accurate.
           </p>
 
           <div className="flex flex-col items-center justify-center gap-6 sm:flex-row">
@@ -159,7 +147,7 @@ export default function Home() {
               className="mac-btn mac-btn--primary mac-btn--lg group px-8"
             >
               <span className="relative z-10 flex items-center gap-2 tracking-[0.08em]">
-                Start building
+                Start Diregramming
                 <ArrowRight className="h-5 w-5 transition-transform group-hover:translate-x-1" />
               </span>
             </button>
@@ -177,46 +165,45 @@ export default function Home() {
       <section id="features" className="relative z-10 border-b border-black/10 px-6 py-24">
         <div className="mx-auto max-w-7xl">
           <div className="mb-12 flex items-end justify-between border-b border-black pb-4">
-            <h2 className="text-4xl font-semibold tracking-tight">Why Diregram?</h2>
+            <h2 className="text-4xl font-semibold tracking-tight">Why teams choose Diregram</h2>
             <span className="text-xs uppercase tracking-[0.08em] text-neutral-500">[06 items]</span>
           </div>
-
           <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
             <FeatureCard
               icon={<FileText className="h-6 w-6" />}
-              title="Markdown Source Of Truth"
-              description="Diagrams live as plain text you can diff, review, and version. No lock-in screenshots. No stale exports."
-              code="SOURCE: MARKDOWN"
+              title="Real Files, Not Screenshots"
+              description="Your work stays in editable files you can diff and review instead of relying on static screenshots."
+              code="FILES: EDITABLE"
             />
             <FeatureCard
               icon={<Link2 className="h-6 w-6" />}
-              title="Everything Connects"
-              description="Link diagrams, notes, grids, tests, and data objects into one system graph. Context stays attached to the nodes."
-              code="LINKS: FIRST-CLASS"
+              title="Everything Stays Connected"
+              description="Link diagrams, notes, grids, and templates so decisions and details never drift apart."
+              code="LINKS: BUILT-IN"
             />
             <FeatureCard
               icon={<Workflow className="h-6 w-6" />}
-              title="Many Views, One System"
-              description="Map, swimlane flows, tech flow, and data relationships all come from the same source, so your system stays coherent."
-              code="VIEWS: 4X"
+              title="One System, Multiple Views"
+              description="Map, swimlane, tech diagrams, and data views all stay aligned from the same underlying model."
+              code="VIEWS: CONSISTENT"
             />
             <FeatureCard
               icon={<Sparkles className="h-6 w-6" />}
-              title="Knowledge Graph + RAG"
-              description="Turn your workspace into queryable context for AI. Ask for the right thing and get answers grounded in your system."
-              code="RAG: READY"
+              title="AI Answers With Evidence"
+              description="Build a project knowledge base with RAG so AI answers stay tied to your real project data."
+              code="AI: GROUNDED"
             />
             <FeatureCard
               icon={<Download className="h-6 w-6" />}
-              title="Filesystem Sync"
-              description="Sync to local Markdown vaults with conflict safety. Ship docs, templates, and AI bundles as part of your delivery system."
-              code="SYNC: VAULT"
+              title="Sync With Your Vault"
+              description="Keep local folders and Diregram in sync with conflict-safe history and export-ready files."
+              code="SYNC: SAFE"
             />
             <FeatureCard
               icon={<Boxes className="h-6 w-6" />}
-              title="Templates For Scale"
-              description="Reusable blocks and templates keep teams consistent across projects, so you can grow without rewriting the system every time."
-              code="REUSE: BUILT-IN"
+              title="Reuse What Works"
+              description="Turn strong patterns into templates so teams start faster and stay consistent."
+              code="REUSE: FAST"
             />
           </div>
         </div>
@@ -231,17 +218,17 @@ export default function Home() {
             <div className="space-y-4">
               <div className="inline-block border border-black/25 bg-white/80 px-2 py-1 text-xs uppercase tracking-[0.08em] text-neutral-600">SECTION: WORKSPACE</div>
               <h2 className="max-w-2xl text-5xl font-bold tracking-tighter md:text-7xl">
-                ONE WORKSPACE.
+                BUILT FOR
                 <br />
-                SIX <span className="dg-gradient-title">FILE TYPES</span>.
+                <span className="dg-gradient-title">ACCURATE ALIGNMENT</span>.
               </h2>
             </div>
             <p className="max-w-xs border-l border-black pl-4 pt-2 text-sm text-neutral-500">
-              {'> SOURCE: MARKDOWN'}
+              {'> SOURCE: EDITABLE FILES'}
               <br />
-              {'> FILES: DIAGRAM / NOTE / GRID / VISION / TEMPLATE / TEST'}
+              {'> FILES: DIAGRAM / NOTE / GRID / VISION'}
               <br />
-              {'> OUTPUT: LINKED CONTEXT'}
+              {'> OUTCOME: ACCURATE ALIGNMENT, FEWER MISSES'}
             </p>
           </div>
 

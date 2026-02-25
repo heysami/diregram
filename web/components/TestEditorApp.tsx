@@ -15,7 +15,7 @@ import { makeStarterTestMarkdown } from '@/lib/test-starter';
 import { useRemoteNexusDoc } from '@/hooks/use-remote-nexus-doc';
 import { parseNexusMarkdown } from '@/lib/nexus-parser';
 import { loadFlowTabProcessReferences } from '@/lib/flowtab-process-references';
-import { buildTreeTestModel } from '@/lib/testing/tree-test-model';
+import { buildTreeTestModel, type TreeTestModel } from '@/lib/testing/tree-test-model';
 import type { TestingTest } from '@/lib/testing-store';
 import { TreeTestRunner } from '@/components/testing/TreeTestRunner';
 import { useWorkspaceFiles } from '@/components/note/embed-config/useWorkspaceFiles';
@@ -49,9 +49,10 @@ export function TestEditorApp() {
   const searchParams = useSearchParams();
   const { configured, ready, supabase, user } = useAuth();
   const supabaseMode = configured && !user?.isLocalAdmin;
+  const fileIdFromUrl = searchParams?.get('file') || '';
 
   const [activeFile, setActiveFile] = useState<ActiveFileMeta | null>(null);
-  const activeRoomName = activeFile?.roomName || 'test-demo';
+  const activeRoomName = activeFile?.roomName || (fileIdFromUrl ? `file-${fileIdFromUrl}` : 'test-demo');
 
   const { doc: yDoc, provider, status, connectedRoomName, synced } = useYjs(activeRoomName);
 
@@ -73,7 +74,6 @@ export function TestEditorApp() {
 
   // Load file metadata based on ?file=...
   useEffect(() => {
-    const fileIdFromUrl = searchParams?.get('file');
     if (!fileIdFromUrl) {
       router.replace('/workspace');
       return;
@@ -150,9 +150,9 @@ export function TestEditorApp() {
     return () => {
       cancelled = true;
     };
-  }, [ready, router, searchParams, supabase, supabaseMode, user?.email, user?.id]);
+  }, [fileIdFromUrl, ready, router, supabase, supabaseMode, user?.email, user?.id]);
 
-  useYjsNexusTextPersistence({
+  const { contentReady } = useYjsNexusTextPersistence({
     doc: yDoc,
     provider,
     activeRoomName,
@@ -275,17 +275,44 @@ export function TestEditorApp() {
     return buildTreeTestModel({ doc: sourceDoc, selectedTest, mainRoots, flowRoots, flowRefs });
   }, [flowRoots, flowRefs, mainRoots, sourceDoc, sourceDocRev, testDoc]);
 
+  const runnerModel = (model && model.kind === 'ready' ? model : null) as Extract<TreeTestModel, { kind: 'ready' }> | null;
+  const sourceSelected = !!sourceFileId;
+  const sourceReady = sourceSelected && !!sourceDoc;
+  const runnerReady = sourceReady && !!runnerModel;
+  const runnerError = sourceReady && model?.kind === 'error' ? model.message : null;
+  const [runnerVisible, setRunnerVisible] = useState(false);
+  const [runnerErrorVisible, setRunnerErrorVisible] = useState(false);
+
+  useEffect(() => {
+    if (!runnerReady) {
+      setRunnerVisible(false);
+      return;
+    }
+    const rafId = window.requestAnimationFrame(() => setRunnerVisible(true));
+    return () => window.cancelAnimationFrame(rafId);
+  }, [runnerReady, sourceFileId]);
+
+  useEffect(() => {
+    if (!runnerError) {
+      setRunnerErrorVisible(false);
+      return;
+    }
+    const t = window.setTimeout(() => setRunnerErrorVisible(true), 220);
+    return () => window.clearTimeout(t);
+  }, [runnerError]);
+
   const statusLabel = useMemo(() => {
     if (status === 'connected') return 'Online';
     if (status === 'connecting') return 'Connecting…';
     return 'Offline';
   }, [status]);
 
-  if (!yDoc || !activeFile) return <div className="flex h-screen items-center justify-center text-xs opacity-80">Loading…</div>;
+  const roomReady = !!activeFile && !!yDoc && connectedRoomName === activeRoomName;
+  if (!roomReady || !contentReady) return <div className="mac-desktop dg-screen-loading h-screen w-screen" aria-hidden="true" />;
 
   if (!testDoc) {
     return (
-      <main className="mac-desktop flex h-screen flex-col">
+      <main className="mac-desktop dg-screen-fade-in flex h-screen flex-col">
         <EditorMenubar status={statusLabel} activeFileName={activeFile.name || 'Test'} onWorkspace={() => router.push('/workspace')} />
         <div className="p-6 text-sm">
           <div className="mac-window mac-double-outline p-4 bg-white text-red-800">Missing or invalid `testjson` block in this file.</div>
@@ -295,7 +322,7 @@ export function TestEditorApp() {
   }
 
   return (
-    <main className="mac-desktop flex h-screen flex-col">
+    <main className="mac-desktop dg-screen-fade-in flex h-screen flex-col">
       <EditorMenubar status={statusLabel} activeFileName={activeFile.name || 'Test'} onWorkspace={() => router.push('/workspace')} />
 
       <div className="flex-1 overflow-hidden flex">
@@ -316,9 +343,7 @@ export function TestEditorApp() {
                   <div className="mt-1 text-[11px] font-mono text-neutral-500 truncate" title={sourceFileId}>
                     {sourceFileId}
                   </div>
-                ) : (
-                  <div className="mt-1 text-[11px] text-neutral-500">Choose a diagram file to configure flow + run.</div>
-                )}
+                ) : null}
                 <div className="mt-2 flex items-center gap-2">
                   <button type="button" className="mac-btn mac-btn--primary" onClick={() => setShowSourcePicker(true)}>
                     Choose…
@@ -348,7 +373,7 @@ export function TestEditorApp() {
               <div className="text-[11px] text-neutral-500">Flow node (must have reference)</div>
               <div className="border border-black/10 max-h-[48vh] overflow-auto bg-white">
                 {flowNodeOptions.length === 0 ? (
-                  <div className="p-3 text-xs text-neutral-500">{sourceDoc ? 'No flow nodes found.' : 'Load source file to choose nodes.'}</div>
+                  sourceDoc ? <div className="p-3 text-xs text-neutral-500">No flow nodes found.</div> : null
                 ) : (
                   flowNodeOptions.map((o) => (
                     <button
@@ -366,24 +391,24 @@ export function TestEditorApp() {
                   ))
                 )}
               </div>
-              {sourceDoc && !(flowRefs as any)[testDoc.flowNodeId] ? (
-                <div className="text-[11px] text-red-600">Pick a node that has a Flow→Process reference.</div>
-              ) : null}
             </div>
           </div>
         </aside>
 
         <div className="flex-1 overflow-auto mac-canvas-bg">
           <div className="p-4">
-            {!sourceDoc ? (
-              <div className="text-xs opacity-70">Loading source diagram…</div>
-            ) : model?.kind === 'error' ? (
-              <div className="text-sm text-red-700">{model.message}</div>
-            ) : model?.kind === 'ready' ? (
-              <TreeTestRunner doc={sourceDoc} model={model} />
-            ) : (
-              <div className="text-xs opacity-70">Loading…</div>
-            )}
+            {sourceSelected ? (
+              <>
+                {runnerErrorVisible ? (
+                  <div className="text-sm text-red-700">{runnerError}</div>
+                ) : null}
+                <div
+                  className={`transition-opacity duration-300 ${runnerVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+                >
+                  {runnerModel ? <TreeTestRunner doc={sourceDoc!} model={runnerModel} /> : null}
+                </div>
+              </>
+            ) : null}
           </div>
         </div>
       </div>

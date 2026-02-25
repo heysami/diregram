@@ -267,9 +267,9 @@ export function DataObjectsCanvas({
   const { layoutNodes, bounds, cardHeightById } = useMemo(() => {
     // Increase parent card height based on how many inlined items it has.
     const base = 64;
-    // Reserve space for the bottom-left grey "placeholder bar" so it doesn't crowd content.
-    // This is static UI chrome (not tied to attrs/inlined counts), so keep it as a constant.
-    const placeholderExtra = 12;
+    // Reserve space for the bottom-left grey "placeholder bar" with visible breathing room.
+    // This keeps the footer bar from touching the last attribute row.
+    const placeholderExtra = 30;
     const chipH = 22;
     const chipGap = 6;
     const chipsPad = 10;
@@ -700,7 +700,7 @@ export function DataObjectsCanvas({
             return (
               <Fragment key={o.id}>
                 <div
-                  className={`absolute dg-do-card px-4 py-3 select-none flex flex-col ${
+                  className={`absolute dg-do-card select-none flex flex-col ${
                     o.missing ? 'is-missing' : ''
                   } ${isSelected ? 'is-selected' : ''} ${
                     selectedId && !isFocused ? 'opacity-25 hover:opacity-60 transition-opacity' : ''
@@ -760,7 +760,7 @@ export function DataObjectsCanvas({
                     <span className="dg-node-card__meta-label">Data object</span>
                     <span className="dg-node-card__meta-id">{o.id}</span>
                   </div>
-                  <div className="text-[15px] leading-[1.05] font-semibold text-gray-900 truncate">{o.name || o.id}</div>
+                  <div className="dg-node-card__title">{o.name || o.id}</div>
                   {o.missing ? <div className="text-[10px] text-red-700 mt-1">referenced but missing</div> : null}
                   {attrsToShow.length ? (
                     <div className="mt-2 pt-2 border-t border-gray-100">
@@ -802,7 +802,9 @@ export function DataObjectsCanvas({
                       ))}
                     </div>
                   ) : null}
-                  <div className="dg-node-card__placeholder" />
+                  <div className="mt-auto pt-4">
+                    <div className="dg-node-card__placeholder" />
+                  </div>
                 </div>
 
                 {showAnnotations && ann && ann.trim() ? (
@@ -835,10 +837,8 @@ export function DataObjectsCanvas({
                     onMouseDown={(e) => e.stopPropagation()}
                   >
                     <div className="rounded-md border border-slate-200 bg-white/95 px-2 py-1 shadow-sm">
-                    <div className="mac-double-outline px-2 py-1 bg-white/95">
                       <div className="text-[11px] text-slate-700 whitespace-pre-wrap break-words">{ann}</div>
                     </div>
-                  </div>
                   </div>
                 ) : null}
               </Fragment>

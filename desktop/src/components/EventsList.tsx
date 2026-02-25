@@ -7,19 +7,18 @@ type Props = {
 export function EventsList({ events }: Props) {
   if (!events.length) return null;
   return (
-    <div style={{ marginTop: 12 }}>
+    <div className="eventsBlock">
       <div className="muted">Recent sync events</div>
-      <div style={{ marginTop: 6, maxHeight: 180, overflow: 'auto' }}>
+      <div className="eventList">
         {events.map((e, idx) => (
-          <div key={idx} className="muted" style={{ marginBottom: 8 }}>
+          <div key={idx} className="eventItem muted">
             <div className="mono">
-              [{e.ts}] {e.kind} — {e.path}
+              [{e.ts}] {e.kind} - {e.path}
             </div>
-            <div style={{ opacity: 0.85 }}>{e.detail}</div>
+            <div className="eventDetail">{e.detail}</div>
           </div>
         ))}
       </div>
     </div>
   );
 }
-

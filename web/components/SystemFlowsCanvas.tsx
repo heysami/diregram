@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as Y from 'yjs';
 import { Pencil, Plus, Save, LayoutTemplate, Trash2 } from 'lucide-react';
 import type { NexusNode } from '@/types/nexus';
@@ -14,6 +14,9 @@ import { SaveTemplateModal } from '@/components/templates/SaveTemplateModal';
 import { loadSystemFlowStateFromDoc, saveSystemFlowStateToDoc, type SystemFlowState } from '@/lib/system-flow-storage';
 import { collectSystemFlowRootsFromMarkdown, deleteSystemFlowFromDoc, nextSystemFlowSfid } from '@/lib/nexus-systemflow-ops';
 import { renameLineByTokenOrIndex } from '@/lib/nexus-markdown-edit';
+
+const SYSTEM_FLOW_SWITCH_FADE_OUT_MS = 120;
+const SYSTEM_FLOW_SWITCH_SETTLE_MS = 150;
 
 export function SystemFlowsCanvas({
   doc,
@@ -50,6 +53,8 @@ export function SystemFlowsCanvas({
   const viewBarSpacer = <div className="h-12" aria-hidden />;
   const [systemFlowRoots, setSystemFlowRoots] = useState<NexusNode[]>([]);
   const [selectedSfid, setSelectedSfid] = useState<string | null>(null);
+  const [systemCanvasVisible, setSystemCanvasVisible] = useState(true);
+  const systemSwitchTimersRef = useRef<number[]>([]);
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameDraft, setRenameDraft] = useState('');
   const [insertSystemFlowFromTemplateOpen, setInsertSystemFlowFromTemplateOpen] = useState(false);
@@ -57,6 +62,33 @@ export function SystemFlowsCanvas({
   const [pendingTemplatePayload, setPendingTemplatePayload] = useState<string | null>(null);
   const [pendingTemplateHeaderBase, setPendingTemplateHeaderBase] = useState<Omit<NexusTemplateHeader, 'name'> | null>(null);
   const [pendingTemplateDefaultName, setPendingTemplateDefaultName] = useState<string>('Template');
+
+  const clearSystemSwitchTimers = useCallback(() => {
+    systemSwitchTimersRef.current.forEach((id) => window.clearTimeout(id));
+    systemSwitchTimersRef.current = [];
+  }, []);
+
+  useEffect(() => () => clearSystemSwitchTimers(), [clearSystemSwitchTimers]);
+
+  const selectSystemFlowWithTransition = useCallback(
+    (sfid: string) => {
+      if (!sfid) return;
+      if (sfid === selectedSfid) {
+        clearSystemSwitchTimers();
+        setSystemCanvasVisible(true);
+        return;
+      }
+      clearSystemSwitchTimers();
+      setSystemCanvasVisible(false);
+      const fadeOutTimer = window.setTimeout(() => {
+        setSelectedSfid(sfid);
+        const settleTimer = window.setTimeout(() => setSystemCanvasVisible(true), SYSTEM_FLOW_SWITCH_SETTLE_MS);
+        systemSwitchTimersRef.current.push(settleTimer);
+      }, SYSTEM_FLOW_SWITCH_FADE_OUT_MS);
+      systemSwitchTimersRef.current.push(fadeOutTimer);
+    },
+    [clearSystemSwitchTimers, selectedSfid],
+  );
 
   type SystemFlowTemplateV1 = {
     version: 1;
@@ -241,7 +273,7 @@ export function SystemFlowsCanvas({
                   <button
                     key={sfid}
                     type="button"
-                    onClick={() => setSelectedSfid(sfid)}
+                    onClick={() => selectSystemFlowWithTransition(sfid)}
                     className="w-full px-2 py-2 text-left text-xs mac-interactive-row"
                     aria-selected={selectedSfid === sfid}
                   >
@@ -257,7 +289,11 @@ export function SystemFlowsCanvas({
 
       <div className="flex-1 relative m-4 ml-0">
         {selectedRoot ? (
-          <div className="absolute inset-0 mac-window overflow-hidden flex flex-col">
+          <div
+            className={`absolute inset-0 mac-window overflow-hidden flex flex-col dg-switch-fade ${
+              systemCanvasVisible ? 'dg-switch-fade--visible' : 'dg-switch-fade--hidden'
+            }`}
+          >
             <div className="mac-titlebar">
               <div className="mac-title">{selectedRoot.content}</div>
               <div className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-2">

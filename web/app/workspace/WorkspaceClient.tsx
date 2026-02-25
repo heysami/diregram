@@ -16,7 +16,7 @@ export default function WorkspaceClient() {
 
   return (
     <RequireAuth>
-      <main className="mac-desktop flex h-screen flex-col">
+      <main className="mac-desktop dg-screen-fade-in flex h-screen flex-col">
         <header className="mac-menubar px-4 flex items-center justify-between shrink-0 z-10 relative">
           <div className="flex items-center gap-4">
             <button type="button" onClick={() => router.push('/')} className="text-left">
@@ -44,4 +44,3 @@ export default function WorkspaceClient() {
     </RequireAuth>
   );
 }
-

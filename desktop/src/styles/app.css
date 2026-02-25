@@ -1,22 +1,30 @@
 :root {
   color-scheme: light;
-  --mac-black: #000000;
-  --mac-white: #ffffff;
-  --mac-desktop: #ffffff;
-  --mac-surface: #ffffff;
-  --mac-control: #ffffff;
-  --mac-border: #000000;
-  --mac-inset: #6b6b6b;
-  --mac-accent: #000000;
-  --mac-font: Chicago, Geneva, 'Lucida Grande', 'Helvetica Neue', Helvetica, Arial, system-ui, sans-serif;
-  --mac-mono: Monaco, 'SFMono-Regular', ui-monospace, Menlo, Consolas, 'Courier New', monospace;
-  font-family: var(--mac-font);
+  --dg-bg: #e1e3e6;
+  --dg-surface: #f4f5f7;
+  --dg-surface-alt: #eaedf1;
+  --dg-surface-muted: #eef0f3;
+  --dg-text: #181b20;
+  --dg-muted: #6f7680;
+  --dg-border: #bcc2ca;
+  --dg-border-strong: #989fa9;
+  --dg-border-soft: rgba(24, 27, 32, 0.16);
+  --dg-accent: #e11d48;
+  --dg-plus-pattern: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Cpath d='M12 9v6M9 12h6' stroke='%23181b20' stroke-opacity='0.2' stroke-width='1' stroke-linecap='square' shape-rendering='crispEdges'/%3E%3C/svg%3E");
+  --app-font: "Lexend", "Helvetica Neue", Helvetica, Arial, system-ui, sans-serif;
+  --app-mono: "Sometype Mono", "SFMono-Regular", ui-monospace, Menlo, Consolas, "Courier New", monospace;
+  font-family: var(--app-font);
+}
+
+* {
+  box-sizing: border-box;
 }
 
 body {
   margin: 0;
-  background: var(--mac-desktop);
-  color: var(--mac-black);
+  background: var(--dg-bg);
+  color: var(--dg-text);
+  font-family: var(--app-font);
 }
 
 .appShell {
@@ -24,37 +32,92 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 18px;
+  padding: 24px;
 }
 
 .macDesktop {
-  background-color: var(--mac-desktop);
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M6 3v6M3 6h6' stroke='%23000' stroke-opacity='0.12' stroke-width='1' stroke-linecap='square' shape-rendering='crispEdges'/%3E%3C/svg%3E");
-  background-repeat: repeat;
-  background-position: 0 0;
+  background-color: var(--dg-bg);
+  background-image:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.56), rgba(255, 255, 255, 0) 34%),
+    var(--dg-plus-pattern);
+  background-size:
+    auto,
+    24px 24px;
+  background-position: 0 0, 0 0;
+  background-repeat: no-repeat, repeat;
 }
 
 .card {
-  width: 100%;
-  max-width: 860px;
-  background: var(--mac-surface);
-  border: 2px solid var(--mac-border);
-  box-shadow: 4px 4px 0 var(--mac-black);
-  padding: 14px 14px 12px;
+  width: min(980px, 100%);
+  border: 1px solid var(--dg-border);
+  border-radius: 20px;
+  background: color-mix(in oklab, var(--dg-surface) 92%, white);
+  box-shadow: 0 2px 0 rgba(15, 16, 18, 0.2), 0 14px 28px rgba(24, 27, 32, 0.12);
+  padding: 18px;
+}
+
+.appHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .titleRow {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
 }
 
 .brandMark {
   display: inline-flex;
-  width: 20px;
-  height: 20px;
+  width: 24px;
+  height: 24px;
   align-items: center;
   justify-content: center;
+  color: var(--dg-text);
+}
+
+.appTitle {
+  font-size: 1.34rem;
+  font-weight: 760;
+  letter-spacing: 0.01em;
+  line-height: 1.05;
+}
+
+.contentStack {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.stack-sm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.stack-md {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 2px;
+  padding-top: 12px;
+  border-top: 1px solid var(--dg-border-soft);
+}
+
+.subPanel {
+  border: 1px solid color-mix(in oklab, var(--dg-border) 88%, white);
+  background: color-mix(in oklab, var(--dg-surface-alt) 74%, white);
+  border-radius: 12px;
+  padding: 10px;
 }
 
 .row {
@@ -64,50 +127,179 @@ body {
   align-items: center;
 }
 
+.row-tight {
+  gap: 8px;
+}
+
 .btn {
-  background: var(--mac-control);
-  color: var(--mac-black);
-  border: 1px solid var(--mac-border);
-  box-shadow: inset 1px 1px 0 var(--mac-white), inset -1px -1px 0 var(--mac-inset);
-  padding: 4px 10px;
-  font-size: 12px;
-  line-height: 1.1;
+  border: 1px solid var(--dg-border-strong);
+  background: color-mix(in oklab, var(--dg-surface) 88%, white);
+  color: var(--dg-text);
+  border-radius: 10px;
+  box-shadow: 0 1px 0 rgba(15, 16, 18, 0.2);
+  min-height: 36px;
+  padding: 0 14px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
   user-select: none;
+  font-family: var(--app-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  transition: transform 130ms ease, box-shadow 130ms ease, background-color 130ms ease, border-color 130ms ease;
+}
+
+.btn:hover {
+  transform: translateY(-1px);
+  background: color-mix(in oklab, var(--dg-surface-muted) 82%, white);
+  box-shadow: 0 2px 0 rgba(15, 16, 18, 0.24), 0 8px 14px rgba(15, 16, 18, 0.1);
 }
 
 .btn:active {
-  box-shadow: inset -1px -1px 0 var(--mac-white), inset 1px 1px 0 var(--mac-inset);
-}
-
-.btnPrimary {
-  background: var(--mac-accent);
-  color: var(--mac-white);
+  transform: translateY(0);
   box-shadow: none;
 }
 
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: 0 1px 0 rgba(15, 16, 18, 0.2);
+}
+
+.btnPrimary {
+  background: var(--dg-accent);
+  border-color: color-mix(in oklab, var(--dg-accent) 66%, black);
+  color: #fff;
+}
+
+.btnPrimary:hover {
+  background: color-mix(in oklab, var(--dg-accent) 85%, black);
+}
+
 .muted {
-  color: rgba(0, 0, 0, 0.72);
-  font-size: 12px;
+  color: var(--dg-muted);
+  font-size: 14px;
+  line-height: 1.42;
 }
 
 .mono {
-  font-family: var(--mac-mono);
-  font-size: 12px;
+  color: var(--dg-text);
+  font-family: var(--app-mono);
+  font-size: 13px;
+}
+
+.codePill {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--dg-border);
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--dg-surface-muted) 80%, white);
+  padding: 0.12rem 0.48rem;
+}
+
+.pathValue {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.helpText {
+  max-width: 76ch;
 }
 
 input,
 select {
-  border: 1px solid var(--mac-border);
-  background: var(--mac-white);
-  color: var(--mac-black);
-  padding: 4px 8px;
-  font-size: 12px;
-  line-height: 1.1;
-  min-width: 260px;
+  border: 1px solid var(--dg-border-strong);
+  border-radius: 10px;
+  background: color-mix(in oklab, var(--dg-surface) 92%, white);
+  color: var(--dg-text);
+  box-shadow: inset 0 1px 1px rgba(15, 16, 18, 0.08);
+  min-width: 300px;
+  height: 38px;
+  padding: 0 10px;
+  font-size: 14px;
+  line-height: 1.2;
+}
+
+input::placeholder {
+  color: color-mix(in oklab, var(--dg-muted) 78%, white);
+}
+
+input:focus-visible,
+select:focus-visible {
+  outline: 1px solid color-mix(in oklab, var(--dg-accent) 65%, black);
+  outline-offset: 1px;
 }
 
 input[type='password'] {
-  letter-spacing: 0.6px;
+  letter-spacing: 0.5px;
 }
 
+.fieldWide {
+  flex: 1 1 340px;
+  min-width: min(340px, 100%);
+}
+
+.eventsBlock {
+  margin-top: 2px;
+}
+
+.eventList {
+  margin-top: 8px;
+  max-height: 196px;
+  overflow: auto;
+  display: grid;
+  gap: 8px;
+}
+
+.eventItem {
+  border: 1px solid color-mix(in oklab, var(--dg-border) 90%, white);
+  border-radius: 10px;
+  background: color-mix(in oklab, var(--dg-surface-alt) 62%, white);
+  padding: 8px 10px;
+}
+
+.eventDetail {
+  opacity: 0.88;
+  margin-top: 2px;
+}
+
+.statusBar {
+  margin-top: 14px;
+  border: 1px solid color-mix(in oklab, var(--dg-border) 92%, white);
+  border-radius: 10px;
+  background: color-mix(in oklab, var(--dg-surface-alt) 70%, white);
+  padding: 8px 11px;
+  font-size: 13px;
+  color: var(--dg-text);
+}
+
+@media (max-width: 900px) {
+  .appShell {
+    padding: 14px;
+    align-items: flex-start;
+  }
+
+  .card {
+    border-radius: 16px;
+    padding: 14px;
+  }
+
+  .btn {
+    min-height: 34px;
+  }
+
+  input,
+  select {
+    min-width: 220px;
+    width: 100%;
+  }
+
+  .fieldWide {
+    min-width: 220px;
+    width: 100%;
+  }
+}

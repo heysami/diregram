@@ -46,7 +46,7 @@ export function VisionEditorApp() {
 
   const { doc: yDoc, provider, status, connectedRoomName, synced } = useYjs(activeRoomName);
 
-  useYjsNexusTextPersistence({
+  const { contentReady } = useYjsNexusTextPersistence({
     doc: yDoc,
     provider,
     activeRoomName,
@@ -377,8 +377,9 @@ export function VisionEditorApp() {
 
   const userId = user?.id || null;
 
-  if (!yDoc || !activeFile) return <div className="flex h-screen items-center justify-center text-xs opacity-80">Loading…</div>;
-  if (!visionDoc) return <div className="flex h-screen items-center justify-center text-xs opacity-80">Loading vision…</div>;
+  const roomReady = !!activeFile && !!yDoc && connectedRoomName === activeRoomName;
+  if (!roomReady || !contentReady) return <div className="mac-desktop dg-screen-loading h-screen w-screen" aria-hidden="true" />;
+  if (!visionDoc) return <div className="mac-desktop dg-screen-loading h-screen w-screen" aria-hidden="true" />;
 
   return (
     <VisionEditor
@@ -417,4 +418,3 @@ export function VisionEditorApp() {
     />
   );
 }
-

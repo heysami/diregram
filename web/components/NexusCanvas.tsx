@@ -94,6 +94,11 @@ interface Props {
    * Useful for "first open" of a view so users immediately see the graph.
    */
   initialFitToContent?: boolean;
+  /**
+   * Optional one-time callback fired after the initial fit/center has settled.
+   * Used by parent screens to reveal content only after viewport is stable.
+   */
+  onInitialViewportSettled?: () => void;
   activeVariantState: Record<string, Record<string, string>>;
   onActiveVariantChange: (state: Record<string, Record<string, string>> | ((prev: Record<string, Record<string, string>>) => Record<string, Record<string, string>>)) => void;
   selectedNodeId: string | null;
@@ -218,6 +223,7 @@ export function NexusCanvas({
     showComments = true,
     showAnnotations = true,
     initialFitToContent = false,
+    onInitialViewportSettled,
     activeVariantState, onActiveVariantChange, selectedNodeId, onSelectNode,
     expandedNodes, onExpandedNodesChange, processFlowModeNodes, onProcessFlowModeNodesChange,
     getRunningNumber, getProcessRunningNumber,
@@ -263,10 +269,22 @@ export function NexusCanvas({
   const containerRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
   const initializedRef = useRef(false);
+  const initialViewportSettledRef = useRef(false);
   const lastViewportResetTickRef = useRef<number | undefined>(viewportResetTick);
 
   const pendingViewportFitRef = useRef(false);
   const fitToContentRef = useRef<(opts?: { resetZoom?: boolean; fitZoom?: boolean }) => void>(() => {});
+
+  const emitInitialViewportSettled = useCallback(() => {
+    if (initialViewportSettledRef.current) return;
+    initialViewportSettledRef.current = true;
+    if (!onInitialViewportSettled) return;
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        onInitialViewportSettled();
+      });
+    });
+  }, [onInitialViewportSettled]);
 
   const [expandedNodeGhostResize, setExpandedNodeGhostResize] = useState<null | {
     nodeId: string;
@@ -308,7 +326,8 @@ export function NexusCanvas({
     if (!initialFitToContent) return;
     pendingViewportFitRef.current = true;
     initializedRef.current = false;
-  }, [initialFitToContent]);
+    initialViewportSettledRef.current = false;
+  }, [doc, initialFitToContent]);
 
   useEffect(() => {
     if (viewportResetTick === undefined) return;
@@ -486,6 +505,13 @@ export function NexusCanvas({
       };
       return roots.map((root) => transformNode(root)).filter(Boolean) as NexusNode[];
   }, [roots, activeVariantState, pruneSubtree]);
+
+  useEffect(() => {
+    if (!initialFitToContent) return;
+    if (initialViewportSettledRef.current) return;
+    if (visualTree.length > 0) return;
+    emitInitialViewportSettled();
+  }, [emitInitialViewportSettled, initialFitToContent, visualTree.length]);
 
   const flattenedNodes = useMemo(() => {
     const flat: NexusNode[] = [];
@@ -1699,6 +1725,7 @@ export function NexusCanvas({
               });
               initializedRef.current = true;
               pendingViewportFitRef.current = false;
+              if (initialFitToContent) emitInitialViewportSettled();
               if (hadInvalid) {
                 topToast.show('Some nodes had invalid layout values; view was auto-recovered.');
               }
@@ -1718,6 +1745,8 @@ export function NexusCanvas({
     scale,
     conditionalHubNoteIndex,
     layoutDirection,
+    initialFitToContent,
+    emitInitialViewportSettled,
   ]); 
 
   // If viewport math ever produces non-finite values (NaN/Infinity), reset to a safe state.

@@ -164,7 +164,7 @@ export function GridEditor({
   }
 
   return (
-    <main className="mac-desktop flex h-screen flex-col">
+    <main className="mac-desktop dg-screen-fade-in flex h-screen flex-col">
       <EditorMenubar
         status={statusLabel || ''}
         activeFileName={title || 'Grid'}
@@ -458,4 +458,3 @@ export function GridEditor({
     </main>
   );
 }
-

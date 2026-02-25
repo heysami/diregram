@@ -57,6 +57,9 @@ import { canEditFromAccess } from '@/lib/access-control';
 import { fetchProfileDefaultLayoutDirection } from '@/lib/layout-direction-supabase';
 import { listGlobalTemplates, loadGlobalTemplateContent } from '@/lib/global-templates';
 
+const VIEW_SWITCH_FADE_OUT_MS = 120;
+const VIEW_SWITCH_SETTLE_MS = 150;
+
 type ActiveFileMeta = {
   id: string;
   name: string;
@@ -143,9 +146,10 @@ export function EditorApp() {
   const { configured, ready, supabase, user } = useAuth();
   const supabaseMode = configured && !user?.isLocalAdmin;
   const globalTemplatesEnabled = supabaseMode && ready && !!supabase && !!user?.id;
+  const fileIdFromUrl = searchParams?.get('file') || '';
 
   const [activeFile, setActiveFile] = useState<ActiveFileMeta | null>(null);
-  const activeRoomName = activeFile?.roomName || 'nexus-demo';
+  const activeRoomName = activeFile?.roomName || (fileIdFromUrl ? `file-${fileIdFromUrl}` : 'nexus-demo');
   const [layoutDirection, setLayoutDirection] = useState<LayoutDirection>('horizontal');
 
   const [templateScope, setTemplateScope] = useState<'project' | 'account' | 'global'>('project');
@@ -497,12 +501,36 @@ export function EditorApp() {
     setSelectedNodeIds,
     setSelectedExpandedGridNode,
   });
+  const [viewContentVisible, setViewContentVisible] = useState(true);
+  const [diagramViewportReady, setDiagramViewportReady] = useState(false);
+  const viewSwitchTimersRef = useRef<number[]>([]);
+  const clearViewSwitchTimers = useCallback(() => {
+    viewSwitchTimersRef.current.forEach((id) => window.clearTimeout(id));
+    viewSwitchTimersRef.current = [];
+  }, []);
+  useEffect(() => () => clearViewSwitchTimers(), [clearViewSwitchTimers]);
+  const requestViewChange = useCallback(
+    (next: AppView) => {
+      if (next === activeView) return;
+      clearViewSwitchTimers();
+      setViewContentVisible(false);
+      const fadeOutTimer = window.setTimeout(() => {
+        changeView(next);
+        const settleTimer = window.setTimeout(() => setViewContentVisible(true), VIEW_SWITCH_SETTLE_MS);
+        viewSwitchTimersRef.current.push(settleTimer);
+      }, VIEW_SWITCH_FADE_OUT_MS);
+      viewSwitchTimersRef.current.push(fadeOutTimer);
+    },
+    [activeView, changeView, clearViewSwitchTimers],
+  );
+  const handleInitialViewportSettled = useCallback(() => {
+    setDiagramViewportReady(true);
+  }, []);
 
   // Editor opens ONE file, chosen via ?file=<id>.
   // - Supabase mode: file id is a UUID from DB; RLS enforces access.
   // - Local mode: file id is from localStorage.
   useEffect(() => {
-    const fileIdFromUrl = searchParams?.get('file');
     if (!fileIdFromUrl) {
       router.replace('/workspace');
       return;
@@ -631,7 +659,7 @@ export function EditorApp() {
     return () => {
       cancelled = true;
     };
-  }, [searchParams, supabaseMode, ready, user?.id, user?.email, router]);
+  }, [fileIdFromUrl, supabaseMode, ready, user?.id, user?.email, router]);
 
   const persistLayoutDirectionForActiveFile = useCallback(
     async (next: LayoutDirection) => {
@@ -661,7 +689,7 @@ export function EditorApp() {
     [activeFile?.id, supabaseMode],
   );
 
-  useYjsNexusTextPersistence({
+  const { contentReady } = useYjsNexusTextPersistence({
     doc,
     provider,
     activeRoomName,
@@ -1304,7 +1332,9 @@ export function EditorApp() {
     return matchingVariant?.id ?? selectedNode.variants[0]?.id ?? null;
   }, [selectedNode, activeVariantState]);
 
-  if (!doc) return <div className="flex h-screen items-center justify-center">Loading Collaboration Engine...</div>;
+  const roomReady = !!activeFile && !!doc && connectedRoomName === activeRoomName;
+  if (!roomReady || !contentReady) return <div className="mac-desktop dg-screen-loading h-screen w-screen" aria-hidden="true" />;
+  const screenReady = diagramViewportReady;
 
   // Emergency clear function - completely resets the database (current doc only)
   const clearDatabase = () => {
@@ -1361,7 +1391,7 @@ export function EditorApp() {
   const viewBarWidthClass = 'w-[280px] max-w-[35vw] min-w-[200px]';
 
   return (
-    <main className="mac-desktop flex h-screen flex-col">
+    <main className={`mac-desktop relative flex h-screen flex-col ${screenReady ? 'dg-screen-fade-in' : ''}`}>
       <AppHeader
         status={status}
         onClearDatabase={clearDatabase}
@@ -1388,7 +1418,7 @@ export function EditorApp() {
         }}
       />
 
-      <div className="flex-1 overflow-hidden relative">
+      <div className={`flex-1 overflow-hidden relative dg-switch-fade ${screenReady ? 'dg-switch-fade--visible' : 'dg-switch-fade--hidden'}`}>
         {/* View bar: overlays top-left, above left panels only (doesn't shrink right side). */}
         <div className="absolute left-4 top-2 z-50 pointer-events-auto">
           <div className={`${viewBarWidthClass} inline-flex items-center justify-between mac-double-outline bg-white px-2 py-1`}>
@@ -1396,7 +1426,7 @@ export function EditorApp() {
                 <button
                   type="button"
                   className={`mac-btn mac-btn--icon-sm ${activeView === 'main' ? 'mac-btn--primary' : ''}`}
-                  onClick={() => changeView('main')}
+                  onClick={() => requestViewChange('main')}
                   aria-label="Site Map"
                 >
                   <Network size={16} />
@@ -1409,7 +1439,7 @@ export function EditorApp() {
                 <button
                   type="button"
                   className={`mac-btn mac-btn--icon-sm ${activeView === 'flows' ? 'mac-btn--primary' : ''}`}
-                  onClick={() => changeView('flows')}
+                  onClick={() => requestViewChange('flows')}
                   aria-label="Flow"
                 >
                   <Workflow size={16} />
@@ -1422,7 +1452,7 @@ export function EditorApp() {
                 <button
                   type="button"
                   className={`mac-btn mac-btn--icon-sm ${activeView === 'systemFlow' ? 'mac-btn--primary' : ''}`}
-                  onClick={() => changeView('systemFlow')}
+                  onClick={() => requestViewChange('systemFlow')}
                   aria-label="Tech Flow"
                 >
                   <LayoutDashboard size={16} />
@@ -1435,7 +1465,7 @@ export function EditorApp() {
                 <button
                   type="button"
                   className={`mac-btn mac-btn--icon-sm ${activeView === 'dataObjects' ? 'mac-btn--primary' : ''}`}
-                  onClick={() => changeView('dataObjects')}
+                  onClick={() => requestViewChange('dataObjects')}
                   aria-label="Data Relationship"
                 >
                   <Database size={16} />
@@ -1447,7 +1477,11 @@ export function EditorApp() {
           </div>
         </div>
 
-        <div className="absolute inset-0">
+        <div
+          className={`absolute inset-0 dg-switch-fade ${
+            viewContentVisible ? 'dg-switch-fade--visible' : 'dg-switch-fade--hidden'
+          }`}
+        >
           {activeView === 'dataObjects' ? (
             <DataObjectsCanvas
               doc={doc}
@@ -1557,6 +1591,7 @@ export function EditorApp() {
               showComments={showComments}
               showAnnotations={showAnnotations}
               initialFitToContent
+              onInitialViewportSettled={handleInitialViewportSettled}
               selectedNodeId={selectedNodeId}
               onSelectNode={(id) => {
                 setSelectedNodeId(id);
@@ -1624,7 +1659,9 @@ export function EditorApp() {
 	        {/* Floating left window: markdown source (only on main canvas) */}
 	        {activeView === 'main' ? (
 	          <div
-	            className="absolute left-4 top-14 bottom-24 z-50 pointer-events-none"
+	            className={`absolute left-4 top-14 bottom-24 z-50 pointer-events-none dg-switch-fade ${
+	              viewContentVisible ? 'dg-switch-fade--visible' : 'dg-switch-fade--hidden'
+	            }`}
 	            data-editor-left-panel
 	            data-safe-panel="left"
 	            data-safe-panel-view="main"
@@ -1635,7 +1672,9 @@ export function EditorApp() {
 
           {/* Floating right window(s) */}
           <div
-            className="absolute right-4 top-4 bottom-24 z-50 pointer-events-auto"
+            className={`absolute right-4 top-4 bottom-24 z-50 pointer-events-auto dg-switch-fade ${
+              viewContentVisible ? 'dg-switch-fade--visible' : 'dg-switch-fade--hidden'
+            }`}
             data-editor-right-panel
             data-safe-panel="right"
             data-safe-panel-view="*"
@@ -1766,6 +1805,7 @@ export function EditorApp() {
           canRedo={canRedo}
         />
       </div>
+      {!screenReady ? <div className="absolute inset-0 z-[120] mac-desktop dg-screen-loading pointer-events-none" aria-hidden="true" /> : null}
     </main>
   );
 }

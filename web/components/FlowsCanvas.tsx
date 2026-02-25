@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as Y from 'yjs';
 import { Pencil, Plus, Save, LayoutTemplate, Trash2, X } from 'lucide-react';
 import type { ToolType } from '@/components/Toolbar';
@@ -59,6 +59,9 @@ type FlowTabTemplateV1 = {
   };
   refsByOffset?: Record<string, FlowTabProcessReference>;
 };
+
+const FLOW_SWITCH_FADE_OUT_MS = 120;
+const FLOW_SWITCH_SETTLE_MS = 150;
 
 function parseFlowTabTemplate(rendered: string): FlowTabTemplateV1 {
   const src = String(rendered || '').replace(/\r\n?/g, '\n').trim();
@@ -167,6 +170,8 @@ export function FlowsCanvas({
 
   const [flowRoots, setFlowRoots] = useState<NexusNode[]>([]);
   const [selectedFid, setSelectedFid] = useState<string | null>(null);
+  const [flowCanvasVisible, setFlowCanvasVisible] = useState(true);
+  const flowSwitchTimersRef = useRef<number[]>([]);
   const [swimlane, setSwimlane] = useState<FlowTabSwimlaneData | null>(null);
   const [nextLaneId, setNextLaneId] = useState<string>('branch-1');
   const [nextStage, setNextStage] = useState<number>(0);
@@ -209,6 +214,39 @@ export function FlowsCanvas({
 
   const tagStore = useTagStore(doc);
   const tagNameById = useMemo(() => new Map(tagStore.tags.map((t) => [t.id, t.name])), [tagStore.tags]);
+
+  const clearFlowSwitchTimers = useCallback(() => {
+    flowSwitchTimersRef.current.forEach((id) => window.clearTimeout(id));
+    flowSwitchTimersRef.current = [];
+  }, []);
+
+  useEffect(() => () => clearFlowSwitchTimers(), [clearFlowSwitchTimers]);
+
+  const selectFlowWithTransition = useCallback(
+    (fid: string) => {
+      if (!fid) return;
+      if (fid === selectedFid) {
+        clearFlowSwitchTimers();
+        setFlowCanvasVisible(true);
+        setRightPreview({ kind: 'swimlane', fid });
+        onSelectNode(null);
+        onSelectNodeIds([]);
+        return;
+      }
+      clearFlowSwitchTimers();
+      setFlowCanvasVisible(false);
+      const fadeOutTimer = window.setTimeout(() => {
+        setSelectedFid(fid);
+        setRightPreview({ kind: 'swimlane', fid });
+        onSelectNode(null);
+        onSelectNodeIds([]);
+        const settleTimer = window.setTimeout(() => setFlowCanvasVisible(true), FLOW_SWITCH_SETTLE_MS);
+        flowSwitchTimersRef.current.push(settleTimer);
+      }, FLOW_SWITCH_FADE_OUT_MS);
+      flowSwitchTimersRef.current.push(fadeOutTimer);
+    },
+    [clearFlowSwitchTimers, onSelectNode, onSelectNodeIds, selectedFid],
+  );
 
   useEffect(() => {
     const yText = doc.getText('nexus');
@@ -1059,12 +1097,7 @@ export function FlowsCanvas({
                 <button
                   key={`${fid}:${r.id}`}
                   type="button"
-                  onClick={() => {
-                    setSelectedFid(fid);
-                    setRightPreview({ kind: 'swimlane', fid });
-                    onSelectNode(null);
-                    onSelectNodeIds([]);
-                  }}
+                  onClick={() => selectFlowWithTransition(fid)}
                   className="w-full px-2 py-2 text-left text-xs mac-interactive-row"
                   aria-selected={selectedFid === fid}
                 >
@@ -1235,7 +1268,11 @@ export function FlowsCanvas({
 
       <div className="flex-1 relative m-4 ml-0">
         {rightPreview.kind === 'swimlane' && selectedRoot ? (
-          <div className="absolute inset-0 flex flex-col">
+          <div
+            className={`absolute inset-0 flex flex-col dg-switch-fade ${
+              flowCanvasVisible ? 'dg-switch-fade--visible' : 'dg-switch-fade--hidden'
+            }`}
+          >
             <div className="shrink-0 mac-window overflow-hidden">
               <div className="mac-titlebar">
                 <div className="mac-title">{selectedRoot.content}</div>

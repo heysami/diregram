@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type * as Y from 'yjs';
 
 type PersistOptions = {
@@ -31,7 +31,7 @@ type PersistOptions = {
   preventOverwriteNonEmptySnapshotWithEmpty?: boolean;
 };
 
-export function useYjsNexusTextPersistence(opts: PersistOptions) {
+export function useYjsNexusTextPersistence(opts: PersistOptions): { contentReady: boolean } {
   const {
     doc,
     provider,
@@ -49,13 +49,30 @@ export function useYjsNexusTextPersistence(opts: PersistOptions) {
   } = opts;
 
   const saveTimerRef = useRef<number | null>(null);
+  const [contentReady, setContentReady] = useState(false);
+
+  useEffect(() => {
+    const ready =
+      !!doc &&
+      !!provider &&
+      !!fileId &&
+      connectedRoomName === activeRoomName;
+    if (!ready && contentReady) setContentReady(false);
+  }, [doc, provider, fileId, connectedRoomName, activeRoomName, contentReady]);
 
   useEffect(() => {
     if (!doc || !provider || !fileId) return;
     // CRITICAL: never seed/save into the wrong doc during room switches.
     if (connectedRoomName !== activeRoomName) return;
 
+    setContentReady(false);
     const yText = doc.getText('nexus');
+    let readyMarked = false;
+    const markReady = () => {
+      if (readyMarked) return;
+      readyMarked = true;
+      setContentReady(true);
+    };
 
     const seedIfEmpty = () => {
       const current = yText.toString();
@@ -75,10 +92,25 @@ export function useYjsNexusTextPersistence(opts: PersistOptions) {
     const seedOnce = () => {
       if (seeded) return;
       seedIfEmpty();
-      if (yText.toString().trim().length > 0) seeded = true;
+      if (yText.toString().trim().length > 0) {
+        seeded = true;
+        markReady();
+      }
     };
-    if (synced) seedOnce();
-    const seedFallbackTimer = window.setTimeout(() => seedOnce(), 250);
+    if (yText.toString().trim().length > 0) {
+      seeded = true;
+      markReady();
+    }
+    if (synced) {
+      seedOnce();
+      // Synced and still empty means real empty doc; treat as ready.
+      markReady();
+    }
+    const seedFallbackTimer = window.setTimeout(() => {
+      seedOnce();
+      // If we successfully seeded from local snapshot/starter before sync, reveal.
+      if (yText.toString().trim().length > 0) markReady();
+    }, 250);
 
     const saveNow = () => {
       const next = yText.toString();
@@ -104,9 +136,14 @@ export function useYjsNexusTextPersistence(opts: PersistOptions) {
       }, debounceMs);
     };
 
+    const onTextChange = () => {
+      markReady();
+      scheduleSave();
+    };
+
     // Save initial content too (covers new docs)
     scheduleSave();
-    yText.observe(scheduleSave);
+    yText.observe(onTextChange);
 
     return () => {
       try {
@@ -115,7 +152,7 @@ export function useYjsNexusTextPersistence(opts: PersistOptions) {
         // ignore
       }
       try {
-        yText.unobserve(scheduleSave);
+        yText.unobserve(onTextChange);
       } catch {
         // ignore
       }
@@ -142,5 +179,6 @@ export function useYjsNexusTextPersistence(opts: PersistOptions) {
     debounceMs,
     preventOverwriteNonEmptySnapshotWithEmpty,
   ]);
-}
 
+  return { contentReady };
+}

@@ -528,25 +528,21 @@ export function App() {
   return (
     <div className="appShell macDesktop">
       <div className="card macWindow">
-        <div className="row" style={{ justifyContent: 'space-between' }}>
-          <div>
-            <div className="titleRow">
-              <span className="brandMark">
-                <DiregramMark size={16} />
-              </span>
-              <div style={{ fontSize: 14, fontWeight: 800, letterSpacing: 0.2 }}>Diregram Sync</div>
-            </div>
+        <div className="appHeader">
+          <div className="titleRow">
+            <span className="brandMark">
+              <DiregramMark size={18} />
+            </span>
+            <div className="appTitle">Diregram Sync</div>
           </div>
-          <div className="row">
-            {step === 'signedIn' ? (
-              <button className="btn" onClick={signOut} type="button">
-                Sign out
-              </button>
-            ) : null}
-          </div>
+          {step === 'signedIn' ? (
+            <button className="btn" onClick={signOut} type="button">
+              Sign out
+            </button>
+          ) : null}
         </div>
 
-        <div style={{ marginTop: 14 }}>
+        <div className="contentStack">
           {!config ? (
             <ConnectPanel
               hostedUrl={configHostedUrl}
@@ -575,23 +571,23 @@ export function App() {
             />
           ) : (
             <>
-              <div className="row">
+              <div className="row row-tight">
                 <div className="muted">Signed in as</div>
                 <div className="mono">{email || '(unknown)'}</div>
               </div>
 
-              <div className="row" style={{ marginTop: 10 }}>
+              <div className="row">
                 <button className="btn" onClick={toggleLaunchAtLogin} type="button">
                   {launchAtLogin ? 'Disable launch at login' : 'Enable launch at login'}
                 </button>
                 <div className="muted">{launchAtLogin ? 'Launch at login: ON' : 'Launch at login: OFF'}</div>
               </div>
 
-              <div className="row" style={{ marginTop: 12 }}>
+              <div className="row">
                 <button className="btn btnPrimary" onClick={pickVaultFolder} type="button">
                   Choose vault folder
                 </button>
-                <div className="mono">{vaultPath || '(not selected)'}</div>
+                <div className="mono pathValue">{vaultPath || '(not selected)'}</div>
               </div>
 
               <OpenAiKeySection
@@ -602,8 +598,8 @@ export function App() {
                 onClear={clearKey}
               />
 
-              <div style={{ marginTop: 14 }}>
-                <div className="row" style={{ marginTop: 8 }}>
+              <section className="section">
+                <div className="row row-tight">
                   <div className="muted">
                     Projects in account: <span className="mono">{projects.length}</span>
                   </div>
@@ -613,18 +609,18 @@ export function App() {
                 </div>
 
                 {projects.length === 0 ? (
-                  <div className="muted" style={{ marginTop: 10 }}>
+                  <div className="muted helpText">
                     No projects found. If you have “projects” in the web app but don’t see them here, those may be local-only (not saved to
                     Supabase) or you may be connected to a different environment/account.
                   </div>
                 ) : null}
 
-                <div className="muted" style={{ marginTop: 10 }}>
+                <div className="muted helpText">
                   When you choose a vault, Diregram Sync will mirror every project into{' '}
-                  <span className="mono">{syncRootFolderName}/&lt;ProjectName&gt;/…</span>.
+                  <span className="mono codePill">{syncRootFolderName}/&lt;ProjectName&gt;/…</span>.
                 </div>
 
-                <div className="row" style={{ marginTop: 12 }}>
+                <div className="row">
                   {watching || pulling ? (
                     <button className="btn" onClick={stopSyncAll} type="button">
                       Stop sync
@@ -646,19 +642,19 @@ export function App() {
                 </div>
 
                 {syncInfo ? (
-                  <div className="muted" style={{ marginTop: 10 }}>
+                  <div className="muted helpText">
                     {syncInfo}
                   </div>
                 ) : null}
 
                 <EventsList events={events} />
-              </div>
+              </section>
             </>
           )}
         </div>
 
         {status ? (
-          <div className="muted" style={{ marginTop: 14 }}>
+          <div className="statusBar">
             {status}
           </div>
         ) : null}
@@ -666,4 +662,3 @@ export function App() {
     </div>
   );
 }
-

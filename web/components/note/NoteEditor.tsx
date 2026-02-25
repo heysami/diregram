@@ -441,6 +441,12 @@ export function NoteEditor({
   }, [editor, editor?.state.doc]);
 
   const [activeHeadingIdx, setActiveHeadingIdx] = useState<number>(-1);
+  useEffect(() => {
+    didInitScrollPaddingRef.current = false;
+    const root = scrollRef.current;
+    if (root) root.scrollTop = 0;
+  }, [fileId]);
+
   // We use a large top padding on the ProseMirror root so "scroll to heading" can center even near the top.
   // To avoid showing a huge blank area on initial load, start the scroll position at the padding amount.
   useEffect(() => {
@@ -449,10 +455,6 @@ export function NoteEditor({
     const root = scrollRef.current;
     if (!root) return;
     if (didInitScrollPaddingRef.current) return;
-    if (root.scrollTop > 0) {
-      didInitScrollPaddingRef.current = true;
-      return;
-    }
     try {
       const dom = editor.view.dom as HTMLElement | null;
       if (!dom) return;
@@ -464,7 +466,7 @@ export function NoteEditor({
     } finally {
       didInitScrollPaddingRef.current = true;
     }
-  }, [editor, editorViewReadyTick]);
+  }, [editor, editorViewReadyTick, fileId]);
   useEffect(() => {
     if (!editor) return;
     const root = scrollRef.current;
@@ -794,7 +796,7 @@ export function NoteEditor({
   }, [editor, editorViewReadyTick]);
 
   return (
-    <main className="mac-desktop flex h-screen flex-col">
+    <main className="mac-desktop dg-screen-fade-in flex h-screen flex-col">
       <EditorMenubar
         status={statusLabel}
         activeFileName={title}
@@ -1079,4 +1081,3 @@ export function NoteEditor({
     </main>
   );
 }
-

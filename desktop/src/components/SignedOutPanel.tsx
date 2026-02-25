@@ -18,9 +18,9 @@ export function SignedOutPanel({
   onResetConfig,
 }: Props) {
   return (
-    <>
-      <div className="row" style={{ marginTop: 12 }}>
-        <input value={loginEmail} onChange={(e) => onLoginEmailChange(e.target.value)} placeholder="Email" />
+    <div className="stack-md">
+      <div className="row">
+        <input className="fieldWide" value={loginEmail} onChange={(e) => onLoginEmailChange(e.target.value)} placeholder="Email" />
         <button className="btn btnPrimary" onClick={onSendCode} type="button">
           Send code
         </button>
@@ -28,13 +28,12 @@ export function SignedOutPanel({
           Reset config
         </button>
       </div>
-      <div className="row" style={{ marginTop: 10 }}>
-        <input value={loginOtp} onChange={(e) => onLoginOtpChange(e.target.value)} placeholder="Code" />
+      <div className="row">
+        <input className="fieldWide" value={loginOtp} onChange={(e) => onLoginOtpChange(e.target.value)} placeholder="Code" />
         <button className="btn btnPrimary" onClick={onVerify} type="button">
           Verify
         </button>
       </div>
-    </>
+    </div>
   );
 }
-

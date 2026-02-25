@@ -24,7 +24,7 @@ export function EditorRouter() {
 
   const fileId = searchParams?.get('file') || '';
 
-  const [kind, setKind] = useState<DocKind | null>(null);
+  const [kindState, setKindState] = useState<{ fileId: string; kind: DocKind } | null>(null);
 
   const canLoad = useMemo(() => {
     if (!fileId) return false;
@@ -50,7 +50,7 @@ export function EditorRouter() {
         return;
       }
       const nextKind = normalizeKind(file.kind);
-      if (!cancelled) setKind(nextKind);
+      if (!cancelled) setKindState({ fileId, kind: nextKind });
       return;
     }
 
@@ -60,7 +60,7 @@ export function EditorRouter() {
         const { data, error } = await supabase!.from('files').select('kind').eq('id', fileId).single();
         if (error) throw error;
         const nextKind = normalizeKind((data as { kind?: string | null } | null)?.kind);
-        if (!cancelled) setKind(nextKind);
+        if (!cancelled) setKindState({ fileId, kind: nextKind });
       } catch {
         if (!cancelled) router.replace('/workspace');
       }
@@ -72,13 +72,13 @@ export function EditorRouter() {
   }, [fileId, canLoad, supabaseMode, supabase, router]);
 
   if (!fileId) return null;
-  if (!kind) return <div className="flex h-screen items-center justify-center text-xs opacity-80">Loading…</div>;
+  if (!kindState || kindState.fileId !== fileId) return <div className="mac-desktop dg-screen-loading h-screen w-screen" aria-hidden="true" />;
 
-  if (kind === 'grid') return <GridEditorApp />;
-  if (kind === 'note') return <NoteEditorApp />;
-  if (kind === 'vision') return <VisionEditorApp />;
-  if (kind === 'template') return <TemplateEditorApp />;
-  if (kind === 'test') return <TestEditorApp />;
-  return <DiagramEditorApp />;
+  const kind = kindState.kind;
+  if (kind === 'grid') return <GridEditorApp key={`grid:${fileId}`} />;
+  if (kind === 'note') return <NoteEditorApp key={`note:${fileId}`} />;
+  if (kind === 'vision') return <VisionEditorApp key={`vision:${fileId}`} />;
+  if (kind === 'template') return <TemplateEditorApp key={`template:${fileId}`} />;
+  if (kind === 'test') return <TestEditorApp key={`test:${fileId}`} />;
+  return <DiagramEditorApp key={`diagram:${fileId}`} />;
 }
-

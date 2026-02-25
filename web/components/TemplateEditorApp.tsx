@@ -462,9 +462,10 @@ export function TemplateEditorApp() {
   const searchParams = useSearchParams();
   const { configured, ready, supabase, user, session } = useAuth();
   const supabaseMode = configured && !user?.isLocalAdmin;
+  const fileIdFromUrl = searchParams?.get('file') || '';
 
   const [activeFile, setActiveFile] = useState<ActiveFileMeta | null>(null);
-  const activeRoomName = activeFile?.roomName || 'template-demo';
+  const activeRoomName = activeFile?.roomName || (fileIdFromUrl ? `file-${fileIdFromUrl}` : 'template-demo');
 
   const { doc: yDoc, provider, status, connectedRoomName, synced } = useYjs(activeRoomName);
 
@@ -504,7 +505,7 @@ export function TemplateEditorApp() {
   );
 
   // Persist yText to local snapshot, and to Supabase `files.content` in remote mode.
-  useYjsNexusTextPersistence({
+  const { contentReady } = useYjsNexusTextPersistence({
     doc: yDoc,
     provider,
     activeRoomName,
@@ -529,7 +530,6 @@ export function TemplateEditorApp() {
 
   // Load file metadata based on ?file=...
   useEffect(() => {
-    const fileIdFromUrl = searchParams?.get('file');
     if (!fileIdFromUrl) {
       router.replace('/workspace');
       return;
@@ -611,7 +611,7 @@ export function TemplateEditorApp() {
     return () => {
       cancelled = true;
     };
-  }, [ready, router, searchParams, supabase, supabaseMode, user?.email, user?.id]);
+  }, [fileIdFromUrl, ready, router, supabase, supabaseMode, user?.email, user?.id]);
 
   // Template parsing
   const { header, payload } = useMemo(() => {
@@ -659,8 +659,11 @@ export function TemplateEditorApp() {
     hasHeader,
   });
 
+  const roomReady = !!activeFile && !!yDoc && connectedRoomName === activeRoomName;
+  if (!roomReady || !contentReady) return <div className="mac-desktop dg-screen-loading h-screen w-screen" aria-hidden="true" />;
+
   return (
-    <main className="mac-desktop flex h-screen flex-col">
+    <main className="mac-desktop dg-screen-fade-in flex h-screen flex-col">
       <EditorMenubar
         status={status}
         activeFileName={activeFile?.name || 'Template'}
@@ -780,4 +783,3 @@ export function TemplateEditorApp() {
     </main>
   );
 }
-

@@ -223,11 +223,12 @@ export default function GlobalTemplatesClient() {
                   <div className="mac-window mac-double-outline p-5 text-sm opacity-80">No templates found.</div>
                 ) : null}
 
-                {filtered.map((m) => (
+                {filtered.map((m, idx) => (
                   <GlobalTemplateCard
                     key={m.id}
                     model={m}
                     isAdmin={isAdmin}
+                    revealIndex={idx}
                     onOpen={() => router.push(`/templates/global/${encodeURIComponent(m.id)}`)}
                     onInstall={
                       !canBrowse

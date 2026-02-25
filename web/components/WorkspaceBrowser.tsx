@@ -502,7 +502,13 @@ export function WorkspaceBrowser() {
                 <div
                   key={f.id}
                   className="mac-double-outline mac-interactive-row p-3 text-left flex items-center justify-between gap-3 group dg-reveal-card"
-                  style={{ '--dg-reveal-delay': `${Math.min(idx, 12) * 70}ms` } as any}
+                  style={{
+                    '--dg-reveal-delay': `${Math.min(idx, 12) * 70}ms`,
+                    '--dg-reveal-jx': `${((idx * 23) % 13) - 6}px`,
+                    '--dg-reveal-jy': `${((idx * 41) % 13) - 6}px`,
+                    '--dg-reveal-jr': `${((idx * 19) % 11) - 5}deg`,
+                    '--dg-reveal-js': `${1 + ((((idx * 13) % 7) - 3) * 0.015)}`,
+                  } as any}
                 >
                   <div className="dg-reveal-card__content flex items-center justify-between gap-3 w-full">
                     <button type="button" className="flex items-center gap-2 min-w-0 flex-1" onClick={() => openFile(f.id)} title="Open">
@@ -587,7 +593,13 @@ export function WorkspaceBrowser() {
 	                <div
 	                  key={folder.id}
 	                  className="mac-window mac-double-outline mac-interactive-row p-5 group relative cursor-pointer dg-reveal-card"
-	                  style={{ '--dg-reveal-delay': `${Math.min(idx, 10) * 90}ms` } as any}
+	                  style={{
+	                    '--dg-reveal-delay': `${Math.min(idx, 10) * 90}ms`,
+	                    '--dg-reveal-jx': `${((idx * 37) % 17) - 8}px`,
+	                    '--dg-reveal-jy': `${((idx * 53) % 17) - 8}px`,
+	                    '--dg-reveal-jr': `${((idx * 29) % 13) - 6}deg`,
+	                    '--dg-reveal-js': `${1 + ((((idx * 17) % 9) - 4) * 0.018)}`,
+	                  } as any}
 	                  role="button"
 	                  tabIndex={0}
 	                  onClick={() => setActiveFolderId(folder.id)}
