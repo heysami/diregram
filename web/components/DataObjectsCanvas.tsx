@@ -267,6 +267,9 @@ export function DataObjectsCanvas({
   const { layoutNodes, bounds, cardHeightById } = useMemo(() => {
     // Increase parent card height based on how many inlined items it has.
     const base = 64;
+    // Reserve space for the bottom-left grey "placeholder bar" so it doesn't crowd content.
+    // This is static UI chrome (not tied to attrs/inlined counts), so keep it as a constant.
+    const placeholderExtra = 12;
     const chipH = 22;
     const chipGap = 6;
     const chipsPad = 10;
@@ -302,7 +305,7 @@ export function DataObjectsCanvas({
             lineHeight: 1.35,
           })
         : 0;
-      const cardH = base + chipsBlock + attrsBlock;
+      const cardH = base + chipsBlock + attrsBlock + placeholderExtra;
       cardHeightById.set(o.id, cardH);
       // Layout reserves space for the annotation below the card.
       layoutHeightById.set(o.id, cardH + (ann ? 8 + annotationExtra : 0));
@@ -697,7 +700,7 @@ export function DataObjectsCanvas({
             return (
               <Fragment key={o.id}>
                 <div
-                  className={`absolute dg-do-card px-4 py-3 select-none ${
+                  className={`absolute dg-do-card px-4 py-3 select-none flex flex-col ${
                     o.missing ? 'is-missing' : ''
                   } ${isSelected ? 'is-selected' : ''} ${
                     selectedId && !isFocused ? 'opacity-25 hover:opacity-60 transition-opacity' : ''
@@ -799,6 +802,7 @@ export function DataObjectsCanvas({
                       ))}
                     </div>
                   ) : null}
+                  <div className="dg-node-card__placeholder" />
                 </div>
 
                 {showAnnotations && ann && ann.trim() ? (

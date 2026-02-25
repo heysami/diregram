@@ -139,7 +139,7 @@ export const NexusEmbedNode = Node.create({
       };
 
       return (
-        <NodeViewWrapper as="div" contentEditable={false} className="my-2" data-note-embed-id={embedId}>
+        <NodeViewWrapper as="div" contentEditable={false} className="my-2 group" data-note-embed-id={embedId}>
           <div className="mb-2 flex items-center justify-between gap-2">
             <div className="text-[11px] text-slate-600 truncate">
               Embed {embedKind ? `· ${embedKind}` : ''}{' '}
@@ -149,7 +149,7 @@ export const NexusEmbedNode = Node.create({
                 <span className="opacity-70">local</span>
               )}
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto transition-opacity">
               {hasComment ? (
                 <button
                   type="button"
@@ -327,4 +327,3 @@ export const NexusEmbedNode = Node.create({
     });
   },
 });
-

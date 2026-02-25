@@ -2880,8 +2880,6 @@ export function NexusCanvas({
              })}
          </div>
        ) : null}
-       <h3 className="absolute top-4 left-4 text-xs font-bold uppercase tracking-wider text-gray-500 z-10 select-none">Visual Map</h3>
-
        {/* Marquee overlay is drawn in world-space (inside viewport SVG), see below. */}
       
       <div 
@@ -3058,9 +3056,7 @@ export function NexusCanvas({
                                   <div className="inline-flex items-center gap-1">
                                     <button
                                       type="button"
-                                      className={`h-5 w-5 border text-[10px] leading-none ${
-                                        idx === 0 ? 'opacity-30 cursor-not-allowed' : 'hover:bg-white'
-                                      }`}
+                                      className="mac-btn mac-btn--icon-sm text-[12px] leading-none disabled:opacity-40 disabled:cursor-not-allowed"
                                       title="Move lane up"
                                       disabled={idx === 0}
                                       onClick={(e) => {
@@ -3073,9 +3069,7 @@ export function NexusCanvas({
                                     </button>
                                     <button
                                       type="button"
-                                      className={`h-5 w-5 border text-[10px] leading-none ${
-                                        idx >= swimlaneLayout.lanes.length - 1 ? 'opacity-30 cursor-not-allowed' : 'hover:bg-white'
-                                      }`}
+                                      className="mac-btn mac-btn--icon-sm text-[12px] leading-none disabled:opacity-40 disabled:cursor-not-allowed"
                                       title="Move lane down"
                                       disabled={idx >= swimlaneLayout.lanes.length - 1}
                                       onClick={(e) => {
@@ -3089,9 +3083,9 @@ export function NexusCanvas({
                                   </div>
                                   <button
                                     type="button"
-                                    className={`h-5 w-5 border transition-opacity ${
+                                    className={`mac-btn mac-btn--icon-sm text-[12px] leading-none transition-opacity disabled:opacity-40 disabled:cursor-not-allowed ${
                                       isActiveLane ? 'opacity-100' : 'opacity-0 pointer-events-none'
-                                    } ${isActiveLane && !canDelete ? 'opacity-40 cursor-not-allowed' : ''}`}
+                                    }`}
                                     title={canDelete ? 'Delete lane' : 'Cannot delete lane (has nodes or last lane)'}
                                     disabled={!canDelete}
                                     onClick={(e) => {
@@ -3217,9 +3211,7 @@ export function NexusCanvas({
                                   <div className="inline-flex items-center gap-1">
                                     <button
                                       type="button"
-                                      className={`h-5 w-5 border text-[10px] leading-none ${
-                                        idx === 0 ? 'opacity-30 cursor-not-allowed' : 'hover:bg-white'
-                                      }`}
+                                      className="mac-btn mac-btn--icon-sm text-[12px] leading-none disabled:opacity-40 disabled:cursor-not-allowed"
                                       title="Move stage left"
                                       disabled={idx === 0}
                                       onClick={(e) => {
@@ -3232,9 +3224,7 @@ export function NexusCanvas({
                                     </button>
                                     <button
                                       type="button"
-                                      className={`h-5 w-5 border text-[10px] leading-none ${
-                                        idx >= swimlaneLayout.stages.length - 1 ? 'opacity-30 cursor-not-allowed' : 'hover:bg-white'
-                                      }`}
+                                      className="mac-btn mac-btn--icon-sm text-[12px] leading-none disabled:opacity-40 disabled:cursor-not-allowed"
                                       title="Move stage right"
                                       disabled={idx >= swimlaneLayout.stages.length - 1}
                                       onClick={(e) => {
@@ -3249,11 +3239,11 @@ export function NexusCanvas({
                                 ) : null}
                                 <button
                                   type="button"
-                                    className={`h-5 w-5 border transition-opacity ${
-                                      isActiveStage ? 'opacity-100' : 'opacity-0 pointer-events-none'
-                                    } ${isActiveStage && !canDelete ? 'opacity-40 cursor-not-allowed' : ''}`}
+                                  className={`mac-btn mac-btn--icon-sm text-[12px] leading-none transition-opacity disabled:opacity-40 disabled:cursor-not-allowed ${
+                                    isActiveStage ? 'opacity-100' : 'opacity-0 pointer-events-none'
+                                  }`}
                                   title={canDelete ? 'Delete stage' : 'Cannot delete stage (has nodes or last stage)'}
-                                    disabled={!canDelete}
+                                  disabled={!canDelete}
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     if (!canDelete) return;
@@ -3347,9 +3337,7 @@ export function NexusCanvas({
                                 <div className="inline-flex items-center gap-1">
                                   <button
                                     type="button"
-                                    className={`h-5 w-5 border text-[10px] leading-none ${
-                                      idx === 0 ? 'opacity-30 cursor-not-allowed' : 'hover:bg-white'
-                                    }`}
+                                    className="mac-btn mac-btn--icon-sm text-[12px] leading-none disabled:opacity-40 disabled:cursor-not-allowed"
                                     title="Move stage up"
                                     disabled={idx === 0}
                                     onClick={(e) => {
@@ -3362,9 +3350,7 @@ export function NexusCanvas({
                                   </button>
                                   <button
                                     type="button"
-                                    className={`h-5 w-5 border text-[10px] leading-none ${
-                                      idx >= swimlaneLayout.stages.length - 1 ? 'opacity-30 cursor-not-allowed' : 'hover:bg-white'
-                                    }`}
+                                    className="mac-btn mac-btn--icon-sm text-[12px] leading-none disabled:opacity-40 disabled:cursor-not-allowed"
                                     title="Move stage down"
                                     disabled={idx >= swimlaneLayout.stages.length - 1}
                                     onClick={(e) => {
@@ -3379,9 +3365,9 @@ export function NexusCanvas({
                               ) : null}
                               <button
                                 type="button"
-                                className={`h-5 w-5 border transition-opacity ${
+                                className={`mac-btn mac-btn--icon-sm text-[12px] leading-none transition-opacity disabled:opacity-40 disabled:cursor-not-allowed ${
                                   isActiveStage ? 'opacity-100' : 'opacity-0 pointer-events-none'
-                                } ${isActiveStage && !canDelete ? 'opacity-40 cursor-not-allowed' : ''}`}
+                                }`}
                                 title={canDelete ? 'Delete stage' : 'Cannot delete stage (has nodes or last stage)'}
                                 disabled={!canDelete}
                                 onClick={(e) => {
@@ -3498,9 +3484,7 @@ export function NexusCanvas({
                                 <div className="inline-flex items-center gap-1">
                                   <button
                                     type="button"
-                                    className={`h-5 w-5 border text-[10px] leading-none ${
-                                      idx === 0 ? 'opacity-30 cursor-not-allowed' : 'hover:bg-white'
-                                    }`}
+                                    className="mac-btn mac-btn--icon-sm text-[12px] leading-none disabled:opacity-40 disabled:cursor-not-allowed"
                                     title="Move lane left"
                                     disabled={idx === 0}
                                     onClick={(e) => {
@@ -3513,9 +3497,7 @@ export function NexusCanvas({
                                   </button>
                                   <button
                                     type="button"
-                                    className={`h-5 w-5 border text-[10px] leading-none ${
-                                      idx >= swimlaneLayout.lanes.length - 1 ? 'opacity-30 cursor-not-allowed' : 'hover:bg-white'
-                                    }`}
+                                    className="mac-btn mac-btn--icon-sm text-[12px] leading-none disabled:opacity-40 disabled:cursor-not-allowed"
                                     title="Move lane right"
                                     disabled={idx >= swimlaneLayout.lanes.length - 1}
                                     onClick={(e) => {
@@ -3529,9 +3511,9 @@ export function NexusCanvas({
                                 </div>
                                 <button
                                   type="button"
-                                  className={`h-5 w-5 border transition-opacity ${
+                                  className={`mac-btn mac-btn--icon-sm text-[12px] leading-none transition-opacity disabled:opacity-40 disabled:cursor-not-allowed ${
                                     isActiveLane ? 'opacity-100' : 'opacity-0 pointer-events-none'
-                                  } ${isActiveLane && !canDelete ? 'opacity-40 cursor-not-allowed' : ''}`}
+                                  }`}
                                   title={canDelete ? 'Delete lane' : 'Cannot delete lane (has nodes or last lane)'}
                                   disabled={!canDelete}
                                   onClick={(e) => {
