@@ -1,5 +1,6 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { CallToolRequestSchema, InitializeRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { createClient } from '@supabase/supabase-js';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
@@ -209,7 +210,17 @@ async function boot() {
     },
   );
 
-  server.setRequestHandler('tools/list', async () => {
+  // MCP lifecycle: Cursor will call initialize before listing tools.
+  // With SDK v1, handlers should be registered using the request schemas (not string method names).
+  server.setRequestHandler(InitializeRequestSchema, async (req) => {
+    return {
+      protocolVersion: String(req.params?.protocolVersion || '2024-11-05'),
+      serverInfo: { name: 'diregram-rag-hosted-stdio', version: '0.1.0' },
+      capabilities: { tools: {} },
+    };
+  });
+
+  server.setRequestHandler(ListToolsRequestSchema, async () => {
     return {
       tools: [
         {
@@ -263,7 +274,7 @@ async function boot() {
     };
   });
 
-  server.setRequestHandler('tools/call', async (req) => {
+  server.setRequestHandler(CallToolRequestSchema, async (req) => {
     const toolName = String(req.params?.name || '');
     const args = req.params?.arguments || {};
 
