@@ -54,9 +54,13 @@ export async function POST() {
           `exec ${shSingle(remoteNode)} ${shSingle(remoteStdioPath)} --token ${shSingle(token)}`,
         ]
       : [...sshBaseArgs, remoteNode, remoteStdioPath, '--token', token];
+    const argsWithOpenAiKey = [...args, '--openai-api-key', '__YOUR_OPENAI_API_KEY__'];
     const argsJson = JSON.stringify(args, null, 2);
+    const argsWithOpenAiKeyJson = JSON.stringify(argsWithOpenAiKey, null, 2);
     const tomlArgs = args.map((a) => JSON.stringify(a)).join(', ');
+    const tomlArgsWithOpenAiKey = argsWithOpenAiKey.map((a) => JSON.stringify(a)).join(', ');
     const codexToml = `[mcp_servers.diregram]\ncommand = \"ssh\"\nargs = [${tomlArgs}]`;
+    const codexTomlWithOpenAiKey = `[mcp_servers.diregram]\ncommand = \"ssh\"\nargs = [${tomlArgsWithOpenAiKey}]`;
     const cursorSnippet = JSON.stringify(
       {
         mcpServers: {
@@ -69,7 +73,26 @@ export async function POST() {
       null,
       2,
     );
+    const cursorSnippetWithOpenAiEnv = JSON.stringify(
+      {
+        mcpServers: {
+          diregram: {
+            command: 'ssh',
+            args,
+            env: {
+              OPENAI_API_KEY: '__YOUR_OPENAI_API_KEY__',
+            },
+          },
+        },
+      },
+      null,
+      2,
+    );
     const claudeDesktopSnippet = cursorSnippet;
+    const claudeDesktopSnippetWithOpenAiEnv = cursorSnippetWithOpenAiEnv;
+    const mcpServerBase = String(process.env.NEXT_PUBLIC_MCP_SERVER_URL || process.env.MCP_SERVER_URL || '').trim();
+    const normalizedMcpServerBase = mcpServerBase.replace(/\/+$/, '');
+    const claudeConnectorUrl = normalizedMcpServerBase ? `${normalizedMcpServerBase}/sse?token=${encodeURIComponent(token)}` : '';
 
     return NextResponse.json({
       ok: true,
@@ -79,12 +102,18 @@ export async function POST() {
       sshUser: ssh.user,
       command: 'ssh',
       args,
+      argsWithOpenAiKey,
       argsJson,
+      argsWithOpenAiKeyJson,
       codexToml,
+      codexTomlWithOpenAiKey,
       cursorSnippet,
+      cursorSnippetWithOpenAiEnv,
       claudeDesktopSnippet,
+      claudeDesktopSnippetWithOpenAiEnv,
+      claudeConnectorUrl,
       tokenHint: `${token.slice(0, 14)}...${token.slice(-6)}`,
-      note: 'Copy the command/args into Claude/Cursor/Codex MCP settings.',
+      note: 'Use STDIO setup for Codex/Cursor/Claude Desktop. Use claudeConnectorUrl only in Claude Web custom connector.',
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'Failed to create SSH onboarding bundle';

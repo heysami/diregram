@@ -46,10 +46,12 @@ if (cli.help === 'true' || cli.h === 'true') {
       'Usage:',
       '  node src/stdio.js --token <nm_mcp_...>',
       '  node src/stdio.js --token-hash <sha256hex>',
+      '  node src/stdio.js --token <nm_mcp_...> --openai-api-key <sk-...>',
       '',
       'Or set env:',
       '  MCP_TOKEN=<nm_mcp_...>',
       '  MCP_TOKEN_HASH=<sha256hex>',
+      '  OPENAI_API_KEY=<sk-...>',
       '',
       'Required env:',
       '  SUPABASE_URL (or NEXT_PUBLIC_SUPABASE_URL)',
@@ -64,7 +66,7 @@ if (cli.help === 'true' || cli.h === 'true') {
 
 const SUPABASE_URL = env('SUPABASE_URL', env('NEXT_PUBLIC_SUPABASE_URL'));
 const SUPABASE_SERVICE_ROLE_KEY = env('SUPABASE_SERVICE_ROLE_KEY');
-const OPENAI_API_KEY = env('OPENAI_API_KEY', '');
+const OPENAI_API_KEY = String(cli['openai-api-key'] || env('OPENAI_API_KEY', '')).trim();
 const MCP_TOKEN = String(cli.token || env('MCP_TOKEN', '')).trim();
 const MCP_TOKEN_HASH = String(cli['token-hash'] || env('MCP_TOKEN_HASH', '')).trim();
 

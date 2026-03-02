@@ -34,10 +34,16 @@ type SshOnboardingBundle = {
   sshUser: string;
   command: string;
   args: string[];
+  argsWithOpenAiKey: string[];
   argsJson: string;
+  argsWithOpenAiKeyJson: string;
   codexToml: string;
+  codexTomlWithOpenAiKey: string;
   cursorSnippet: string;
+  cursorSnippetWithOpenAiEnv: string;
   claudeDesktopSnippet: string;
+  claudeDesktopSnippetWithOpenAiEnv: string;
+  claudeConnectorUrl: string;
   tokenHint: string;
   note: string;
 };
@@ -104,10 +110,18 @@ export default function AccountClient() {
         sshUser: String(json.sshUser || ''),
         command: String(json.command || 'ssh'),
         args: Array.isArray(rawArgs) ? rawArgs.map((x) => String(x)) : [],
+        argsWithOpenAiKey: Array.isArray((json as Record<string, unknown>).argsWithOpenAiKey)
+          ? ((json as Record<string, unknown>).argsWithOpenAiKey as unknown[]).map((x) => String(x))
+          : [],
         argsJson: String(json.argsJson || ''),
+        argsWithOpenAiKeyJson: String((json as Record<string, unknown>).argsWithOpenAiKeyJson || ''),
         codexToml: String(json.codexToml || ''),
+        codexTomlWithOpenAiKey: String((json as Record<string, unknown>).codexTomlWithOpenAiKey || ''),
         cursorSnippet: String(json.cursorSnippet || ''),
+        cursorSnippetWithOpenAiEnv: String((json as Record<string, unknown>).cursorSnippetWithOpenAiEnv || ''),
         claudeDesktopSnippet: String(json.claudeDesktopSnippet || ''),
+        claudeDesktopSnippetWithOpenAiEnv: String((json as Record<string, unknown>).claudeDesktopSnippetWithOpenAiEnv || ''),
+        claudeConnectorUrl: String((json as Record<string, unknown>).claudeConnectorUrl || ''),
         tokenHint: String(json.tokenHint || ''),
         note: String(json.note || ''),
       };
@@ -252,7 +266,7 @@ export default function AccountClient() {
                 <div className="mac-double-outline p-3 space-y-2">
                   <div className="font-semibold">MCP SSH Setup (Claude / Cursor / Codex)</div>
                   <div className="text-[11px] opacity-70">
-                    Generates a one-time MCP config you paste directly into Claude/Cursor/Codex MCP settings.
+                    Generates one-time MCP config for each client type.
                   </div>
                   <div className="flex items-center gap-2">
                     <button type="button" className="mac-btn mac-btn--primary" onClick={createSshOnboarding} disabled={sshLoading}>
@@ -263,10 +277,8 @@ export default function AccountClient() {
                   {sshBundle ? (
                     <div className="space-y-2 pt-1">
                       <div className="mac-double-outline p-2 space-y-1">
-                        <div className="font-semibold text-[11px]">2) Add in Claude/Codex/Cursor MCP settings</div>
-                        <div className="text-[11px] opacity-70">
-                          Use these fields in the MCP “Add Server” form:
-                        </div>
+                        <div className="font-semibold text-[11px]">2) STDIO clients (Cursor, Codex app, Claude Desktop)</div>
+                        <div className="text-[11px] opacity-70">Use STDIO mode, then paste these:</div>
                         <div className="text-[11px]">
                           Name: <span className="font-mono">diregram</span>
                         </div>
@@ -276,6 +288,17 @@ export default function AccountClient() {
                         <div className="text-[11px]">
                           Args JSON: <span className="font-mono break-all">{sshBundle.argsJson}</span>
                         </div>
+                        <div className="text-[11px]">
+                          Args JSON (+ OpenAI key arg): <span className="font-mono break-all">{sshBundle.argsWithOpenAiKeyJson || '(not generated)'}</span>
+                        </div>
+                        <div className="text-[11px] opacity-70">If your client asks for one argument per row, use this order:</div>
+                        <div className="mac-double-outline p-2 space-y-0.5">
+                          {sshBundle.args.map((arg, idx) => (
+                            <div key={`${idx}-${arg}`} className="text-[11px]">
+                              {idx + 1}. <span className="font-mono break-all">{arg}</span>
+                            </div>
+                          ))}
+                        </div>
                         <div className="flex flex-wrap items-center gap-2">
                           <button type="button" className="mac-btn" onClick={() => copyText(sshBundle.command, 'Command')}>
                             Copy Command
@@ -283,19 +306,84 @@ export default function AccountClient() {
                           <button type="button" className="mac-btn" onClick={() => copyText(sshBundle.argsJson, 'Args JSON')}>
                             Copy Args JSON
                           </button>
+                          <button type="button" className="mac-btn" onClick={() => copyText(sshBundle.args.join('\n'), 'Args (one per row)')}>
+                            Copy Args (line by line)
+                          </button>
+                          <button
+                            type="button"
+                            className="mac-btn"
+                            onClick={() => copyText(sshBundle.argsWithOpenAiKeyJson || sshBundle.argsJson, 'Args JSON (+ OpenAI key)')}
+                          >
+                            Copy Args JSON (+ OpenAI key)
+                          </button>
                           <button type="button" className="mac-btn" onClick={() => copyText(sshBundle.codexToml, 'Codex TOML')}>
                             Copy Codex TOML
+                          </button>
+                          <button
+                            type="button"
+                            className="mac-btn"
+                            onClick={() => copyText(sshBundle.codexTomlWithOpenAiKey || sshBundle.codexToml, 'Codex TOML (+ OpenAI key)')}
+                          >
+                            Copy Codex TOML (+ OpenAI key)
                           </button>
                           <button type="button" className="mac-btn" onClick={() => copyText(sshBundle.cursorSnippet, 'Cursor snippet')}>
                             Copy Cursor JSON
                           </button>
+                          <button
+                            type="button"
+                            className="mac-btn"
+                            onClick={() =>
+                              copyText(
+                                sshBundle.cursorSnippetWithOpenAiEnv || sshBundle.cursorSnippet,
+                                'Cursor JSON (+ OPENAI_API_KEY env)',
+                              )
+                            }
+                          >
+                            Copy Cursor JSON (+ env key)
+                          </button>
                           <button type="button" className="mac-btn" onClick={() => copyText(sshBundle.claudeDesktopSnippet, 'Claude Desktop snippet')}>
                             Copy Claude Desktop JSON
+                          </button>
+                          <button
+                            type="button"
+                            className="mac-btn"
+                            onClick={() =>
+                              copyText(
+                                sshBundle.claudeDesktopSnippetWithOpenAiEnv || sshBundle.claudeDesktopSnippet,
+                                'Claude Desktop JSON (+ OPENAI_API_KEY env)',
+                              )
+                            }
+                          >
+                            Copy Claude Desktop JSON (+ env key)
                           </button>
                         </div>
                         <div className="text-[11px] opacity-70">
                           Host: <span className="font-mono">{sshBundle.sshUser}@{sshBundle.sshHost}:{sshBundle.sshPort}</span> · Token: <span className="font-mono">{sshBundle.tokenHint}</span>
                         </div>
+                      </div>
+
+                      <div className="mac-double-outline p-2 space-y-1">
+                        <div className="font-semibold text-[11px]">3) Claude Web connector screen (URL mode only)</div>
+                        {sshBundle.claudeConnectorUrl ? (
+                          <>
+                            <div className="text-[11px]">Name: <span className="font-mono">diregram</span></div>
+                            <div className="text-[11px]">Remote MCP server URL: <span className="font-mono break-all">{sshBundle.claudeConnectorUrl}</span></div>
+                            <div className="text-[11px] opacity-70">Leave OAuth Client ID / Secret empty.</div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <button
+                                type="button"
+                                className="mac-btn"
+                                onClick={() => copyText(sshBundle.claudeConnectorUrl, 'Claude connector URL')}
+                              >
+                                Copy Claude URL
+                              </button>
+                            </div>
+                          </>
+                        ) : (
+                          <div className="text-[11px] text-red-700">
+                            Claude Web URL is not configured. Set NEXT_PUBLIC_MCP_SERVER_URL on your web app env first.
+                          </div>
+                        )}
                       </div>
                     </div>
                   ) : null}
