@@ -12,6 +12,13 @@ function env(name, fallback = '') {
   return String(process.env[name] || fallback);
 }
 
+function mask(input, keepStart = 6, keepEnd = 4) {
+  const s = String(input || '');
+  if (!s) return '';
+  if (s.length <= keepStart + keepEnd + 3) return s;
+  return `${s.slice(0, keepStart)}...${s.slice(-keepEnd)}`;
+}
+
 function parseCliArgs(argv) {
   const out = {};
   for (let i = 0; i < argv.length; i += 1) {
@@ -100,7 +107,10 @@ async function resolveShareFromTokenOrHash(input) {
     .eq('token_hash', tokenHash)
     .maybeSingle();
   if (error) throw new Error(error.message);
-  if (!data) throw new Error('Invalid token');
+  if (!data) {
+    const hint = mask(tokenHash, 10, 6);
+    throw new Error(`Invalid token (supabaseUrl=${SUPABASE_URL}, tokenHash=${hint})`);
+  }
   if (data.revoked_at) throw new Error('Token revoked');
   const scope = String(data.scope || '');
   if (scope !== 'account' && scope !== 'project') throw new Error('Invalid token scope');

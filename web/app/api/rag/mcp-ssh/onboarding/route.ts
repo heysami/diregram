@@ -73,6 +73,7 @@ export async function POST() {
 
     return NextResponse.json({
       ok: true,
+      supabaseUrlForToken: String(process.env.NEXT_PUBLIC_SUPABASE_URL || '').trim() || null,
       sshHost: ssh.host,
       sshPort: ssh.port,
       sshUser: ssh.user,
