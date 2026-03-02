@@ -7,10 +7,79 @@ import { getMcpSshConfigFromEnv, shSingle, sha256Hex } from '@/lib/server/mcp-ss
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-export async function POST() {
+type TargetClient = 'codex' | 'cursor' | 'claude_desktop' | 'claude_web';
+
+function normalizeTargetClient(input: unknown): TargetClient {
+  const raw = String(input || '').trim().toLowerCase();
+  if (raw === 'codex') return 'codex';
+  if (raw === 'claude_desktop') return 'claude_desktop';
+  if (raw === 'claude_web') return 'claude_web';
+  return 'cursor';
+}
+
+async function parseBody(request: Request): Promise<{ targetClient: TargetClient; openAiApiKey: string }> {
+  const ct = String(request.headers.get('content-type') || '').toLowerCase();
+  if (!ct.includes('application/json')) {
+    return { targetClient: 'cursor', openAiApiKey: '' };
+  }
+  const body = (await request.json().catch(() => null)) as null | { client?: unknown; openAiApiKey?: unknown };
+  return {
+    targetClient: normalizeTargetClient(body?.client),
+    openAiApiKey: String(body?.openAiApiKey || '').trim(),
+  };
+}
+
+function buildSshArgs(input: {
+  sshHost: string;
+  sshPort: number;
+  sshUser: string;
+  remoteNode: string;
+  remoteStdioPath: string;
+  token: string;
+  openAiApiKey: string;
+  useLoginShell: boolean;
+}): string[] {
+  const sshBaseArgs = [
+    '-T',
+    '-o',
+    'BatchMode=yes',
+    '-o',
+    'StrictHostKeyChecking=accept-new',
+    '-o',
+    'UpdateHostKeys=no',
+    '-o',
+    'ConnectTimeout=20',
+    '-o',
+    'LogLevel=ERROR',
+    '-p',
+    String(input.sshPort),
+    `${input.sshUser}@${input.sshHost}`,
+  ];
+  const openAiApiKey = String(input.openAiApiKey || '').trim();
+  const useLoginShell = Boolean(input.useLoginShell);
+  if (useLoginShell) {
+    const parts = [
+      `exec ${shSingle(input.remoteNode)} ${shSingle(input.remoteStdioPath)}`,
+      `--token ${shSingle(input.token)}`,
+      openAiApiKey ? `--openai-api-key ${shSingle(openAiApiKey)}` : '',
+    ].filter(Boolean);
+    return [...sshBaseArgs, 'bash', '-lc', parts.join(' ')];
+  }
+  return [
+    ...sshBaseArgs,
+    input.remoteNode,
+    input.remoteStdioPath,
+    '--token',
+    input.token,
+    ...(openAiApiKey ? ['--openai-api-key', openAiApiKey] : []),
+  ];
+}
+
+export async function POST(request: Request) {
   try {
     const { user } = await getUserSupabaseClient();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const { targetClient, openAiApiKey } = await parseBody(request);
 
     const admin = getAdminSupabaseClient();
     const token = `nm_mcp_acct_${randomBytes(32).toString('base64url')}`;
@@ -29,32 +98,27 @@ export async function POST() {
     const remoteStdioPath = String(process.env.MCP_SSH_REMOTE_STDIO_PATH || '/opt/render/project/src/mcp-server-nexusmap-rag-hosted/src/stdio.js').trim();
     if (!remoteNode) throw new Error('Missing MCP_SSH_REMOTE_NODE');
     if (!remoteStdioPath) throw new Error('Missing MCP_SSH_REMOTE_STDIO_PATH');
-    const sshBaseArgs = [
-      '-T',
-      '-o',
-      'BatchMode=yes',
-      '-o',
-      'StrictHostKeyChecking=accept-new',
-      '-o',
-      'UpdateHostKeys=no',
-      '-o',
-      'ConnectTimeout=20',
-      '-o',
-      'LogLevel=ERROR',
-      '-p',
-      String(ssh.port),
-      `${ssh.user}@${ssh.host}`,
-    ];
     const useLoginShell = String(process.env.MCP_SSH_USE_LOGIN_SHELL || '0').trim() === '1';
-    const args = useLoginShell
-      ? [
-          ...sshBaseArgs,
-          'bash',
-          '-lc',
-          `exec ${shSingle(remoteNode)} ${shSingle(remoteStdioPath)} --token ${shSingle(token)}`,
-        ]
-      : [...sshBaseArgs, remoteNode, remoteStdioPath, '--token', token];
-    const argsWithOpenAiKey = [...args, '--openai-api-key', '__YOUR_OPENAI_API_KEY__'];
+    const args = buildSshArgs({
+      sshHost: ssh.host,
+      sshPort: ssh.port,
+      sshUser: ssh.user,
+      remoteNode,
+      remoteStdioPath,
+      token,
+      openAiApiKey,
+      useLoginShell,
+    });
+    const argsWithOpenAiKey = buildSshArgs({
+      sshHost: ssh.host,
+      sshPort: ssh.port,
+      sshUser: ssh.user,
+      remoteNode,
+      remoteStdioPath,
+      token,
+      openAiApiKey: openAiApiKey || '__YOUR_OPENAI_API_KEY__',
+      useLoginShell,
+    });
     const argsJson = JSON.stringify(args, null, 2);
     const argsWithOpenAiKeyJson = JSON.stringify(argsWithOpenAiKey, null, 2);
     const tomlArgs = args.map((a) => JSON.stringify(a)).join(', ');
@@ -93,9 +157,24 @@ export async function POST() {
     const mcpServerBase = String(process.env.NEXT_PUBLIC_MCP_SERVER_URL || process.env.MCP_SERVER_URL || '').trim();
     const normalizedMcpServerBase = mcpServerBase.replace(/\/+$/, '');
     const claudeConnectorUrl = normalizedMcpServerBase ? `${normalizedMcpServerBase}/sse?token=${encodeURIComponent(token)}` : '';
+    if (targetClient === 'claude_web' && !claudeConnectorUrl) {
+      return NextResponse.json(
+        {
+          error: 'Missing NEXT_PUBLIC_MCP_SERVER_URL (or MCP_SERVER_URL) for Claude Web connector',
+        },
+        { status: 500 },
+      );
+    }
+    const note =
+      targetClient === 'claude_web'
+        ? 'Claude Web connector: use Remote MCP server URL. OAuth is not implemented yet in Diregram MCP.'
+        : openAiApiKey
+          ? 'STDIO config includes your OpenAI key in arguments.'
+          : 'STDIO config generated without OpenAI key. Add it manually or regenerate with key.';
 
     return NextResponse.json({
       ok: true,
+      targetClient,
       supabaseUrlForToken: String(process.env.NEXT_PUBLIC_SUPABASE_URL || '').trim() || null,
       sshHost: ssh.host,
       sshPort: ssh.port,
@@ -113,7 +192,9 @@ export async function POST() {
       claudeDesktopSnippetWithOpenAiEnv,
       claudeConnectorUrl,
       tokenHint: `${token.slice(0, 14)}...${token.slice(-6)}`,
-      note: 'Use STDIO setup for Codex/Cursor/Claude Desktop. Use claudeConnectorUrl only in Claude Web custom connector.',
+      note,
+      hasInjectedOpenAiKey: Boolean(openAiApiKey),
+      supportsOauth: false,
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'Failed to create SSH onboarding bundle';
