@@ -28,13 +28,13 @@ export type MpcSshConfig = {
 };
 
 export function getMcpSshConfigFromEnv(): MpcSshConfig {
-  const host = String(process.env.NEXT_PUBLIC_MCP_SSH_HOST || '').trim();
-  const portRaw = String(process.env.NEXT_PUBLIC_MCP_SSH_PORT || '22').trim();
-  const user = String(process.env.NEXT_PUBLIC_MCP_SSH_USER || 'mcp').trim();
+  const host = String(process.env.NEXT_PUBLIC_MCP_SSH_HOST || process.env.MCP_SSH_HOST || '').trim();
+  const portRaw = String(process.env.NEXT_PUBLIC_MCP_SSH_PORT || process.env.MCP_SSH_PORT || '22').trim();
+  const user = String(process.env.NEXT_PUBLIC_MCP_SSH_USER || process.env.MCP_SSH_USER || 'mcp').trim();
   const port = Number(portRaw);
-  if (!host) throw new Error('Missing NEXT_PUBLIC_MCP_SSH_HOST');
-  if (!Number.isFinite(port) || port < 1 || port > 65535) throw new Error('Invalid NEXT_PUBLIC_MCP_SSH_PORT');
-  if (!user) throw new Error('Missing NEXT_PUBLIC_MCP_SSH_USER');
+  if (!host) throw new Error('Missing MCP SSH host (set NEXT_PUBLIC_MCP_SSH_HOST or MCP_SSH_HOST)');
+  if (!Number.isFinite(port) || port < 1 || port > 65535) throw new Error('Invalid MCP SSH port (set NEXT_PUBLIC_MCP_SSH_PORT or MCP_SSH_PORT)');
+  if (!user) throw new Error('Missing MCP SSH user (set NEXT_PUBLIC_MCP_SSH_USER or MCP_SSH_USER)');
   return { host, port, user };
 }
 
