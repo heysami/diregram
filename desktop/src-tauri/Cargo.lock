@@ -557,6 +557,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "diregram_sync"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "keyring",
+ "notify",
+ "once_cell",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-autostart",
+ "tauri-plugin-deep-link",
+ "tauri-plugin-dialog",
+ "tauri-plugin-shell",
+ "tokio",
+ "walkdir",
+]
+
+[[package]]
 name = "dirs"
 version = "4.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2016,28 +2038,6 @@ name = "new_debug_unreachable"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
-
-[[package]]
-name = "diregram_sync"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "keyring",
- "notify",
- "once_cell",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "sha2",
- "tauri",
- "tauri-build",
- "tauri-plugin-autostart",
- "tauri-plugin-deep-link",
- "tauri-plugin-dialog",
- "tauri-plugin-shell",
- "tokio",
- "walkdir",
-]
 
 [[package]]
 name = "nodrop"

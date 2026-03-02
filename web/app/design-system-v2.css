@@ -1008,7 +1008,7 @@ html[data-theme="diregram-v2"] .dg-reveal-card__content {
     box-shadow: none;
   }
   to {
-    background: color-mix(in oklab, var(--dg-surface) 92%, white);
+    background: #ffffff;
     border-color: color-mix(in oklab, var(--dg-border) 88%, #fff);
     box-shadow: var(--dg-shadow-sm);
   }
@@ -1048,7 +1048,7 @@ html[data-theme="diregram-v2"] .dg-reveal-card__content {
 @media (prefers-reduced-motion: reduce) {
   html[data-theme="diregram-v2"] .dg-reveal-card {
     animation: none !important;
-    background: color-mix(in oklab, var(--dg-surface) 92%, white) !important;
+    background: #ffffff !important;
     border-color: color-mix(in oklab, var(--dg-border) 88%, #fff) !important;
     box-shadow: var(--dg-shadow-sm) !important;
   }

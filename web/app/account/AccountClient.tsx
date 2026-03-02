@@ -28,6 +28,19 @@ function saveOpenAiKey(next: string) {
   }
 }
 
+type SshOnboardingBundle = {
+  alias: string;
+  sshHost: string;
+  sshPort: number;
+  sshUser: string;
+  installScriptUrl: string;
+  installCommand: string;
+  cursorSnippet: string;
+  claudeDesktopSnippet: string;
+  tokenHint: string;
+  note: string;
+};
+
 export default function AccountClient() {
   const router = useRouter();
   const { configured, supabase, ready, user, signOut } = useAuth();
@@ -35,6 +48,9 @@ export default function AccountClient() {
   const [savingLayoutDirection, setSavingLayoutDirection] = useState(false);
   const [openAiKey, setOpenAiKey] = useState('');
   const [savedToast, setSavedToast] = useState<string | null>(null);
+  const [sshBundle, setSshBundle] = useState<SshOnboardingBundle | null>(null);
+  const [sshLoading, setSshLoading] = useState(false);
+  const [sshError, setSshError] = useState<string | null>(null);
 
   useEffect(() => {
     setOpenAiKey(loadOpenAiKey());
@@ -54,6 +70,56 @@ export default function AccountClient() {
       cancelled = true;
     };
   }, [configured, ready, supabase, user?.id]);
+
+  const showToast = (msg: string) => {
+    setSavedToast(msg);
+    window.setTimeout(() => setSavedToast(null), 2000);
+  };
+
+  const copyText = async (text: string, label: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast(`${label} copied`);
+    } catch {
+      showToast(`Failed to copy ${label.toLowerCase()}`);
+    }
+  };
+
+  const createSshOnboarding = async () => {
+    setSshError(null);
+    setSshLoading(true);
+    try {
+      const res = await fetch('/api/rag/mcp-ssh/onboarding', { method: 'POST' });
+      const json = (await res.json().catch(() => ({}))) as Partial<SshOnboardingBundle> & { error?: string };
+      if (!res.ok) {
+        const msg = json?.error ? String(json.error) : `Failed (HTTP ${res.status})`;
+        setSshError(msg);
+        return;
+      }
+      const next: SshOnboardingBundle = {
+        alias: String(json.alias || ''),
+        sshHost: String(json.sshHost || ''),
+        sshPort: Number(json.sshPort || 22),
+        sshUser: String(json.sshUser || ''),
+        installScriptUrl: String(json.installScriptUrl || ''),
+        installCommand: String(json.installCommand || ''),
+        cursorSnippet: String(json.cursorSnippet || ''),
+        claudeDesktopSnippet: String(json.claudeDesktopSnippet || ''),
+        tokenHint: String(json.tokenHint || ''),
+        note: String(json.note || ''),
+      };
+      if (!next.installCommand || !next.alias) {
+        setSshError('Server response was incomplete. Check MCP SSH env vars.');
+        return;
+      }
+      setSshBundle(next);
+      showToast('SSH setup package is ready');
+    } catch (e) {
+      setSshError(e instanceof Error ? e.message : 'Failed to create SSH setup package');
+    } finally {
+      setSshLoading(false);
+    }
+  };
 
   return (
     <main className="mac-desktop flex h-screen flex-col">
@@ -180,6 +246,73 @@ export default function AccountClient() {
                   </div>
                 </div>
 
+                <div className="mac-double-outline p-3 space-y-2">
+                  <div className="font-semibold">MCP SSH Setup (Claude / Cursor / Codex)</div>
+                  <div className="text-[11px] opacity-70">
+                    One-time setup on this computer. It generates an SSH key locally, registers the public key, and writes an SSH alias.
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button type="button" className="mac-btn mac-btn--primary" onClick={createSshOnboarding} disabled={sshLoading}>
+                      {sshLoading ? 'Generating…' : '1) Generate SSH Setup'}
+                    </button>
+                    {sshBundle ? (
+                      <span className="text-[11px] opacity-80">
+                        Alias: <span className="font-mono">{sshBundle.alias}</span>
+                      </span>
+                    ) : null}
+                  </div>
+                  {sshError ? <div className="text-[11px] text-red-700">{sshError}</div> : null}
+                  {sshBundle ? (
+                    <div className="space-y-2 pt-1">
+                      <div className="mac-double-outline p-2 space-y-1">
+                        <div className="font-semibold text-[11px]">2) Copy and run setup command in Terminal</div>
+                        <div className="flex items-center gap-2">
+                          <button type="button" className="mac-btn" onClick={() => copyText(sshBundle.installCommand, 'Setup command')}>
+                            Copy Setup Command
+                          </button>
+                          <button type="button" className="mac-btn" onClick={() => copyText(sshBundle.installScriptUrl, 'Setup script URL')}>
+                            Copy Setup URL
+                          </button>
+                        </div>
+                        <div className="text-[11px] opacity-70 break-all">{sshBundle.installCommand}</div>
+                      </div>
+
+                      <div className="mac-double-outline p-2 space-y-1">
+                        <div className="font-semibold text-[11px]">3) Add in Claude/Codex/Cursor MCP settings (no terminal)</div>
+                        <div className="text-[11px] opacity-70">
+                          Use these fields in the MCP “Add Server” form:
+                        </div>
+                        <div className="text-[11px]">
+                          Name: <span className="font-mono">diregram</span>
+                        </div>
+                        <div className="text-[11px]">
+                          Command: <span className="font-mono">ssh</span>
+                        </div>
+                        <div className="text-[11px]">
+                          Args: <span className="font-mono">[{JSON.stringify(sshBundle.alias)}]</span>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button type="button" className="mac-btn" onClick={() => copyText('ssh', 'Command')}>
+                            Copy Command
+                          </button>
+                          <button type="button" className="mac-btn" onClick={() => copyText(JSON.stringify([sshBundle.alias]), 'Args JSON')}>
+                            Copy Args JSON
+                          </button>
+                          <button type="button" className="mac-btn" onClick={() => copyText(sshBundle.cursorSnippet, 'Cursor snippet')}>
+                            Copy Cursor JSON
+                          </button>
+                          <button type="button" className="mac-btn" onClick={() => copyText(sshBundle.claudeDesktopSnippet, 'Claude Desktop snippet')}>
+                            Copy Claude Desktop JSON
+                          </button>
+                        </div>
+                        <div className="text-[11px] opacity-70">
+                          Host: <span className="font-mono">{sshBundle.sshUser}@{sshBundle.sshHost}:{sshBundle.sshPort}</span> · Token: <span className="font-mono">{sshBundle.tokenHint}</span>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+
                 <div className="flex items-center justify-end gap-2">
                   <button
                     type="button"
@@ -200,4 +333,3 @@ export default function AccountClient() {
     </main>
   );
 }
-

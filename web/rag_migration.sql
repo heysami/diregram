@@ -133,6 +133,26 @@ create table if not exists public.rag_mcp_tokens (
 create index if not exists rag_mcp_tokens_owner_idx
   on public.rag_mcp_tokens (owner_id, scope);
 
+-- 3e) SSH public keys for MCP stdio onboarding.
+-- Users self-register keys from a setup script; host sync pulls these into authorized_keys.
+create table if not exists public.rag_mcp_ssh_keys (
+  id uuid primary key default gen_random_uuid(),
+  owner_id uuid references public.profiles(id) on delete cascade not null,
+  token_id uuid references public.rag_mcp_tokens(id) on delete cascade not null,
+  key_name text default '',
+  public_key text not null,
+  public_key_fingerprint text not null,
+  created_at timestamptz default now(),
+  revoked_at timestamptz,
+  unique (token_id, public_key_fingerprint)
+);
+
+create index if not exists rag_mcp_ssh_keys_owner_idx
+  on public.rag_mcp_ssh_keys (owner_id);
+
+create index if not exists rag_mcp_ssh_keys_token_idx
+  on public.rag_mcp_ssh_keys (token_id);
+
 -- 4) Vector search helper (invoker security; RLS still applies on rag_chunks).
 create or replace function public.match_rag_chunks(
   query_embedding vector(1536),
@@ -174,6 +194,7 @@ alter table public.kg_edges enable row level security;
 alter table public.rag_mcp_shares enable row level security;
 alter table public.rag_projects enable row level security;
 alter table public.rag_mcp_tokens enable row level security;
+alter table public.rag_mcp_ssh_keys enable row level security;
 
 drop policy if exists "rag_chunks_select_via_file_access" on public.rag_chunks;
 drop policy if exists "rag_chunks_select_via_file_or_resource_access" on public.rag_chunks;
@@ -250,3 +271,8 @@ create policy "rag_mcp_tokens_owner_only" on public.rag_mcp_tokens
   using (auth.uid() = owner_id)
   with check (auth.uid() = owner_id);
 
+drop policy if exists "rag_mcp_ssh_keys_owner_only" on public.rag_mcp_ssh_keys;
+create policy "rag_mcp_ssh_keys_owner_only" on public.rag_mcp_ssh_keys
+  for all
+  using (auth.uid() = owner_id)
+  with check (auth.uid() = owner_id);

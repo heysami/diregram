@@ -56,7 +56,10 @@ This repo already exports a **semantic KG + “chunks to embed”** from a proje
 
 ### Hosted MCP (so users don’t run anything locally)
 
-If you deploy the hosted MCP server (see `mcp-server-*` folders), you can give users a single URL they can add in Cursor.
+If you deploy the hosted MCP server (see `mcp-server-*` folders), you have two integration paths:
+
+- **SSE URL** for clients that support URL MCP servers.
+- **SSH/stdio command** for clients that prefer command-based MCP (for example Codex/Claude setups).
 
 Setup:
 
@@ -78,10 +81,65 @@ Instead of one MCP URL per project:
   - `diregram_set_project`
   - `diregram_rag_query`
 
+#### SSH / stdio command mode
+
+In `mcp-server-nexusmap-rag-hosted`, run:
+
+```bash
+npm run start:stdio -- --token nm_mcp_...
+```
+
+Or:
+
+```bash
+MCP_TOKEN=nm_mcp_... npm run start:stdio
+```
+
+Then have MCP clients launch that command over SSH, for example:
+
+```bash
+ssh user@your-host "cd /path/to/mcp-server-nexusmap-rag-hosted && MCP_TOKEN=nm_mcp_... npm run start:stdio"
+```
+
+#### Automated SSH onboarding (no per-user manual ops)
+
+This repo now includes an account-level onboarding flow:
+
+- `POST /api/rag/mcp-ssh/onboarding`
+  - creates an account MCP token
+  - returns one setup command + Claude/Cursor/Codex snippets
+- `GET /api/rag/mcp-ssh/install?token=...`
+  - setup script used by the copied command
+  - generates local SSH key + registers public key + writes `~/.ssh/config` alias
+- `POST /api/rag/mcp-ssh/register-key`
+  - stores user public key in `rag_mcp_ssh_keys`
+- `GET /api/rag/mcp-ssh/authorized-keys`
+  - host sync endpoint that emits locked-down `authorized_keys` lines
+
+Required env vars for SSH onboarding:
+
+- `NEXT_PUBLIC_MCP_SSH_HOST`
+- `NEXT_PUBLIC_MCP_SSH_PORT` (default `22`)
+- `NEXT_PUBLIC_MCP_SSH_USER` (default `mcp`)
+- `MCP_SSH_SYNC_SECRET` (protects `authorized-keys` endpoint)
+- `MCP_SSH_FORCED_COMMAND` (must include `%TOKEN_HASH%`)
+
+Example forced command template:
+
+```bash
+/usr/bin/env MCP_TOKEN_HASH=%TOKEN_HASH% node /opt/diregram/mcp-server-nexusmap-rag-hosted/src/stdio.js
+```
+
+Host-side sync example:
+
+```bash
+curl -fsS "https://app.yourdomain.com/api/rag/mcp-ssh/authorized-keys?secret=$MCP_SSH_SYNC_SECRET" > /home/mcp/.ssh/authorized_keys
+chmod 600 /home/mcp/.ssh/authorized_keys
+```
+
 ### Making it “real” (recommended next steps)
 
 - **Deploy `web`**: easiest is Vercel (Next.js native), or any Node hosting that can run `next start`.
 - **Deploy `collab-server`**: host it somewhere that supports websockets (Render/Fly/Railway/etc.). Set `NEXT_PUBLIC_COLLAB_SERVER_URL` in the `web` deployment.
 - **Add persistence**: the collab server currently does not persist Yjs docs. For “real” documents you’ll want durable storage (e.g. Postgres/Redis/S3) and load/save hooks.
 - **Enforce access**: once Supabase is configured, gate `/editor` and enforce per-file permissions server-side (Supabase RLS policies in `web/schema.sql` are a starting point).
-
