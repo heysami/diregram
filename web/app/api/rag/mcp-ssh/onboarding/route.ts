@@ -29,7 +29,24 @@ export async function POST() {
     const remoteStdioPath = String(process.env.MCP_SSH_REMOTE_STDIO_PATH || '/opt/render/project/src/mcp-server-nexusmap-rag-hosted/src/stdio.js').trim();
     if (!remoteNode) throw new Error('Missing MCP_SSH_REMOTE_NODE');
     if (!remoteStdioPath) throw new Error('Missing MCP_SSH_REMOTE_STDIO_PATH');
-    const args = ['-p', String(ssh.port), `${ssh.user}@${ssh.host}`, remoteNode, remoteStdioPath, '--token', token];
+    const args = [
+      '-T',
+      '-o',
+      'BatchMode=yes',
+      '-o',
+      'StrictHostKeyChecking=accept-new',
+      '-o',
+      'UpdateHostKeys=no',
+      '-o',
+      'ConnectTimeout=20',
+      '-p',
+      String(ssh.port),
+      `${ssh.user}@${ssh.host}`,
+      remoteNode,
+      remoteStdioPath,
+      '--token',
+      token,
+    ];
     const argsJson = JSON.stringify(args, null, 2);
     const tomlArgs = args.map((a) => JSON.stringify(a)).join(', ');
     const codexToml = `[mcp_servers.diregram]\ncommand = \"ssh\"\nargs = [${tomlArgs}]`;
