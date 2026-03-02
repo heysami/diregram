@@ -45,7 +45,7 @@ export async function POST() {
       String(ssh.port),
       `${ssh.user}@${ssh.host}`,
     ];
-    const useLoginShell = String(process.env.MCP_SSH_USE_LOGIN_SHELL || '1').trim() !== '0';
+    const useLoginShell = String(process.env.MCP_SSH_USE_LOGIN_SHELL || '0').trim() === '1';
     const args = useLoginShell
       ? [
           ...sshBaseArgs,
