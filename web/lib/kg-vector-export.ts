@@ -73,6 +73,121 @@ function slugifyHeading(text: string): string {
   );
 }
 
+const RESOURCE_CHUNK_MAX_CHARS = 2200;
+const RESOURCE_CHUNK_MIN_CHARS = 500;
+
+type ResourceSection = {
+  headingLine: string;
+  headingSlug: string;
+  headingOccurrence: number;
+  body: string;
+};
+
+function splitLongText(text: string, maxChars: number): string[] {
+  const raw = String(text || '').trim();
+  if (!raw) return [];
+  if (raw.length <= maxChars) return [raw];
+  const out: string[] = [];
+  let rest = raw;
+  const minCut = Math.max(200, Math.floor(maxChars * 0.5));
+  while (rest.length > maxChars) {
+    let cut = rest.lastIndexOf('\n', maxChars);
+    if (cut < minCut) cut = rest.lastIndexOf(' ', maxChars);
+    if (cut < minCut) cut = maxChars;
+    const part = rest.slice(0, cut).trim();
+    if (part) out.push(part);
+    rest = rest.slice(cut).trim();
+  }
+  if (rest) out.push(rest);
+  return out;
+}
+
+function splitTextIntoRagChunks(text: string, maxChars: number, minChars: number): string[] {
+  const normalized = String(text || '').replace(/\r\n?/g, '\n').trim();
+  if (!normalized) return [];
+  const paragraphs = normalized
+    .split(/\n{2,}/g)
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .flatMap((p) => (p.length > maxChars ? splitLongText(p, maxChars) : [p]));
+  if (!paragraphs.length) return [];
+
+  const out: string[] = [];
+  let cur = '';
+  const pushCur = () => {
+    const v = cur.trim();
+    if (v) out.push(v);
+    cur = '';
+  };
+
+  for (const p of paragraphs) {
+    if (!cur) {
+      cur = p;
+      continue;
+    }
+    const next = `${cur}\n\n${p}`;
+    if (next.length <= maxChars) {
+      cur = next;
+      continue;
+    }
+    pushCur();
+    cur = p;
+  }
+  pushCur();
+
+  // Avoid tiny tail chunks that weaken retrieval signal.
+  if (out.length >= 2 && out[out.length - 1]!.length < minChars) {
+    const tail = out.pop()!;
+    out[out.length - 1] = `${out[out.length - 1]}\n\n${tail}`.trim();
+  }
+  return out;
+}
+
+function splitMarkdownResourceIntoSections(markdown: string): ResourceSection[] {
+  const lines = String(markdown || '').replace(/\r\n?/g, '\n').split('\n');
+  const out: ResourceSection[] = [];
+  const headingOccurrences = new Map<string, number>();
+  let curHeadingLine = '';
+  let curHeadingSlug = 'intro';
+  let curHeadingOccurrence = 1;
+  let bodyLines: string[] = [];
+
+  const flush = () => {
+    const body = bodyLines.join('\n').trim();
+    if (!curHeadingLine && !body) return;
+    out.push({
+      headingLine: curHeadingLine,
+      headingSlug: curHeadingSlug,
+      headingOccurrence: curHeadingOccurrence,
+      body,
+    });
+  };
+
+  for (const line of lines) {
+    const m = line.match(/^\s*(#{1,6})\s+(.+?)\s*$/);
+    if (m) {
+      flush();
+      const headingText = String(m[2] || '').trim();
+      const slug = slugifyHeading(headingText || 'section');
+      const occ = (headingOccurrences.get(slug) || 0) + 1;
+      headingOccurrences.set(slug, occ);
+      curHeadingLine = `${m[1]} ${headingText}`.trim();
+      curHeadingSlug = slug;
+      curHeadingOccurrence = occ;
+      bodyLines = [];
+      continue;
+    }
+    bodyLines.push(line);
+  }
+  flush();
+
+  if (!out.length) {
+    const text = String(markdown || '').trim();
+    if (text) out.push({ headingLine: '', headingSlug: 'intro', headingOccurrence: 1, body: text });
+  }
+  return out;
+}
+
 type ProjectFileRow = { id: string; name: string; kind: string; folderId: string | null; content: string };
 type ProjectResourceRow = { id: string; name: string; kind: string; projectFolderId: string; markdown: string };
 
@@ -1150,24 +1265,60 @@ export async function exportKgAndVectorsForProject(res: {
     if (fallbackText) chunks.push({ type: 'chunk', id: chunkId(f.id, 'file'), fileId: f.id, fileKind: f.kind, text: fallbackText.slice(0, 50_000), anchor: 'file' });
   }
 
-  // Project resources (e.g. Docling-imported markdown): embed as project-level chunks (no file_id).
+  // Project resources (e.g. Docling-imported markdown): split into semantic chunks.
   for (const r of resources) {
-    const anchor = 'resource';
     const resourceKey = `resource:${r.id}`;
-    const text = String([r.name, r.markdown].filter(Boolean).join('\n\n')).trim().slice(0, 50_000);
-    if (!text) continue;
-    chunks.push({
-      type: 'chunk',
-      id: chunkId(resourceKey, anchor),
-      fileId: null,
-      fileKind: 'resource',
-      anchor,
-      text,
-      resourceId: r.id,
-      resourceName: r.name,
-      resourceKind: r.kind,
-      projectFolderId: r.projectFolderId,
-    });
+    const sections = splitMarkdownResourceIntoSections(r.markdown);
+    let anyChunks = false;
+
+    for (const sec of sections) {
+      const source = sec.body || sec.headingLine;
+      if (!source) continue;
+      const bodyParts = splitTextIntoRagChunks(source, RESOURCE_CHUNK_MAX_CHARS, RESOURCE_CHUNK_MIN_CHARS);
+      if (!bodyParts.length) continue;
+
+      for (let i = 0; i < bodyParts.length; i++) {
+        const baseAnchor = sec.headingLine
+          ? `resource:heading:${sec.headingSlug}:${sec.headingOccurrence}`
+          : 'resource:intro';
+        const anchor = `${baseAnchor}:chunk:${i + 1}`;
+        const chunkBody = bodyParts[i]!;
+        const text = sec.headingLine && sec.body
+          ? String([r.name, sec.headingLine, chunkBody].filter(Boolean).join('\n\n')).trim()
+          : String([r.name, chunkBody].filter(Boolean).join('\n\n')).trim();
+        if (!text) continue;
+        anyChunks = true;
+        chunks.push({
+          type: 'chunk',
+          id: chunkId(resourceKey, anchor),
+          fileId: null,
+          fileKind: 'resource',
+          anchor,
+          text,
+          resourceId: r.id,
+          resourceName: r.name,
+          resourceKind: r.kind,
+          projectFolderId: r.projectFolderId,
+        });
+      }
+    }
+
+    if (!anyChunks) {
+      const text = String([r.name, r.markdown].filter(Boolean).join('\n\n')).trim();
+      if (!text) continue;
+      chunks.push({
+        type: 'chunk',
+        id: chunkId(resourceKey, 'resource:fallback:chunk:1'),
+        fileId: null,
+        fileKind: 'resource',
+        anchor: 'resource:fallback:chunk:1',
+        text: text.slice(0, 50_000),
+        resourceId: r.id,
+        resourceName: r.name,
+        resourceKind: r.kind,
+        projectFolderId: r.projectFolderId,
+      });
+    }
   }
 
   // Deduplicate by id (best-effort; preserves first occurrence).
@@ -1202,4 +1353,3 @@ export function downloadKgVectors(res: { graphJsonl: string; embeddingsJsonl: st
   downloadTextFile(`${base}.graph.jsonl`, res.graphJsonl, 'application/x-ndjson;charset=utf-8');
   downloadTextFile(`${base}.embeddings.jsonl`, res.embeddingsJsonl, 'application/x-ndjson;charset=utf-8');
 }
-

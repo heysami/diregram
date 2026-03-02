@@ -3,6 +3,8 @@ import { getUserSupabaseClient } from '@/lib/server/supabase-user';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+// Docling conversion can be slow for complex PDFs; request a longer function window.
+export const maxDuration = 300;
 
 function cleanBaseUrl(url: string) {
   return url.replace(/\/+$/, '');
@@ -66,7 +68,8 @@ export async function POST(request: Request) {
 
   if (!res.ok) {
     const msg = (json as any)?.detail ? String((json as any).detail) : raw.trim() ? raw.trim().slice(0, 600) : `Failed (HTTP ${res.status})`;
-    return NextResponse.json({ error: msg }, { status: 500 });
+    const status = res.status >= 400 && res.status < 600 ? res.status : 500;
+    return NextResponse.json({ error: msg }, { status });
   }
 
   const outputObjectPath = String((json as any)?.outputObjectPath || '').trim();
@@ -75,4 +78,3 @@ export async function POST(request: Request) {
 
   return NextResponse.json({ ok: true, bucketId, outputObjectPath, outputFormat });
 }
-

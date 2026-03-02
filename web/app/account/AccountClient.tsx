@@ -47,6 +47,8 @@ function normalizeTargetClient(input: string): McpTargetClient {
 
 type SshOnboardingBundle = {
   targetClient: McpTargetClient;
+  tokenScope: 'account' | 'project';
+  projectPublicId: string | null;
   sshHost: string;
   sshPort: number;
   sshUser: string;
@@ -68,6 +70,11 @@ type SshOnboardingBundle = {
   supportsOauth: boolean;
 };
 
+type McpProjectOption = {
+  publicId: string;
+  name: string;
+};
+
 export default function AccountClient() {
   const router = useRouter();
   const { configured, supabase, ready, user, signOut } = useAuth();
@@ -76,6 +83,9 @@ export default function AccountClient() {
   const [openAiKey, setOpenAiKey] = useState('');
   const [mcpTargetClient, setMcpTargetClient] = useState<McpTargetClient>('cursor');
   const [mcpOpenAiKey, setMcpOpenAiKey] = useState('');
+  const [mcpProjects, setMcpProjects] = useState<McpProjectOption[]>([]);
+  const [mcpProjectsLoading, setMcpProjectsLoading] = useState(false);
+  const [mcpProjectPublicId, setMcpProjectPublicId] = useState('');
   const [savedToast, setSavedToast] = useState<string | null>(null);
   const [sshBundle, setSshBundle] = useState<SshOnboardingBundle | null>(null);
   const [sshLoading, setSshLoading] = useState(false);
@@ -97,6 +107,43 @@ export default function AccountClient() {
       if (cancelled) return;
       setDefaultLayoutDirection(dir);
     });
+    return () => {
+      cancelled = true;
+    };
+  }, [configured, ready, supabase, user?.id]);
+
+  useEffect(() => {
+    if (!configured) return;
+    if (!ready) return;
+    if (!supabase) return;
+    if (!user?.id) return;
+    let cancelled = false;
+    setMcpProjectsLoading(true);
+    (async () => {
+      try {
+        const { data, error } = await supabase
+          .from('rag_projects')
+          .select('public_id,updated_at,folders(name)')
+          .eq('owner_id', user.id)
+          .order('updated_at', { ascending: false });
+        if (cancelled) return;
+        if (error) {
+          setMcpProjects([]);
+          return;
+        }
+        const rows = Array.isArray(data) ? (data as Array<{ public_id?: string | null; folders?: { name?: string | null } | null }>) : [];
+        setMcpProjects(
+          rows
+            .map((r) => ({
+              publicId: String(r.public_id || '').trim(),
+              name: String(r.folders?.name || '').trim(),
+            }))
+            .filter((r) => Boolean(r.publicId)),
+        );
+      } finally {
+        if (!cancelled) setMcpProjectsLoading(false);
+      }
+    })();
     return () => {
       cancelled = true;
     };
@@ -128,7 +175,7 @@ export default function AccountClient() {
       const res = await fetch('/api/rag/mcp-ssh/onboarding', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ client: mcpTargetClient, openAiApiKey: key }),
+        body: JSON.stringify({ client: mcpTargetClient, openAiApiKey: key, projectPublicId: String(mcpProjectPublicId || '').trim() }),
       });
       const json = (await res.json().catch(() => ({}))) as Partial<SshOnboardingBundle> & { error?: string };
       if (!res.ok) {
@@ -139,6 +186,8 @@ export default function AccountClient() {
       const rawArgs = (json as Record<string, unknown>).args;
       const next: SshOnboardingBundle = {
         targetClient: normalizeTargetClient(String((json as Record<string, unknown>).targetClient || mcpTargetClient)),
+        tokenScope: String((json as Record<string, unknown>).tokenScope || 'account').toLowerCase() === 'project' ? 'project' : 'account',
+        projectPublicId: String((json as Record<string, unknown>).projectPublicId || '').trim() || null,
         sshHost: String(json.sshHost || ''),
         sshPort: Number(json.sshPort || 22),
         sshUser: String(json.sshUser || ''),
@@ -325,6 +374,25 @@ export default function AccountClient() {
                     </select>
                   </div>
                   <div className="space-y-1">
+                    <div className="text-[11px]">Default project (recommended)</div>
+                    <select
+                      className="mac-field h-7 w-full"
+                      value={mcpProjectPublicId}
+                      disabled={mcpProjectsLoading}
+                      onChange={(e) => setMcpProjectPublicId(String(e.target.value || ''))}
+                    >
+                      <option value="">No fixed project (account token)</option>
+                      {mcpProjects.map((p) => (
+                        <option key={p.publicId} value={p.publicId}>
+                          {p.name ? `${p.name} (${p.publicId})` : p.publicId}
+                        </option>
+                      ))}
+                    </select>
+                    <div className="text-[11px] opacity-70">
+                      If selected, generated token is project-scoped so project choice is retained across reconnects.
+                    </div>
+                  </div>
+                  <div className="space-y-1">
                     <div className="text-[11px]">OpenAI key for generated MCP config</div>
                     <input
                       className="mac-field w-full"
@@ -354,7 +422,7 @@ export default function AccountClient() {
                           <div className="font-semibold text-[11px]">2) Claude Web connector</div>
                           <div className="text-[11px]">Name: <span className="font-mono">diregram</span></div>
                           <div className="text-[11px]">Remote MCP server URL: <span className="font-mono break-all">{sshBundle.claudeConnectorUrl || '(missing)'}</span></div>
-                          <div className="text-[11px] opacity-70">OAuth is not implemented in Diregram MCP yet. Leave OAuth fields blank.</div>
+                          <div className="text-[11px] opacity-70">Leave OAuth fields blank.</div>
                           <div className="flex flex-wrap items-center gap-2">
                             <button
                               type="button"
@@ -372,14 +440,18 @@ export default function AccountClient() {
                           <div className="text-[11px]">Name: <span className="font-mono">diregram</span></div>
                           <div className="text-[11px]">Command: <span className="font-mono">{sshBundle.command}</span></div>
                           <div className="text-[11px]">Args JSON: <span className="font-mono break-all">{sshBundle.argsJson}</span></div>
-                          <div className="text-[11px] opacity-70">If your client asks for one argument per row, use this order:</div>
-                          <div className="mac-double-outline p-2 space-y-0.5">
-                            {sshBundle.args.map((arg, idx) => (
-                              <div key={`${idx}-${arg}`} className="text-[11px]">
-                                {idx + 1}. <span className="font-mono break-all">{arg}</span>
+                          {sshBundle.targetClient === 'cursor' ? null : (
+                            <>
+                              <div className="text-[11px] opacity-70">If your client asks for one argument per row, use this order:</div>
+                              <div className="mac-double-outline p-2 space-y-0.5">
+                                {sshBundle.args.map((arg, idx) => (
+                                  <div key={`${idx}-${arg}`} className="text-[11px]">
+                                    {idx + 1}. <span className="font-mono break-all">{arg}</span>
+                                  </div>
+                                ))}
                               </div>
-                            ))}
-                          </div>
+                            </>
+                          )}
                           <div className="flex flex-wrap items-center gap-2">
                             <button type="button" className="mac-btn" onClick={() => copyText(sshBundle.command, 'Command')}>
                               Copy Command
@@ -387,9 +459,11 @@ export default function AccountClient() {
                             <button type="button" className="mac-btn" onClick={() => copyText(sshBundle.argsJson, 'Args JSON')}>
                               Copy Args JSON
                             </button>
-                            <button type="button" className="mac-btn" onClick={() => copyText(sshBundle.args.join('\n'), 'Args (line by line)')}>
-                              Copy Args (line by line)
-                            </button>
+                            {sshBundle.targetClient === 'cursor' ? null : (
+                              <button type="button" className="mac-btn" onClick={() => copyText(sshBundle.args.join('\n'), 'Args (line by line)')}>
+                                Copy Args (line by line)
+                              </button>
+                            )}
                             {sshBundle.targetClient === 'codex' ? (
                               <button type="button" className="mac-btn" onClick={() => copyText(sshBundle.codexToml, 'Codex TOML')}>
                                 Copy Codex TOML
@@ -408,6 +482,12 @@ export default function AccountClient() {
                           </div>
                           <div className="text-[11px] opacity-70">
                             Host: <span className="font-mono">{sshBundle.sshUser}@{sshBundle.sshHost}:{sshBundle.sshPort}</span> · Token: <span className="font-mono">{sshBundle.tokenHint}</span>
+                          </div>
+                          <div className="text-[11px] opacity-70">
+                            Scope: <span className="font-mono">{sshBundle.tokenScope}</span>
+                            {sshBundle.projectPublicId ? (
+                              <> · Project: <span className="font-mono">{sshBundle.projectPublicId}</span></>
+                            ) : null}
                           </div>
                         </div>
                       )}

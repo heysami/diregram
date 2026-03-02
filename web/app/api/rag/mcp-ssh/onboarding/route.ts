@@ -17,15 +17,16 @@ function normalizeTargetClient(input: unknown): TargetClient {
   return 'cursor';
 }
 
-async function parseBody(request: Request): Promise<{ targetClient: TargetClient; openAiApiKey: string }> {
+async function parseBody(request: Request): Promise<{ targetClient: TargetClient; openAiApiKey: string; projectPublicId: string }> {
   const ct = String(request.headers.get('content-type') || '').toLowerCase();
   if (!ct.includes('application/json')) {
-    return { targetClient: 'cursor', openAiApiKey: '' };
+    return { targetClient: 'cursor', openAiApiKey: '', projectPublicId: '' };
   }
-  const body = (await request.json().catch(() => null)) as null | { client?: unknown; openAiApiKey?: unknown };
+  const body = (await request.json().catch(() => null)) as null | { client?: unknown; openAiApiKey?: unknown; projectPublicId?: unknown };
   return {
     targetClient: normalizeTargetClient(body?.client),
     openAiApiKey: String(body?.openAiApiKey || '').trim(),
+    projectPublicId: String(body?.projectPublicId || '').trim(),
   };
 }
 
@@ -79,16 +80,31 @@ export async function POST(request: Request) {
   try {
     const { user } = await getUserSupabaseClient();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    const { targetClient, openAiApiKey } = await parseBody(request);
+    const { targetClient, openAiApiKey, projectPublicId } = await parseBody(request);
 
     const admin = getAdminSupabaseClient();
     const token = `nm_mcp_acct_${randomBytes(32).toString('base64url')}`;
     const tokenHash = sha256Hex(token);
+    let tokenScope: 'account' | 'project' = 'account';
+    let tokenProjectFolderId: string | null = null;
+    if (projectPublicId) {
+      const { data: projectRow, error: projectErr } = await admin
+        .from('rag_projects')
+        .select('project_folder_id')
+        .eq('owner_id', user.id)
+        .eq('public_id', projectPublicId)
+        .maybeSingle();
+      if (projectErr) return NextResponse.json({ error: projectErr.message }, { status: 500 });
+      const folderId = String(projectRow?.project_folder_id || '').trim();
+      if (!folderId) return NextResponse.json({ error: 'Unknown projectPublicId' }, { status: 400 });
+      tokenScope = 'project';
+      tokenProjectFolderId = folderId;
+    }
     const { error } = await admin.from('rag_mcp_tokens').insert({
       owner_id: user.id,
-      scope: 'account',
-      project_folder_id: null,
-      label: 'Account MCP SSH',
+      scope: tokenScope,
+      project_folder_id: tokenProjectFolderId,
+      label: tokenScope === 'project' ? 'Project MCP SSH' : 'Account MCP SSH',
       token_hash: tokenHash,
     });
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
@@ -167,14 +183,20 @@ export async function POST(request: Request) {
     }
     const note =
       targetClient === 'claude_web'
-        ? 'Claude Web connector: use Remote MCP server URL. OAuth is not implemented yet in Diregram MCP.'
-        : openAiApiKey
+        ? 'Claude Web connector: use Remote MCP server URL and leave OAuth fields empty.'
+        : tokenScope === 'project'
+          ? openAiApiKey
+            ? 'STDIO config includes your OpenAI key and a project-scoped token (project is retained).'
+            : 'STDIO config uses a project-scoped token (project is retained).'
+          : openAiApiKey
           ? 'STDIO config includes your OpenAI key in arguments.'
           : 'STDIO config generated without OpenAI key. Add it manually or regenerate with key.';
 
     return NextResponse.json({
       ok: true,
       targetClient,
+      tokenScope,
+      projectPublicId: projectPublicId || null,
       supabaseUrlForToken: String(process.env.NEXT_PUBLIC_SUPABASE_URL || '').trim() || null,
       sshHost: ssh.host,
       sshPort: ssh.port,

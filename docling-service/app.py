@@ -28,6 +28,17 @@ def _safe_filename(name: str) -> str:
     return s[:160] or "document"
 
 
+def _env_mb_limit(name: str, default_mb: int) -> int:
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return max(1, default_mb) * 1024 * 1024
+    try:
+        mb = int(raw)
+    except ValueError:
+        return max(1, default_mb) * 1024 * 1024
+    return max(1, mb) * 1024 * 1024
+
+
 class ConvertRequest(BaseModel):
     userId: str = Field(..., min_length=1)
     bucketId: str = Field(default="docling-files", min_length=1)
@@ -81,6 +92,16 @@ def convert(req: ConvertRequest):
     except Exception as e:
         raise HTTPException(status_code=404, detail=f"Failed to download input: {e}")
 
+    max_input_bytes = _env_mb_limit("DOCLING_MAX_INPUT_MB", 25)
+    input_bytes = data if isinstance(data, (bytes, bytearray)) else bytes(data)
+    if len(input_bytes) > max_input_bytes:
+        max_mb = round(max_input_bytes / (1024 * 1024), 2)
+        got_mb = round(len(input_bytes) / (1024 * 1024), 2)
+        raise HTTPException(
+            status_code=413,
+            detail=f"Input file is too large ({got_mb} MB). Max allowed is {max_mb} MB.",
+        )
+
     job_id = (req.jobId or "").strip() or uuid4().hex
     original_name = _safe_filename(req.originalFilename or Path(object_path).name)
     stem = Path(original_name).stem or "document"
@@ -91,7 +112,7 @@ def convert(req: ConvertRequest):
         suffix = Path(original_name).suffix or Path(object_path).suffix or ""
         with tempfile.TemporaryDirectory(prefix="docling_") as td:
             in_path = Path(td) / f"input{suffix}"
-            in_path.write_bytes(data if isinstance(data, (bytes, bytearray)) else bytes(data))
+            in_path.write_bytes(input_bytes)
 
             # Import Docling lazily so the server can start with low memory.
             from docling.document_converter import DocumentConverter
@@ -129,4 +150,3 @@ def convert(req: ConvertRequest):
         outputObjectPath=output_object_path,
         outputFormat=req.outputFormat,
     )
-
