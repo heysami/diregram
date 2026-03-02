@@ -195,7 +195,13 @@ async function ragQueryScoped(share, args, opts) {
 }
 
 async function boot() {
-  const share = await resolveShareFromTokenOrHash({ token: MCP_TOKEN, tokenHash: MCP_TOKEN_HASH });
+  let shareCache = null;
+  async function getShare() {
+    if (!shareCache) {
+      shareCache = await resolveShareFromTokenOrHash({ token: MCP_TOKEN, tokenHash: MCP_TOKEN_HASH });
+    }
+    return shareCache;
+  }
   const state = { openaiApiKey: '', activePublicProjectId: '' };
 
   const server = new Server(
@@ -286,12 +292,14 @@ async function boot() {
     }
 
     if (toolName === 'diregram_list_projects') {
+      const share = await getShare();
       if (share.scope !== 'account') throw new Error('list_projects requires an account-scoped token');
       const projects = await listProjectsForOwner(share.ownerId);
       return { content: [{ type: 'text', text: JSON.stringify({ ok: true, projects }, null, 2) }] };
     }
 
     if (toolName === 'diregram_set_project') {
+      const share = await getShare();
       if (share.scope !== 'account') throw new Error('set_project requires an account-scoped token');
       const pid = String(args?.publicProjectId || '').trim();
       if (!pid) throw new Error('Missing publicProjectId');
@@ -309,6 +317,7 @@ async function boot() {
     }
 
     if (toolName === 'diregram_rag_query') {
+      const share = await getShare();
       let projectFolderId = '';
       if (share.scope === 'account') {
         const pid = String(state.activePublicProjectId || '').trim();
