@@ -29,12 +29,13 @@ function saveOpenAiKey(next: string) {
 }
 
 type SshOnboardingBundle = {
-  alias: string;
   sshHost: string;
   sshPort: number;
   sshUser: string;
-  installScriptUrl: string;
-  installCommand: string;
+  command: string;
+  args: string[];
+  argsJson: string;
+  codexToml: string;
   cursorSnippet: string;
   claudeDesktopSnippet: string;
   tokenHint: string;
@@ -96,24 +97,26 @@ export default function AccountClient() {
         setSshError(msg);
         return;
       }
+      const rawArgs = (json as Record<string, unknown>).args;
       const next: SshOnboardingBundle = {
-        alias: String(json.alias || ''),
         sshHost: String(json.sshHost || ''),
         sshPort: Number(json.sshPort || 22),
         sshUser: String(json.sshUser || ''),
-        installScriptUrl: String(json.installScriptUrl || ''),
-        installCommand: String(json.installCommand || ''),
+        command: String(json.command || 'ssh'),
+        args: Array.isArray(rawArgs) ? rawArgs.map((x) => String(x)) : [],
+        argsJson: String(json.argsJson || ''),
+        codexToml: String(json.codexToml || ''),
         cursorSnippet: String(json.cursorSnippet || ''),
         claudeDesktopSnippet: String(json.claudeDesktopSnippet || ''),
         tokenHint: String(json.tokenHint || ''),
         note: String(json.note || ''),
       };
-      if (!next.installCommand || !next.alias) {
+      if (!next.command || !next.args.length || !next.argsJson) {
         setSshError('Server response was incomplete. Check MCP SSH env vars.');
         return;
       }
       setSshBundle(next);
-      showToast('SSH setup package is ready');
+      showToast('MCP config is ready');
     } catch (e) {
       setSshError(e instanceof Error ? e.message : 'Failed to create SSH setup package');
     } finally {
@@ -249,36 +252,18 @@ export default function AccountClient() {
                 <div className="mac-double-outline p-3 space-y-2">
                   <div className="font-semibold">MCP SSH Setup (Claude / Cursor / Codex)</div>
                   <div className="text-[11px] opacity-70">
-                    One-time setup on this computer. It generates an SSH key locally, registers the public key, and writes an SSH alias.
+                    Generates a one-time MCP config you paste directly into Claude/Cursor/Codex MCP settings.
                   </div>
                   <div className="flex items-center gap-2">
                     <button type="button" className="mac-btn mac-btn--primary" onClick={createSshOnboarding} disabled={sshLoading}>
-                      {sshLoading ? 'Generating…' : '1) Generate SSH Setup'}
+                      {sshLoading ? 'Generating…' : '1) Generate MCP Config'}
                     </button>
-                    {sshBundle ? (
-                      <span className="text-[11px] opacity-80">
-                        Alias: <span className="font-mono">{sshBundle.alias}</span>
-                      </span>
-                    ) : null}
                   </div>
                   {sshError ? <div className="text-[11px] text-red-700">{sshError}</div> : null}
                   {sshBundle ? (
                     <div className="space-y-2 pt-1">
                       <div className="mac-double-outline p-2 space-y-1">
-                        <div className="font-semibold text-[11px]">2) Copy and run setup command in Terminal</div>
-                        <div className="flex items-center gap-2">
-                          <button type="button" className="mac-btn" onClick={() => copyText(sshBundle.installCommand, 'Setup command')}>
-                            Copy Setup Command
-                          </button>
-                          <button type="button" className="mac-btn" onClick={() => copyText(sshBundle.installScriptUrl, 'Setup script URL')}>
-                            Copy Setup URL
-                          </button>
-                        </div>
-                        <div className="text-[11px] opacity-70 break-all">{sshBundle.installCommand}</div>
-                      </div>
-
-                      <div className="mac-double-outline p-2 space-y-1">
-                        <div className="font-semibold text-[11px]">3) Add in Claude/Codex/Cursor MCP settings (no terminal)</div>
+                        <div className="font-semibold text-[11px]">2) Add in Claude/Codex/Cursor MCP settings</div>
                         <div className="text-[11px] opacity-70">
                           Use these fields in the MCP “Add Server” form:
                         </div>
@@ -286,17 +271,20 @@ export default function AccountClient() {
                           Name: <span className="font-mono">diregram</span>
                         </div>
                         <div className="text-[11px]">
-                          Command: <span className="font-mono">ssh</span>
+                          Command: <span className="font-mono">{sshBundle.command}</span>
                         </div>
                         <div className="text-[11px]">
-                          Args: <span className="font-mono">[{JSON.stringify(sshBundle.alias)}]</span>
+                          Args JSON: <span className="font-mono break-all">{sshBundle.argsJson}</span>
                         </div>
                         <div className="flex flex-wrap items-center gap-2">
-                          <button type="button" className="mac-btn" onClick={() => copyText('ssh', 'Command')}>
+                          <button type="button" className="mac-btn" onClick={() => copyText(sshBundle.command, 'Command')}>
                             Copy Command
                           </button>
-                          <button type="button" className="mac-btn" onClick={() => copyText(JSON.stringify([sshBundle.alias]), 'Args JSON')}>
+                          <button type="button" className="mac-btn" onClick={() => copyText(sshBundle.argsJson, 'Args JSON')}>
                             Copy Args JSON
+                          </button>
+                          <button type="button" className="mac-btn" onClick={() => copyText(sshBundle.codexToml, 'Codex TOML')}>
+                            Copy Codex TOML
                           </button>
                           <button type="button" className="mac-btn" onClick={() => copyText(sshBundle.cursorSnippet, 'Cursor snippet')}>
                             Copy Cursor JSON

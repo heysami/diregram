@@ -2,12 +2,12 @@ import { NextResponse } from 'next/server';
 import { randomBytes } from 'node:crypto';
 import { getAdminSupabaseClient } from '@/lib/server/supabase-admin';
 import { getUserSupabaseClient } from '@/lib/server/supabase-user';
-import { aliasFromTokenHash, getMcpSshConfigFromEnv, getRequestOrigin, sanitizeSshAlias, sha256Hex } from '@/lib/server/mcp-ssh';
+import { getMcpSshConfigFromEnv, sha256Hex } from '@/lib/server/mcp-ssh';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-export async function POST(request: Request) {
+export async function POST() {
   try {
     const { user } = await getUserSupabaseClient();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -25,16 +25,20 @@ export async function POST(request: Request) {
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
     const ssh = getMcpSshConfigFromEnv();
-    const origin = getRequestOrigin(request);
-    const alias = sanitizeSshAlias(aliasFromTokenHash(tokenHash));
-    const installScriptUrl = `${origin}/api/rag/mcp-ssh/install?token=${encodeURIComponent(token)}&alias=${encodeURIComponent(alias)}`;
-    const installCommand = `curl -fsSL "${installScriptUrl}" | bash`;
+    const remoteNode = String(process.env.MCP_SSH_REMOTE_NODE || 'node').trim();
+    const remoteStdioPath = String(process.env.MCP_SSH_REMOTE_STDIO_PATH || '/opt/render/project/src/mcp-server-nexusmap-rag-hosted/src/stdio.js').trim();
+    if (!remoteNode) throw new Error('Missing MCP_SSH_REMOTE_NODE');
+    if (!remoteStdioPath) throw new Error('Missing MCP_SSH_REMOTE_STDIO_PATH');
+    const args = ['-p', String(ssh.port), `${ssh.user}@${ssh.host}`, remoteNode, remoteStdioPath, '--token', token];
+    const argsJson = JSON.stringify(args, null, 2);
+    const tomlArgs = args.map((a) => JSON.stringify(a)).join(', ');
+    const codexToml = `[mcp_servers.diregram]\ncommand = \"ssh\"\nargs = [${tomlArgs}]`;
     const cursorSnippet = JSON.stringify(
       {
         mcpServers: {
           diregram: {
             command: 'ssh',
-            args: [alias],
+            args,
           },
         },
       },
@@ -45,18 +49,17 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       ok: true,
-      alias,
       sshHost: ssh.host,
       sshPort: ssh.port,
       sshUser: ssh.user,
-      installScriptUrl,
-      installCommand,
       command: 'ssh',
-      args: [alias],
+      args,
+      argsJson,
+      codexToml,
       cursorSnippet,
       claudeDesktopSnippet,
       tokenHint: `${token.slice(0, 14)}...${token.slice(-6)}`,
-      note: 'Run the setup command once on the user machine, then add the copied client command/snippet.',
+      note: 'Copy the command/args into Claude/Cursor/Codex MCP settings.',
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'Failed to create SSH onboarding bundle';
@@ -70,6 +73,8 @@ export async function POST(request: Request) {
           hasSshHostPrivate: Boolean(process.env.MCP_SSH_HOST),
           hasSshPort: Boolean(process.env.NEXT_PUBLIC_MCP_SSH_PORT || process.env.MCP_SSH_PORT),
           hasSshUser: Boolean(process.env.NEXT_PUBLIC_MCP_SSH_USER || process.env.MCP_SSH_USER),
+          hasRemoteNode: Boolean(process.env.MCP_SSH_REMOTE_NODE || 'node'),
+          hasRemoteStdioPath: Boolean(process.env.MCP_SSH_REMOTE_STDIO_PATH || '/opt/render/project/src/mcp-server-nexusmap-rag-hosted/src/stdio.js'),
         },
       },
       { status: 500 },
