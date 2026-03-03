@@ -1,8 +1,22 @@
-import { POST_GEN_CHECKLIST_ALL } from '@/lib/ai-checklists/post-generation-index';
+import {
+  POST_GEN_CHECKLIST_ALL,
+  POST_GEN_CHECKLIST_COMPLETENESS,
+  POST_GEN_CHECKLIST_CONDITIONAL,
+  POST_GEN_CHECKLIST_DATA_OBJECTS,
+  POST_GEN_CHECKLIST_EXPANDED_NODES,
+  POST_GEN_CHECKLIST_IA,
+  POST_GEN_CHECKLIST_PROCESS_FLOWS,
+  POST_GEN_CHECKLIST_SINGLE_SCREEN_STEPS,
+  POST_GEN_CHECKLIST_SWIMLANE,
+  POST_GEN_CHECKLIST_SYSTEM_FLOW,
+  POST_GEN_CHECKLIST_TAGS,
+  POST_GEN_CHECKLIST_TECHNICAL,
+} from '@/lib/ai-checklists/post-generation-index';
 import { POST_GEN_CHECKLIST_VISION_COMPONENT_LIBRARY } from '@/lib/ai-checklists/post-generation-vision-component-library';
 import { POST_GEN_CHECKLIST_VISION_IMPORT } from '@/lib/ai-checklists/post-generation-vision';
 import { EXPANDED_NODE_PLANNING_PROMPT } from '@/lib/ai-guides/expanded-node-planning';
 import { FULL_AI_PROMPT } from '@/lib/ai-guides/diagram-full-prompt';
+import { SINGLE_SCREEN_STEPS_GUIDE } from '@/lib/ai-guides/single-screen-steps';
 import { VISION_AI_GUIDANCE_PROMPT_FROM_RESOURCES, VISION_AI_GUIDANCE_PROMPT_FROM_WEBSITE } from '@/lib/ai-guides/vision-guidance';
 
 export type AgentSkillTemplate = {
@@ -137,6 +151,32 @@ const generationVerificationOrder = [
   STANDARD_BLOCKING_LINE,
   '',
 ].join('\n');
+
+function formatReference(title: string, body: string) {
+  return ['# ' + title, '', body, ''].join('\n');
+}
+
+const generationChecklistAll = formatReference('Checklist - Post-generation (ALL)', POST_GEN_CHECKLIST_ALL);
+const generationChecklistTechnical = formatReference('Checklist - Technical', POST_GEN_CHECKLIST_TECHNICAL);
+const generationChecklistIa = formatReference('Checklist - IA', POST_GEN_CHECKLIST_IA);
+const generationChecklistExpandedNodes = formatReference('Checklist - Expanded Nodes', POST_GEN_CHECKLIST_EXPANDED_NODES);
+const generationChecklistTags = formatReference('Checklist - Tags', POST_GEN_CHECKLIST_TAGS);
+const generationChecklistProcessFlows = formatReference('Checklist - Process Flows', POST_GEN_CHECKLIST_PROCESS_FLOWS);
+const generationChecklistSingleScreenSteps = formatReference(
+  'Checklist - Single Screen Steps',
+  POST_GEN_CHECKLIST_SINGLE_SCREEN_STEPS,
+);
+const generationChecklistTechFlow = formatReference('Checklist - Tech Flow', POST_GEN_CHECKLIST_SYSTEM_FLOW);
+const generationChecklistConditional = formatReference('Checklist - Conditional', POST_GEN_CHECKLIST_CONDITIONAL);
+const generationChecklistDataRelationship = formatReference('Checklist - Data Relationship', POST_GEN_CHECKLIST_DATA_OBJECTS);
+const generationChecklistSwimlane = formatReference('Checklist - Swimlane', POST_GEN_CHECKLIST_SWIMLANE);
+const generationChecklistCompleteness = formatReference('Checklist - Completeness', POST_GEN_CHECKLIST_COMPLETENESS);
+const generationChecklistVisionImport = formatReference('Checklist - Vision Importability', POST_GEN_CHECKLIST_VISION_IMPORT);
+const generationChecklistVisionComponentLibrary = formatReference(
+  'Checklist - Vision Component Library',
+  POST_GEN_CHECKLIST_VISION_COMPONENT_LIBRARY,
+);
+const generationSingleScreenStepsGuide = formatReference('Guide - Single Screen Steps', SINGLE_SCREEN_STEPS_GUIDE);
 
 const generationClaudePrompt = [
   '# Diregram Generation Checklist (Claude)',
@@ -293,10 +333,27 @@ export const AGENT_SKILL_TEMPLATES: Record<'generationChecklist' | 'mcpRagOperat
       [`codex/${generationSkillName}/SKILL.md`]: generationSkillMd,
       [`codex/${generationSkillName}/agents/openai.yaml`]: generationOpenAiYaml,
       [`codex/${generationSkillName}/references/diagram-guidance.md`]: generationReferencesDiagram,
-      [`codex/${generationSkillName}/references/diagram-post-generation-checklist.md`]: generationReferencesDiagramChecklist,
       [`codex/${generationSkillName}/references/vision-guidance.md`]: generationReferencesVision,
-      [`codex/${generationSkillName}/references/vision-post-generation-checklists.md`]: generationReferencesVisionChecklist,
       [`codex/${generationSkillName}/references/verification-order.md`]: generationVerificationOrder,
+      [`codex/${generationSkillName}/references/checklists/00-post-generation-all.md`]: generationChecklistAll,
+      [`codex/${generationSkillName}/references/checklists/01-technical.md`]: generationChecklistTechnical,
+      [`codex/${generationSkillName}/references/checklists/02-ia.md`]: generationChecklistIa,
+      [`codex/${generationSkillName}/references/checklists/03-expanded-nodes.md`]: generationChecklistExpandedNodes,
+      [`codex/${generationSkillName}/references/checklists/04-tags.md`]: generationChecklistTags,
+      [`codex/${generationSkillName}/references/checklists/05-process-flows.md`]: generationChecklistProcessFlows,
+      [`codex/${generationSkillName}/references/checklists/06-single-screen-steps.md`]: generationChecklistSingleScreenSteps,
+      [`codex/${generationSkillName}/references/checklists/07-tech-flow.md`]: generationChecklistTechFlow,
+      [`codex/${generationSkillName}/references/checklists/08-conditional.md`]: generationChecklistConditional,
+      [`codex/${generationSkillName}/references/checklists/09-data-relationship.md`]: generationChecklistDataRelationship,
+      [`codex/${generationSkillName}/references/checklists/10-swimlane.md`]: generationChecklistSwimlane,
+      [`codex/${generationSkillName}/references/checklists/11-completeness.md`]: generationChecklistCompleteness,
+      [`codex/${generationSkillName}/references/checklists/12-vision-importability.md`]: generationChecklistVisionImport,
+      [`codex/${generationSkillName}/references/checklists/13-vision-component-library.md`]:
+        generationChecklistVisionComponentLibrary,
+      [`codex/${generationSkillName}/references/checklists/14-guide-single-screen-steps.md`]: generationSingleScreenStepsGuide,
+      // Keep combined references for backward compatibility with earlier downloads.
+      [`codex/${generationSkillName}/references/diagram-post-generation-checklist.md`]: generationReferencesDiagramChecklist,
+      [`codex/${generationSkillName}/references/vision-post-generation-checklists.md`]: generationReferencesVisionChecklist,
       [`claude/${generationSkillName}.md`]: generationClaudePrompt,
     },
   },

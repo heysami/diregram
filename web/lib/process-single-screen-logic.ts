@@ -41,15 +41,15 @@ export function computeSingleScreenPathIds(opts: {
   const guard = new Set<string>([lastNodeId]);
 
   while (cur?.parentId) {
-    if (cur.parentId === startNodeId) {
-      path.push(startNodeId);
+    const pid = cur.parentId;
+    if (!pid || guard.has(pid)) return null;
+    guard.add(pid);
+    path.push(pid);
+    if (pid === startNodeId) {
       path.reverse();
       return path;
     }
-    const nextId = cur.parentId;
-    if (!nextId || guard.has(nextId)) return null;
-    guard.add(nextId);
-    cur = nodeMap.get(nextId);
+    cur = nodeMap.get(pid);
   }
 
   return null;
