@@ -1485,26 +1485,25 @@ export function deriveDesignSystemTokens(spec: VisionDesignSystemV1): VisionDesi
       : ['#0f172a'];
     const desired = normalizeHex(desiredBgHex, '#3b82f6');
     const surfaceAvg = surfaces.reduce((acc, s) => mix(acc, s, 0.5), surfaces[0] || '#0f172a');
-    const candidates = [desired, mix(desired, surfaceAvg, 0.2), mix(desired, surfaceAvg, 0.32), mix('#ffffff', desired, 0.08), mix('#0f172a', desired, 0.08)];
-    let best = desired;
-    let bestText = ensureContrastText(desired, '#ffffff', 4.5);
-    let bestScore = -Infinity;
-    for (const bg of candidates) {
-      const text = ensureContrastText(bg, '#ffffff', 4.5);
-      const textContrast = contrastRatio(bg, text);
-      const surfaceContrast = Math.min(...surfaces.map((surface) => contrastRatio(bg, surface)));
-      const preference = bg === desired ? 0.08 : 0;
-      const score = surfaceContrast * 0.7 + textContrast * 0.38 + preference;
-      if (score > bestScore) {
-        best = bg;
-        bestText = text;
-        bestScore = score;
-      }
+    const desiredText = ensureContrastText(desired, '#ffffff', 4.5);
+    const desiredSurfaceContrast = Math.min(...surfaces.map((surface) => contrastRatio(desired, surface)));
+    let bg = desired;
+    let text = desiredText;
+    let surfaceContrast = desiredSurfaceContrast;
+    if (surfaceContrast < 1.02) {
+      const lighter = mix(desired, '#ffffff', 0.24);
+      const darker = mix(desired, '#0f172a', 0.22);
+      const lighterContrast = Math.min(...surfaces.map((surface) => contrastRatio(lighter, surface)));
+      const darkerContrast = Math.min(...surfaces.map((surface) => contrastRatio(darker, surface)));
+      bg = lighterContrast >= darkerContrast ? lighter : darker;
+      text = ensureContrastText(bg, '#ffffff', 4.5);
+      surfaceContrast = Math.max(lighterContrast, darkerContrast);
     }
+    const borderEdge = ensureContrastText(surfaceAvg, bg, surfaceContrast < 1.2 ? 2.6 : 1.8);
     return {
-      bg: best,
-      text: bestText,
-      border: mix(best, surfaceAvg, 0.56),
+      bg,
+      text,
+      border: mix(bg, borderEdge, surfaceContrast < 1.2 ? 0.52 : 0.3),
     };
   };
   const topSurfaceRef = String(topNavBg).startsWith('linear-gradient') ? topGradientRef : normalizeHex(topNavBg, panelBg);
