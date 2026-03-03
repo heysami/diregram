@@ -34,9 +34,12 @@ import { syncExpandedState } from '@/lib/expanded-state-sync';
 import { loadDimensionDescriptions, saveDimensionDescriptions, type DimensionDescriptionEntry } from '@/lib/dimension-description-storage';
 import { loadFlowNodeStates, saveFlowNodeStates, type FlowNodeEntry, buildFlowNodeParentPath } from '@/lib/flow-node-storage';
 import { loadSingleScreenLastSteps } from '@/lib/process-single-screen-storage';
+import { computeSingleScreenPathIds } from '@/lib/process-single-screen-logic';
 import { buildProcessRunningNumberMap } from '@/lib/process-running-number-map';
 import { matchNodeToDimensionDescription } from '@/lib/dimension-description-matcher';
 import { buildExpandedNodeIdToRunningNumberLookup } from '@/lib/expanded-running-number-lookup';
+import { loadExpandedGridNodesFromDoc, saveExpandedGridNodesToDoc, type ExpandedGridNodeRuntime } from '@/lib/expanded-grid-storage';
+import { loadExpandedNodeMetadata, saveExpandedNodeMetadata } from '@/lib/expanded-node-metadata';
 import { useExpandedMainDataObjectInheritance } from '@/hooks/use-expanded-main-data-object-inheritance';
 import { useChangeViewWithSelectionReset } from '@/hooks/use-change-view-with-selection-reset';
 import type { TagViewState } from '@/types/tagging';
@@ -389,6 +392,9 @@ export function EditorApp() {
   const [collapsedSingleScreenGroupStartIds, setCollapsedSingleScreenGroupStartIds] = useState<Set<string>>(
     () => new Set(),
   );
+  const [screenGridSingleScreenGroupStartIds, setScreenGridSingleScreenGroupStartIds] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [selectedExpandedGridNode, setSelectedExpandedGridNode] = useState<
     SelectedExpandedGridNode | SelectedExpandedGridNodes | null
   >(null);
@@ -507,6 +513,183 @@ export function EditorApp() {
       return next;
     });
   }, []);
+
+  const setSingleScreenGroupCollapsed = useCallback((startId: string, collapsed: boolean) => {
+    setCollapsedSingleScreenGroupStartIds((prev) => {
+      const next = new Set(prev);
+      if (collapsed) next.add(startId);
+      else next.delete(startId);
+      return next;
+    });
+  }, []);
+
+  const enterSingleScreenGroupScreenGridMode = useCallback(
+    (startId: string) => {
+      setScreenGridSingleScreenGroupStartIds((prev) => {
+        const next = new Set(prev);
+        next.add(startId);
+        return next;
+      });
+      // Screen grid mode uses an expanded screen container, and hides inner steps on the main canvas.
+      setSingleScreenGroupCollapsed(startId, true);
+      setExpandedNodes((prev) => {
+        const next = new Set(prev);
+        next.add(startId);
+        return next;
+      });
+    },
+    [setSingleScreenGroupCollapsed],
+  );
+
+  const exitSingleScreenGroupScreenGridMode = useCallback(
+    (startId: string) => {
+      setScreenGridSingleScreenGroupStartIds((prev) => {
+        const next = new Set(prev);
+        next.delete(startId);
+        return next;
+      });
+      // Return to step view (inner nodes visible, expanded screen closed).
+      setSingleScreenGroupCollapsed(startId, false);
+      setExpandedNodes((prev) => {
+        const next = new Set(prev);
+        next.delete(startId);
+        return next;
+      });
+    },
+    [setSingleScreenGroupCollapsed],
+  );
+
+  // When a group is in "screen grid mode", sync its task range into the start node's expanded-grid as locked inner nodes.
+  useEffect(() => {
+    if (!doc) return;
+    if (screenGridSingleScreenGroupStartIds.size === 0) return;
+
+    const sanitize = (s: string) => String(s || '').replace(/[^a-zA-Z0-9_-]/g, '_');
+
+    const isCellOccupied = (nodes: ExpandedGridNodeRuntime[], x: number, y: number): boolean => {
+      return nodes.some(
+        (n) => x >= n.gridX && x < n.gridX + n.gridWidth && y >= n.gridY && y < n.gridY + n.gridHeight,
+      );
+    };
+    const findFirstEmptyCell = (
+      nodes: ExpandedGridNodeRuntime[],
+      gridWidth: number,
+      gridHeight: number,
+    ): { x: number; y: number } | null => {
+      for (let y = 0; y < gridHeight; y += 1) {
+        for (let x = 0; x < gridWidth; x += 1) {
+          if (!isCellOccupied(nodes, x, y)) return { x, y };
+        }
+      }
+      return null;
+    };
+
+    screenGridSingleScreenGroupStartIds.forEach((startId) => {
+      // Only sync if the screen is actually expanded; runningNumber is assigned during expanded-state persistence.
+      if (!expandedNodes.has(startId)) return;
+
+      const lastId = singleScreenLastStepsByStartId[startId] || '';
+      if (!lastId) return;
+
+      const pathIds = computeSingleScreenPathIds({ startNodeId: startId, lastNodeId: lastId, nodeMap });
+      if (!pathIds || pathIds.length < 2) return;
+
+      // Inner nodes represent tasks under the screen; keep the outer badge as the screen title.
+      const taskIds = pathIds.slice(1);
+
+      const expandedRunningNumber = getRunningNumber(startId);
+      if (expandedRunningNumber === undefined) return;
+
+      const prefix = `ss-task-${expandedRunningNumber}-`;
+
+      const loaded = loadExpandedGridNodesFromDoc(doc, expandedRunningNumber, startId);
+      const existing = loaded.nodes || [];
+
+      const meta = loadExpandedNodeMetadata(doc, expandedRunningNumber);
+      let gridWidth = typeof meta.gridWidth === 'number' ? meta.gridWidth : meta.gridSize || 4;
+      let gridHeight = typeof meta.gridHeight === 'number' ? meta.gridHeight : meta.gridSize || 4;
+
+      // Only manage nodes created by this feature (key prefix). Everything else is user-owned.
+      const nonManaged = existing.filter((n) => !String(n.key || n.id).startsWith(prefix));
+      const managedExisting = existing.filter((n) => String(n.key || n.id).startsWith(prefix));
+      const existingByKey = new Map<string, ExpandedGridNodeRuntime>(
+        managedExisting.map((n) => [String(n.key || n.id), n]),
+      );
+
+      // Used for occupancy while placing new nodes.
+      const placedSoFar: ExpandedGridNodeRuntime[] = [...nonManaged];
+      const nextManaged: ExpandedGridNodeRuntime[] = [];
+
+      for (const taskId of taskIds) {
+        const taskRunningNumber = getProcessRunningNumber(taskId);
+        const suffix =
+          typeof taskRunningNumber === 'number' && Number.isFinite(taskRunningNumber)
+            ? `rn${taskRunningNumber}`
+            : sanitize(taskId);
+        const key = `${prefix}${suffix}`;
+
+        const taskNode = nodeMap.get(taskId);
+        const content = (taskNode?.content || '').trim() || taskId;
+
+        const existingNode = existingByKey.get(key);
+        if (existingNode) {
+          const updated: ExpandedGridNodeRuntime = {
+            ...existingNode,
+            content,
+            sourceFlowNodeId: taskId,
+          };
+          nextManaged.push(updated);
+          placedSoFar.push(updated);
+          continue;
+        }
+
+        let empty = findFirstEmptyCell(placedSoFar, gridWidth, gridHeight);
+        let safety = 0;
+        while (!empty && safety < 20) {
+          if (gridWidth < 10) gridWidth += 1;
+          else if (gridHeight < 10) gridHeight += 1;
+          else break;
+          empty = findFirstEmptyCell(placedSoFar, gridWidth, gridHeight);
+          safety += 1;
+        }
+
+        if (!empty) continue;
+
+        const newNode: ExpandedGridNodeRuntime = {
+          id: key,
+          key,
+          content,
+          uiType: 'content',
+          sourceFlowNodeId: taskId,
+          gridX: empty.x,
+          gridY: empty.y,
+          gridWidth: 1,
+          gridHeight: 1,
+        };
+        nextManaged.push(newNode);
+        placedSoFar.push(newNode);
+      }
+
+      if (gridWidth !== meta.gridWidth || gridHeight !== meta.gridHeight) {
+        saveExpandedNodeMetadata(doc, expandedRunningNumber, {
+          ...meta,
+          gridWidth,
+          gridHeight,
+        });
+      }
+
+      const nextNodes: ExpandedGridNodeRuntime[] = [...nonManaged, ...nextManaged];
+      saveExpandedGridNodesToDoc(doc, expandedRunningNumber, nextNodes, startId);
+    });
+  }, [
+    doc,
+    expandedNodes,
+    getProcessRunningNumber,
+    getRunningNumber,
+    nodeMap,
+    screenGridSingleScreenGroupStartIds,
+    singleScreenLastStepsByStartId,
+  ]);
   const canvasRootFilter = useCallback((root: NexusNode) => !(root.metadata as any)?.flowTab && !(root.metadata as any)?.systemFlow, []);
   const canvasPruneSubtree = useCallback((n: NexusNode) => !!(n.metadata as any)?.flowTab || !!(n.metadata as any)?.systemFlow, []);
 
@@ -1758,7 +1941,11 @@ export function EditorApp() {
                   return (lastId && (nodeMap.get(lastId)?.content || lastId)) || '';
                 })()}
                 isCollapsed={collapsedSingleScreenGroupStartIds.has(selectedSingleScreenGroupStartId)}
+                isScreenGridMode={screenGridSingleScreenGroupStartIds.has(selectedSingleScreenGroupStartId)}
+                canEnterScreenGridMode={!!singleScreenLastStepsByStartId[selectedSingleScreenGroupStartId]}
                 onToggleCollapsed={toggleSingleScreenGroupCollapsed}
+                onEnterScreenGridMode={enterSingleScreenGroupScreenGridMode}
+                onExitScreenGridMode={exitSingleScreenGroupScreenGridMode}
                 onClose={() => setSelectedSingleScreenGroupStartId(null)}
               />
             ) : selectedNode ? (

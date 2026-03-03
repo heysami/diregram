@@ -5,7 +5,11 @@ interface Props {
   startLabel: string;
   lastLabel: string;
   isCollapsed: boolean;
+  isScreenGridMode: boolean;
+  canEnterScreenGridMode: boolean;
   onToggleCollapsed: (startNodeId: string) => void;
+  onEnterScreenGridMode: (startNodeId: string) => void;
+  onExitScreenGridMode: (startNodeId: string) => void;
   onClose: () => void;
 }
 
@@ -14,7 +18,11 @@ export function SingleScreenStepsGroupPanel({
   startLabel,
   lastLabel,
   isCollapsed,
+  isScreenGridMode,
+  canEnterScreenGridMode,
   onToggleCollapsed,
+  onEnterScreenGridMode,
+  onExitScreenGridMode,
   onClose,
 }: Props) {
   return (
@@ -53,8 +61,26 @@ export function SingleScreenStepsGroupPanel({
             Collapse hides inner steps and routes the flow through this screen.
           </div>
         </div>
+
+        <div className="rounded-md border border-gray-200 bg-white p-3">
+          <div className="text-[11px] font-semibold text-gray-700 mb-2">Screen grid</div>
+          <button
+            type="button"
+            disabled={!canEnterScreenGridMode && !isScreenGridMode}
+            onClick={() => {
+              if (isScreenGridMode) onExitScreenGridMode(startNodeId);
+              else onEnterScreenGridMode(startNodeId);
+            }}
+            className={`w-full text-[11px] px-3 py-2 rounded-md border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed`}
+            title={!canEnterScreenGridMode && !isScreenGridMode ? 'Set “Last step” first' : undefined}
+          >
+            {isScreenGridMode ? 'Back to steps view' : 'Open as expanded screen (grid)'}
+          </button>
+          <div className="mt-2 text-[10px] text-gray-500">
+            Shows grouped tasks as inner grid nodes inside an expanded screen. (Resizable; uses Expanded Node UI.)
+          </div>
+        </div>
       </div>
     </div>
   );
 }
-

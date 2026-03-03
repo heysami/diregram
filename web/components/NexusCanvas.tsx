@@ -4168,7 +4168,9 @@ export function NexusCanvas({
               <div
                 key={`single-screen-group-${startId}-${lastId}`}
                 data-single-screen-group={startId}
-                className={`absolute rounded-md mac-double-outline ${isSelectedGroup ? 'opacity-80' : 'opacity-60'}`}
+                className={`absolute rounded-md mac-double-outline ${
+                  isSelectedGroup ? 'opacity-90 outline outline-2 outline-rose-600 outline-offset-2' : 'opacity-60'
+                }`}
                 style={{
                   left: bounds.x,
                   top: bounds.y,
