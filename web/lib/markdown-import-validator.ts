@@ -1159,8 +1159,12 @@ export function validateNexusMarkdownImport(markdown: string): ImportValidationR
 
   // Process single-screen blocks (Single Screen Steps):
   // - keyed by runningNumber N (same runningNumber as process-node-type-N)
-  // - body JSON: { "lastStepId": "node-<lineIndex>" }
-  const processSingleScreenLastByRn = new Map<number, { lastStepId: string; blockType: string }>();
+  // - body JSON: { "lastStepRunningNumber": number }
+  //   (Backward compatible: older docs may store { "lastStepId": "node-<lineIndex>" }.)
+  const processSingleScreenLastByRn = new Map<
+    number,
+    { lastStepRunningNumber?: number; lastStepId?: string; blockType: string }
+  >();
   fenced.blocks.forEach((b) => {
     const m = b.type.match(/^process-single-screen-(\d+)$/);
     if (!m) return;
@@ -1170,27 +1174,52 @@ export function validateNexusMarkdownImport(markdown: string): ImportValidationR
       add(errors, 'error', 'INVALID_PROCESS_SINGLE_SCREEN_JSON', `\`\`\`${b.type}\`\`\` is not valid JSON.`);
       return;
     }
-    const lastStepId = typeof parsed.value?.lastStepId === 'string' ? parsed.value.lastStepId : '';
-    if (!lastStepId) {
-      add(errors, 'error', 'BAD_PROCESS_SINGLE_SCREEN', `\`\`\`${b.type}\`\`\` must contain JSON like { "lastStepId": "node-<lineIndex>" }.`);
+    const lastStepRunningNumberRaw = (parsed.value as any)?.lastStepRunningNumber;
+    const lastStepRunningNumber =
+      typeof lastStepRunningNumberRaw === 'number' && Number.isFinite(lastStepRunningNumberRaw)
+        ? lastStepRunningNumberRaw
+        : typeof lastStepRunningNumberRaw === 'string' &&
+            lastStepRunningNumberRaw.trim() !== '' &&
+            Number.isFinite(Number(lastStepRunningNumberRaw))
+          ? Number(lastStepRunningNumberRaw)
+          : undefined;
+    const lastStepId = typeof (parsed.value as any)?.lastStepId === 'string' ? String((parsed.value as any).lastStepId) : '';
+
+    if (typeof lastStepRunningNumber !== 'number' && !lastStepId) {
+      add(
+        errors,
+        'error',
+        'BAD_PROCESS_SINGLE_SCREEN',
+        `\`\`\`${b.type}\`\`\` must contain JSON like { "lastStepRunningNumber": 12 } (legacy: { "lastStepId": "node-<lineIndex>" }).`,
+      );
       return;
     }
-    processSingleScreenLastByRn.set(rn, { lastStepId, blockType: b.type });
 
-    const lastNode = nodeById.get(lastStepId);
-    if (!lastNode) {
+    processSingleScreenLastByRn.set(rn, { lastStepRunningNumber, lastStepId: lastStepId || undefined, blockType: b.type });
+
+    const resolvedLastNode = (() => {
+      if (typeof lastStepRunningNumber === 'number') {
+        const entry = flowEntryByRn.get(lastStepRunningNumber);
+        const li = typeof entry?.lineIndex === 'number' ? entry.lineIndex : null;
+        if (li === null) return null;
+        return lineIndexToNode.get(li) || null;
+      }
+      const trimmed = String(lastStepId || '').trim();
+      return trimmed ? nodeById.get(trimmed) || null : null;
+    })();
+    if (!resolvedLastNode) {
       add(
         errors,
         'error',
         'PROCESS_SINGLE_SCREEN_LAST_STEP_MISSING_NODE',
-        `\`\`\`${b.type}\`\`\` lastStepId "${lastStepId}" does not exist in this markdown.`,
+        `\`\`\`${b.type}\`\`\` last step does not resolve to a node in this markdown.`,
       );
     }
   });
 
   // Cross-check Single Screen Steps blocks against process-node-type and tree structure (best-effort).
   if (processSingleScreenLastByRn.size) {
-    processSingleScreenLastByRn.forEach(({ lastStepId, blockType }, rn) => {
+    processSingleScreenLastByRn.forEach(({ lastStepRunningNumber, lastStepId, blockType }, rn) => {
       const t = processNodeTypeByRn.get(rn);
       if (!t) {
         add(
@@ -1208,12 +1237,21 @@ export function validateNexusMarkdownImport(markdown: string): ImportValidationR
         );
       }
 
-      // Validate lastStepId is a descendant of the group start node using flow-nodes linkage if possible.
+      // Validate the last step is a descendant of the group start node using flow-nodes linkage if possible.
       const entry = flowEntryByRn.get(rn);
       const li = typeof entry?.lineIndex === 'number' ? entry.lineIndex : null;
       if (li === null) return;
       const startNode = lineIndexToNode.get(li);
-      const lastNode = nodeById.get(lastStepId);
+      const lastNode = (() => {
+        if (typeof lastStepRunningNumber === 'number') {
+          const lastEntry = flowEntryByRn.get(lastStepRunningNumber);
+          const lastLi = typeof lastEntry?.lineIndex === 'number' ? lastEntry.lineIndex : null;
+          if (lastLi === null) return null;
+          return lineIndexToNode.get(lastLi) || null;
+        }
+        const trimmed = String(lastStepId || '').trim();
+        return trimmed ? nodeById.get(trimmed) || null : null;
+      })();
       if (!startNode || !lastNode) return;
 
       let cur: NexusNode | undefined = lastNode;
@@ -1230,7 +1268,7 @@ export function validateNexusMarkdownImport(markdown: string): ImportValidationR
           warnings,
           'warning',
           'PROCESS_SINGLE_SCREEN_LAST_STEP_NOT_DESCENDANT',
-          `\`\`\`${blockType}\`\`\` lastStepId "${lastStepId}" is not a descendant of the group start node resolved via flow-nodes rn=${rn}.`,
+          `\`\`\`${blockType}\`\`\` last step is not a descendant of the group start node resolved via flow-nodes rn=${rn}.`,
         );
       }
     });

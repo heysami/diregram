@@ -793,15 +793,25 @@ function exportDiagramSemanticKg(opts: {
     }
   }
 
-  const singleScreenLastByRn = new Map<number, string>();
+  const singleScreenLastByRn = new Map<number, { lastStepRunningNumber?: number; lastStepId?: string }>();
   const ssRe = /```process-single-screen-(\d+)\n([\s\S]*?)\n```/g;
   for (const m of metadataSection.matchAll(ssRe)) {
     const rn = Number.parseInt(String(m[1] || ''), 10);
     if (!Number.isFinite(rn)) continue;
     try {
       const parsed = JSON.parse(String(m[2] || '{}'));
-      const lastStepId = typeof parsed?.lastStepId === 'string' ? String(parsed.lastStepId).trim() : '';
-      if (lastStepId) singleScreenLastByRn.set(rn, lastStepId);
+      const lastStepRunningNumberRaw = (parsed as any)?.lastStepRunningNumber;
+      const lastStepRunningNumber =
+        typeof lastStepRunningNumberRaw === 'number' && Number.isFinite(lastStepRunningNumberRaw)
+          ? lastStepRunningNumberRaw
+          : typeof lastStepRunningNumberRaw === 'string' &&
+              String(lastStepRunningNumberRaw).trim() !== '' &&
+              Number.isFinite(Number(lastStepRunningNumberRaw))
+            ? Number(lastStepRunningNumberRaw)
+            : undefined;
+      const lastStepId = typeof (parsed as any)?.lastStepId === 'string' ? String((parsed as any).lastStepId).trim() : '';
+      if (typeof lastStepRunningNumber === 'number') singleScreenLastByRn.set(rn, { lastStepRunningNumber });
+      else if (lastStepId) singleScreenLastByRn.set(rn, { lastStepId });
     } catch {
       // ignore malformed blocks
     }
@@ -809,17 +819,26 @@ function exportDiagramSemanticKg(opts: {
 
   // Screen identity mapping for tasks (flow nodes).
   const screenOfTaskByNodeId = new Map<string, string>();
-  singleScreenLastByRn.forEach((lastStepId, rn) => {
+  singleScreenLastByRn.forEach((stored, rn) => {
     if (processNodeTypeByRn.get(rn) !== 'single_screen_steps') return;
     const li = lineIndexByFlowRunningNumber.get(rn);
     if (typeof li !== 'number') return;
     const startNodeId = `node-${li}`;
     const startNode = nodeById.get(startNodeId);
-    const lastNode = nodeById.get(lastStepId);
+    const lastNodeId = (() => {
+      if (typeof stored.lastStepRunningNumber === 'number') {
+        const lastLi = lineIndexByFlowRunningNumber.get(stored.lastStepRunningNumber);
+        if (typeof lastLi !== 'number') return null;
+        return `node-${lastLi}`;
+      }
+      const id = String(stored.lastStepId || '').trim();
+      return id || null;
+    })();
+    const lastNode = lastNodeId ? nodeById.get(lastNodeId) : null;
     if (!startNode || !startNode.isFlowNode) return;
     if (!lastNode) return;
 
-    // Compute unique ancestor->descendant path via parent pointers.
+    // Compute unique ancestor->descendant path via parent pointers to establish a depth limit.
     const pathIds: string[] = [];
     let cur: any = lastNode;
     const guard = new Set<string>();
@@ -836,10 +855,31 @@ function exportDiagramSemanticKg(opts: {
     if (pathIds[pathIds.length - 1] !== startNodeId) return;
     pathIds.reverse();
 
-    for (const id of pathIds) {
+    const maxDepth = Math.max(0, pathIds.length - 1);
+
+    // Branch-aware membership: include all descendant tasks under start up to the depth limit.
+    const memberIds = new Set<string>();
+    const queue: Array<{ id: string; depth: number }> = [{ id: startNodeId, depth: 0 }];
+    const visited = new Set<string>();
+    while (queue.length) {
+      const { id, depth } = queue.shift()!;
+      if (!id) continue;
+      if (visited.has(id)) continue;
+      visited.add(id);
+      if (depth > maxDepth) continue;
       const n = nodeById.get(id);
-      if (n && n.isFlowNode) screenOfTaskByNodeId.set(id, startNodeId);
+      if (!n || !n.isFlowNode) continue;
+      memberIds.add(id);
+      if (depth === maxDepth) continue;
+      const flowChildren = Array.isArray((n as any).children) ? (n as any).children.filter((c: any) => c?.isFlowNode) : [];
+      for (const c of flowChildren) {
+        const cid = String(c?.id || '').trim();
+        if (!cid) continue;
+        queue.push({ id: cid, depth: depth + 1 });
+      }
     }
+
+    for (const id of memberIds) screenOfTaskByNodeId.set(id, startNodeId);
   });
 
   const screenTransitionEdgeIds = new Set<string>();

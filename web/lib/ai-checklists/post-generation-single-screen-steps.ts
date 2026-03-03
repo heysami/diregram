@@ -4,9 +4,9 @@ Goal:
   - Audit whether adjacent process-flow steps should be grouped as ONE UI screen using "Single Screen Steps".
   - Prevent over-splitting screens (one step per screen) when the UX is realistically one screen with multiple tasks.
 
-☐ Identify candidate ranges (linear chains):
-  → Look for a linear #flow# chain where each step is small and plausibly done without navigating away.
-  → Prefer ranges that stop before branching (2+ flow children) to keep “last step” unambiguous.
+☐ Identify candidate ranges:
+  → Look for a #flow# range where multiple steps are plausibly done on ONE screen without navigating away.
+  → Branching inside the range can still be “one screen” when branches represent in-screen tasks (e.g. multiple overlays from the same screen).
 
 ☐ Repeatable tasks before moving on:
   → Multiple similar actions the user can repeat (add/edit/remove, configure multiple sections) before proceeding.
@@ -23,11 +23,10 @@ Goal:
 ☐ Don’ts (avoid bad grouping):
   → Don’t group across true navigation / screen transitions (route/URL changes, full page replace, new module).
   → Don’t group when leaving the screen is required between tasks (e.g. step requires completion elsewhere).
-  → Don’t group across branching points (choices/validations) unless the range is strictly linear.
+  → Don’t group across branching points when branches represent true navigation/screen transitions.
 
 How to apply in Diregram UI:
   1) Set the start node type to “Single Screen Steps” (\`process-node-type-N\` = \`single_screen_steps\`).
-  2) Select the “Last step” on the start node (writes \`process-single-screen-N\` with { "lastStepId": "node-<lineIndex>" }).
+  2) Select the “Last step” on the start node (writes \`process-single-screen-N\` with { "lastStepRunningNumber": 12 }).
   3) Use the group panel to collapse/expand to verify the screen boundary is correct.
 `;
-

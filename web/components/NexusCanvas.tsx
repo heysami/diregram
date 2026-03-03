@@ -40,7 +40,7 @@ import { loadLoopTargets, saveLoopTarget } from '@/lib/process-loop-storage';
 import { loadSingleScreenLastSteps, saveSingleScreenLastStep } from '@/lib/process-single-screen-storage';
 import { getRenderedRectForMainCanvasNode } from '@/lib/process-node-render-rect';
 import { computePaddedSpanBounds, getLoopTargetOptions, isDescendantOf } from '@/lib/process-loop-logic';
-import { computeSingleScreenPathIds, getSingleScreenLastStepOptions } from '@/lib/process-single-screen-logic';
+import { computeSingleScreenMemberIds, getSingleScreenLastStepOptions } from '@/lib/process-single-screen-logic';
 import { NodeInlineControls } from '@/components/NodeInlineControls';
 import { buildPreservedNodeLineCommentSuffix } from '@/lib/node-line-comments';
 import { clientToWorldPoint } from '@/lib/canvas-coordinates';
@@ -546,15 +546,28 @@ export function NexusCanvas({
 
     const collapsedChildrenByStartId = new Map<string, NexusNode[]>();
 
-    // Pre-compute which start nodes are eligible for collapse (must have a valid lastStepId path).
+    // Pre-compute which start nodes are eligible for collapse (must resolve a valid last-step anchor).
     collapsedSingleScreenGroupStartIdsSet.forEach((startId) => {
       const lastId = singleScreenLastSteps[startId];
       if (!lastId) return;
-      const path = computeSingleScreenPathIds({ startNodeId: startId, lastNodeId: lastId, nodeMap: fullNodeMap });
-      if (!path || path.length < 2) return;
-      const lastNode = fullNodeMap.get(lastId);
-      if (!lastNode) return;
-      collapsedChildrenByStartId.set(startId, lastNode.children || []);
+      const group = computeSingleScreenMemberIds({ startNodeId: startId, lastNodeId: lastId, nodeMap: fullNodeMap });
+      if (!group || group.memberIds.length < 2) return;
+
+      const memberIdSet = new Set(group.memberIds);
+      const boundaryIds = group.memberIds.filter((id) => group.depthById.get(id) === group.maxDepth);
+
+      const nextChildrenById = new Map<string, NexusNode>();
+      boundaryIds.forEach((id) => {
+        const n = fullNodeMap.get(id);
+        if (!n) return;
+        const flowChildren = (n.children || []).filter((c) => c.isFlowNode);
+        flowChildren.forEach((c) => {
+          if (memberIdSet.has(c.id)) return;
+          if (!nextChildrenById.has(c.id)) nextChildrenById.set(c.id, c);
+        });
+      });
+
+      collapsedChildrenByStartId.set(startId, Array.from(nextChildrenById.values()));
     });
 
     if (collapsedChildrenByStartId.size === 0) return fullVisualTree;
@@ -1161,9 +1174,11 @@ export function NexusCanvas({
     setLoopTargets(loopMap);
 
     // Load Single Screen Steps last-step selections
-    const singleScreenMap = loadSingleScreenLastSteps(doc, flattenedNodes, resolveProcessNumber);
+    // IMPORTANT: use the *full* tree (not the collapsed visualTree) so we can still resolve
+    // last-step anchors even when the group is currently collapsed (inner nodes pruned from render).
+    const singleScreenMap = loadSingleScreenLastSteps(doc, fullFlattenedNodes, resolveProcessNumber);
     setSingleScreenLastSteps(singleScreenMap);
-  }, [doc, flattenedNodes, resolveProcessNumber]);
+  }, [doc, flattenedNodes, fullFlattenedNodes, resolveProcessNumber]);
 
   // Save connector labels
   const handleSaveConnectorLabels = useCallback(
@@ -1247,7 +1262,7 @@ export function NexusCanvas({
       if (prevType === 'single_screen_steps' && type !== 'single_screen_steps') {
         const currentLastStepId = singleScreenLastSteps[nodeId];
         if (currentLastStepId) {
-          saveSingleScreenLastStep(doc, runningNumber, '');
+          saveSingleScreenLastStep(doc, runningNumber, null);
           setSingleScreenLastSteps((prev) => {
             const next = { ...prev };
             delete next[nodeId];
@@ -1302,10 +1317,59 @@ export function NexusCanvas({
     const runningNumber = resolveProcessNumber(startNodeId);
     if (runningNumber === undefined) return;
 
-    saveSingleScreenLastStep(doc, runningNumber, lastStepId);
+    const trimmed = String(lastStepId || '').trim();
+    if (!trimmed) {
+      saveSingleScreenLastStep(doc, runningNumber, null);
+      setSingleScreenLastSteps((prev) => {
+        const next = { ...prev };
+        delete next[startNodeId];
+        return next;
+      });
+      return;
+    }
+
+    // Persist the end anchor by LAST STEP running number (stable across inserts/moves).
+    const lastNode = fullNodeMap.get(trimmed) || nodeMap.get(trimmed) || null;
+    let lastRunningNumber = resolveProcessNumber(trimmed);
+    if (lastRunningNumber === undefined && lastNode && lastNode.isFlowNode) {
+      // Best-effort: assign a new process running number for the last step if it doesn't have one yet.
+      const flowNodeData = loadFlowNodeStates(doc);
+      const nodeParentPath = lastNode.isCommon
+        ? buildParentPath(lastNode, fullNodeMap)
+        : buildFlowNodeParentPath(lastNode, fullNodeMap, roots);
+
+      const matchingByContentAndPath = flowNodeData.entries.find((e) => {
+        return (
+          e.content === lastNode.content.trim() &&
+          e.parentPath.length === nodeParentPath.length &&
+          e.parentPath.every((p, i) => p === nodeParentPath[i])
+        );
+      });
+      const matchingEntry = matchingByContentAndPath || flowNodeData.entries.find((e) => e.lineIndex === lastNode.lineIndex);
+
+      if (matchingEntry) {
+        lastRunningNumber = matchingEntry.runningNumber;
+      } else {
+        const rn = flowNodeData.nextRunningNumber;
+        const nextEntries = [
+          ...flowNodeData.entries,
+          {
+            runningNumber: rn,
+            content: lastNode.content.trim(),
+            parentPath: nodeParentPath,
+            lineIndex: lastNode.lineIndex,
+          },
+        ];
+        saveFlowNodeStates(doc, { nextRunningNumber: rn + 1, entries: nextEntries });
+        lastRunningNumber = rn;
+      }
+    }
+
+    if (lastRunningNumber === undefined) return;
+    saveSingleScreenLastStep(doc, runningNumber, lastRunningNumber);
 
     setSingleScreenLastSteps((prev) => {
-      if (lastStepId) return { ...prev, [startNodeId]: lastStepId };
+      if (trimmed) return { ...prev, [startNodeId]: trimmed };
       const next = { ...prev };
       delete next[startNodeId];
       return next;
@@ -1327,15 +1391,15 @@ export function NexusCanvas({
       if ((processNodeTypes[startId] || 'step') !== 'single_screen_steps') return;
       if (!isShowFlowOnForNode(startId)) return;
 
-      const pathIds = computeSingleScreenPathIds({ startNodeId: startId, lastNodeId: lastId, nodeMap: fullNodeMap });
-      if (!pathIds || pathIds.length < 2) return;
+      const group = computeSingleScreenMemberIds({ startNodeId: startId, lastNodeId: lastId, nodeMap: fullNodeMap });
+      if (!group || group.memberIds.length < 2) return;
 
       let minX = Infinity;
       let minY = Infinity;
       let maxX = -Infinity;
       let maxY = -Infinity;
 
-      pathIds.forEach((id) => {
+      group.memberIds.forEach((id) => {
         const n = nodeMap.get(id);
         const l = animatedLayout[id];
         if (!n || !l) return;
@@ -1358,7 +1422,7 @@ export function NexusCanvas({
       groups.push({
         startId,
         lastId,
-        memberIds: pathIds,
+        memberIds: group.memberIds,
         bounds: {
           x: minX - PADDING,
           y: minY - PADDING,
@@ -5693,7 +5757,7 @@ export function NexusCanvas({
                                     onClick={(e) => e.stopPropagation()}
                                   >
                                     <option value="">
-                                      {options.length ? 'Select…' : 'No linear children'}
+                                      {options.length ? 'Select…' : 'No descendants'}
                                     </option>
                                     {options.map((n) => (
                                       <option key={n.id} value={n.id}>

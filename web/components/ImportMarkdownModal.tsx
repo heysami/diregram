@@ -721,11 +721,9 @@ Used by:
 - Canvas process-flow UI (Single Screen Steps grouping).
 Links to:
 - N is the process running number for the START node (from \`\`\`flow-nodes\`\`\`).
-- lastStepId is a parsed node id (currently "node-<lineIndex>") and MUST exist.
-Fragility:
-- lastStepId can change if markdown lines shift.
+- lastStepRunningNumber is the process running number for the END node (from \`\`\`flow-nodes\`\`\`).
 Schema:
-{ "lastStepId": "node-34" }
+{ "lastStepRunningNumber": 12 }
 
 8.9 process-goto-N (canvas-level shortcut target)
 Type: \`\`\`process-goto-1\`\`\`

@@ -41,7 +41,7 @@ MUST:
 ☐ Single Screen Steps (tree-level grouping; optional):
   → If you group multiple tasks under ONE screen:
     - MUST have \`\`\`process-node-type-N\`\`\` type "single_screen_steps" for the START node’s runningNumber (from flow-nodes)
-    - Once “Last step” is configured in the UI, MUST have \`\`\`process-single-screen-N\`\`\` with a valid lastStepId (node-<lineIndex>)
+    - Once “Last step” is configured in the UI, MUST have \`\`\`process-single-screen-N\`\`\` with a valid lastStepRunningNumber
   → Then run: “Post-Generation Checklist — Single Screen Steps”
 
 ☐ Flow graph payload (optional but recommended for complex flows):

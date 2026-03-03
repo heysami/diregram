@@ -34,7 +34,7 @@ import { syncExpandedState } from '@/lib/expanded-state-sync';
 import { loadDimensionDescriptions, saveDimensionDescriptions, type DimensionDescriptionEntry } from '@/lib/dimension-description-storage';
 import { loadFlowNodeStates, saveFlowNodeStates, type FlowNodeEntry, buildFlowNodeParentPath } from '@/lib/flow-node-storage';
 import { loadSingleScreenLastSteps } from '@/lib/process-single-screen-storage';
-import { computeSingleScreenPathIds } from '@/lib/process-single-screen-logic';
+import { computeSingleScreenMemberIds } from '@/lib/process-single-screen-logic';
 import { buildProcessRunningNumberMap } from '@/lib/process-running-number-map';
 import { matchNodeToDimensionDescription } from '@/lib/dimension-description-matcher';
 import { buildExpandedNodeIdToRunningNumberLookup } from '@/lib/expanded-running-number-lookup';
@@ -591,11 +591,11 @@ export function EditorApp() {
       const lastId = singleScreenLastStepsByStartId[startId] || '';
       if (!lastId) return;
 
-      const pathIds = computeSingleScreenPathIds({ startNodeId: startId, lastNodeId: lastId, nodeMap });
-      if (!pathIds || pathIds.length < 2) return;
+      const group = computeSingleScreenMemberIds({ startNodeId: startId, lastNodeId: lastId, nodeMap });
+      if (!group || group.memberIds.length < 2) return;
 
       // Inner nodes represent tasks under the screen; keep the outer badge as the screen title.
-      const taskIds = pathIds.slice(1);
+      const taskIds = group.memberIds.filter((id) => id !== startId);
 
       const expandedRunningNumber = getRunningNumber(startId);
       if (expandedRunningNumber === undefined) return;

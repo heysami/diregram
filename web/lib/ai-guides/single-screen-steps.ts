@@ -19,6 +19,5 @@ How to apply in Diregram UI:
 
 Markdown persistence:
   - Start typing: \`\`\`process-node-type-N\`\`\` with { "type": "single_screen_steps" } (N = start node runningNumber).
-  - End selection: \`\`\`process-single-screen-N\`\`\` with { "lastStepId": "node-<lineIndex>" }.
+  - End selection: \`\`\`process-single-screen-N\`\`\` with { "lastStepRunningNumber": 12 } (running number of the end node).
 `;
-
