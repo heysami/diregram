@@ -1114,11 +1114,9 @@ export function NexusCanvas({
   const pendingConnectorLabelsRef = useRef<Record<string, { label: string; color: string }> | null>(null);
 
   // Runtime fallback for case-3 reverse rendering:
-  // if the target sits before/same-axis as goto in the rendered layout,
-  // force backtrack mode + reverse the branch chain up to nearest decision ancestor.
+  // rely on explicit route hints only (case-3), do not infer from axis to avoid case-2 leakage.
   const runtimeBacktrackBranchEdges = useMemo(() => {
     const edges: Record<string, true> = {};
-    const primaryAxis: 'x' | 'y' = layoutDirection === 'vertical' ? 'y' : 'x';
 
     const findNearestDecisionAncestor = (nodeId: string): NexusNode | null => {
       let cur = nodeMap.get(nodeId);
@@ -1142,9 +1140,7 @@ export function NexusCanvas({
       if (!from || !to) return;
 
       const hinted = gotoRouteHints[gotoId] === 'backtrack';
-      const axisBacktrack =
-        primaryAxis === 'x' ? to.x <= from.x : to.y <= from.y;
-      if (!hinted && !axisBacktrack) return;
+      if (!hinted) return;
 
       const decision = findNearestDecisionAncestor(gotoId);
       if (!decision) return;
@@ -1164,7 +1160,6 @@ export function NexusCanvas({
     gotoRouteHints,
     gotoTargets,
     isShowFlowOnForNode,
-    layoutDirection,
     nodeMap,
     processNodeTypes,
   ]);
@@ -4726,12 +4721,8 @@ export function NexusCanvas({
               const targetLayout = animatedLayout[targetId];
               if (!sourceLayout || !targetLayout) return null;
               const hintedRouteMode = gotoRouteHints[node.id] || 'default';
-              const axisBacktrack =
-                layoutDirection === 'vertical'
-                  ? targetLayout.y <= sourceLayout.y
-                  : targetLayout.x <= sourceLayout.x;
               const routeMode: GotoRouteMode =
-                hintedRouteMode === 'backtrack' || axisBacktrack ? 'backtrack' : 'default';
+                hintedRouteMode === 'backtrack' ? 'backtrack' : 'default';
 
               const isCollapsedGoto = selectedNodeId !== node.id;
               const isGotoSelected = selectedNodeId === node.id;

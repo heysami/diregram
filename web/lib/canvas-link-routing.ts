@@ -145,14 +145,14 @@ export function buildBacktrackBezierBetweenBoxes(opts: {
   const { from, to, layoutDirection, minCurveDistance = 80, curveFactor = 0.5 } = opts;
 
   if (layoutDirection === 'vertical') {
-    // Vertical backtrack: source bottom-center -> target top-center.
+    // Vertical reverse-order path: source top-center -> target bottom-center.
     const start: Point = {
       x: from.x + from.width / 2,
-      y: from.y + from.height,
+      y: from.y,
     };
     const end: Point = {
       x: to.x + to.width / 2,
-      y: to.y,
+      y: to.y + to.height,
     };
 
     const verticalDistance = Math.abs(end.y - start.y);
@@ -166,13 +166,13 @@ export function buildBacktrackBezierBetweenBoxes(opts: {
     return { pathD, start, end, mid: { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 } };
   }
 
-  // Horizontal backtrack: source right-center -> target left-center.
+  // Horizontal reverse-order path: source left-center -> target right-center.
   const start: Point = {
-    x: from.x + from.width,
+    x: from.x,
     y: from.y + from.height / 2,
   };
   const end: Point = {
-    x: to.x,
+    x: to.x + to.width,
     y: to.y + to.height / 2,
   };
 

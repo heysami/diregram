@@ -69,17 +69,17 @@ export function buildCollapsedGotoPaths(opts: {
 
   if (layoutDirection === 'vertical') {
     if (routeMode === 'backtrack') {
-      // Entry is top-center (incoming from above).
+      // Entry is bottom-center (incoming from below in reverse-order flow).
       entryX = source.x + source.width / 2;
-      entryY = source.y;
+      entryY = source.y + source.height;
 
-      // Backtrack exit is bottom-center.
+      // Reverse-order exit is top-center.
       startX = source.x + source.width / 2;
-      startY = source.y + source.height;
+      startY = source.y;
 
-      // Backtrack target attaches at top-center.
+      // Reverse-order target attaches at bottom-center.
       endX = target.x + target.width / 2;
-      endY = target.y;
+      endY = target.y + target.height;
 
       const verticalDistance = Math.abs(endY - startY);
       const curveDistance = Math.max(verticalDistance * curveFactor, minCurveDistance);
@@ -122,16 +122,16 @@ export function buildCollapsedGotoPaths(opts: {
     }
   } else {
     if (routeMode === 'backtrack') {
-      // Entry is left-center (incoming from the left).
-      entryX = source.x;
+      // Entry is right-center (incoming from the right in reverse-order flow).
+      entryX = source.x + source.width;
       entryY = source.y + source.height / 2;
 
-      // Backtrack exit is right-center.
-      startX = source.x + source.width;
+      // Reverse-order exit is left-center.
+      startX = source.x;
       startY = source.y + source.height / 2;
 
-      // Backtrack target attaches at left-center.
-      endX = target.x;
+      // Reverse-order target attaches at right-center.
+      endX = target.x + target.width;
       endY = target.y + target.height / 2;
 
       const horizontalDistance = Math.abs(endX - startX);

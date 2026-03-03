@@ -34,13 +34,9 @@ export function adjustGotoLayoutAndRouting(opts: {
   const excludedSubtreeRootsByTarget = new Map<string, Set<string>>();
   const mirrorBranchRootsByValidation = new Map<string, Set<string>>();
   const baseAxisById = new Map<string, number>();
-  const renderOrderById = new Map<string, number>();
 
   Object.entries(layout).forEach(([id, l]) => {
     baseAxisById.set(id, axis === 'x' ? l.x : l.y);
-  });
-  flattenedNodes.forEach((n, idx) => {
-    renderOrderById.set(n.id, idx);
   });
 
   const findNearestValidationAncestor = (nodeId: string): NexusNode | null => {
@@ -112,33 +108,12 @@ export function adjustGotoLayoutAndRouting(opts: {
     }
 
     const targetIsDescendantOfValidation = isDescendantOf(validation.id, targetId);
-    const targetIsAncestorOfValidation = isDescendantOf(targetId, validation.id);
     const targetIsNearerThanGoto =
       Math.abs(targetAxis - validationAxis) < Math.abs(gotoAxis - validationAxis);
-    const targetIsBeforeValidation = targetAxis <= validationAxis;
-    const targetOrder = renderOrderById.get(targetId);
-    const validationOrder = renderOrderById.get(validation.id);
-    const gotoOrder = renderOrderById.get(gotoId);
-    const targetAppearsBeforeValidation =
-      targetOrder !== undefined &&
-      validationOrder !== undefined &&
-      targetOrder < validationOrder;
-    const targetAppearsBeforeGoto =
-      targetOrder !== undefined &&
-      gotoOrder !== undefined &&
-      targetOrder < gotoOrder;
-    const targetAxisBeforeGoto = targetAxis <= gotoAxis;
+    const targetIsBeforeValidation = targetAxis < validationAxis;
 
     const isCase2 = targetIsDescendantOfValidation && targetIsNearerThanGoto;
-    const isCase3 =
-      !targetIsDescendantOfValidation &&
-      (
-        targetIsBeforeValidation ||
-        targetIsAncestorOfValidation ||
-        targetAppearsBeforeValidation ||
-        targetAppearsBeforeGoto ||
-        targetAxisBeforeGoto
-      );
+    const isCase3 = !targetIsDescendantOfValidation && targetIsBeforeValidation;
 
     routeHintsByGotoId[gotoId] = isCase3 ? 'backtrack' : 'default';
     if (isCase3) {
