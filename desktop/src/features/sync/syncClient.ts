@@ -42,6 +42,14 @@ export async function startSyncAllProjects(opts: {
     }
   }
 
+  // Push current local state once so offline/local-only markdown changes are uploaded
+  // even when no fresh filesystem event is emitted after app startup.
+  for (const p of opts.projects) {
+    const loc = projectLocalPath(p, rootVault, opts.syncRootFolderName);
+    // eslint-disable-next-line no-await-in-loop
+    await opts.invoke('sync_initial_import', { vaultPath: loc.abs, projectFolderId: p.id, auth });
+  }
+
   if (opts.startWatching ?? true) {
     for (const p of opts.projects) {
       const loc = projectLocalPath(p, rootVault, opts.syncRootFolderName);
@@ -83,4 +91,3 @@ export async function loadAllProjectEvents(opts: {
   all.sort((a, b) => String(b.ts || '').localeCompare(String(a.ts || '')));
   return all.slice(0, opts.totalLimit ?? 80);
 }
-

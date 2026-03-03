@@ -186,6 +186,23 @@ fn sha256_hex(bytes: &[u8]) -> String {
   format!("{:x}", out)
 }
 
+fn move_file_with_fallback(src: &Path, dst: &Path) -> Result<(), String> {
+  if src == dst {
+    return Ok(());
+  }
+  if let Some(parent) = dst.parent() {
+    fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+  }
+  match fs::rename(src, dst) {
+    Ok(()) => Ok(()),
+    Err(_) => {
+      fs::copy(src, dst).map_err(|e| e.to_string())?;
+      fs::remove_file(src).map_err(|e| e.to_string())?;
+      Ok(())
+    }
+  }
+}
+
 fn to_rel_posix(root: &Path, p: &Path) -> Option<String> {
   let rel = p.strip_prefix(root).ok()?;
   let s = rel
@@ -356,6 +373,12 @@ struct FolderRow {
 
 #[derive(Debug, Deserialize)]
 struct FileRow {
+  id: String,
+  updated_at: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ResourceRow {
   id: String,
   updated_at: Option<String>,
 }
@@ -606,6 +629,142 @@ async fn delete_file(client: &reqwest::Client, auth: &mut SupabaseAuth, file_id:
   .await
 }
 
+async fn find_project_resource_id(
+  client: &reqwest::Client,
+  auth: &mut SupabaseAuth,
+  project_folder_id: &str,
+  name: &str,
+) -> Result<Option<String>, String> {
+  let mut url = reqwest::Url::parse(&format!("{}/project_resources", rest_base(auth))).map_err(|e| e.to_string())?;
+  {
+    let mut q = url.query_pairs_mut();
+    q.append_pair("select", "id");
+    q.append_pair("project_folder_id", &format!("eq.{}", project_folder_id));
+    q.append_pair("name", &format!("eq.{}", name));
+    q.append_pair("limit", "1");
+  }
+
+  send_with_refresh(
+    client,
+    auth,
+    || client.get(url.clone()),
+    |res| {
+      Box::pin(async move {
+        if !res.status().is_success() {
+          return Err(format!("project resource lookup failed: HTTP {}", res.status()));
+        }
+        let rows: Vec<RemoteIdRow> = res.json().await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().next().map(|r| r.id))
+      })
+    },
+  )
+  .await
+}
+
+async fn create_project_resource(
+  client: &reqwest::Client,
+  auth: &mut SupabaseAuth,
+  project_folder_id: &str,
+  name: &str,
+  markdown: &str,
+  source: Option<&serde_json::Value>,
+  updated_at: &str,
+) -> Result<ResourceRow, String> {
+  let url = format!("{}/project_resources", rest_base(auth));
+  let body = serde_json::json!({
+    "owner_id": auth.owner_id,
+    "project_folder_id": project_folder_id,
+    "name": name,
+    "kind": "markdown",
+    "markdown": markdown,
+    "source": source.cloned().unwrap_or(serde_json::Value::Null),
+    "updated_at": updated_at,
+  });
+
+  send_with_refresh(
+    client,
+    auth,
+    || client.post(url.clone()).header("Prefer", "return=representation").json(&body),
+    |res| {
+      Box::pin(async move {
+        if !res.status().is_success() {
+          return Err(format!("project resource create failed: HTTP {}", res.status()));
+        }
+        let rows: Vec<ResourceRow> = res.json().await.map_err(|e| e.to_string())?;
+        rows
+          .into_iter()
+          .next()
+          .ok_or_else(|| "project resource create: empty response".to_string())
+      })
+    },
+  )
+  .await
+}
+
+async fn update_project_resource(
+  client: &reqwest::Client,
+  auth: &mut SupabaseAuth,
+  resource_id: &str,
+  name: &str,
+  markdown: &str,
+  source: Option<&serde_json::Value>,
+  updated_at: &str,
+) -> Result<ResourceRow, String> {
+  let mut url = reqwest::Url::parse(&format!("{}/project_resources", rest_base(auth))).map_err(|e| e.to_string())?;
+  url
+    .query_pairs_mut()
+    .append_pair("id", &format!("eq.{}", resource_id));
+
+  let body = serde_json::json!({
+    "name": name,
+    "kind": "markdown",
+    "markdown": markdown,
+    "source": source.cloned().unwrap_or(serde_json::Value::Null),
+    "updated_at": updated_at,
+  });
+
+  send_with_refresh(
+    client,
+    auth,
+    || client.patch(url.clone()).header("Prefer", "return=representation").json(&body),
+    |res| {
+      Box::pin(async move {
+        if !res.status().is_success() {
+          return Err(format!("project resource update failed: HTTP {}", res.status()));
+        }
+        let rows: Vec<ResourceRow> = res.json().await.map_err(|e| e.to_string())?;
+        rows
+          .into_iter()
+          .next()
+          .ok_or_else(|| "project resource update: empty response".to_string())
+      })
+    },
+  )
+  .await
+}
+
+async fn delete_project_resource(client: &reqwest::Client, auth: &mut SupabaseAuth, resource_id: &str) -> Result<(), String> {
+  let mut url = reqwest::Url::parse(&format!("{}/project_resources", rest_base(auth))).map_err(|e| e.to_string())?;
+  url
+    .query_pairs_mut()
+    .append_pair("id", &format!("eq.{}", resource_id));
+
+  send_with_refresh(
+    client,
+    auth,
+    || client.delete(url.clone()),
+    |res| {
+      Box::pin(async move {
+        if !res.status().is_success() {
+          return Err(format!("project resource delete failed: HTTP {}", res.status()));
+        }
+        Ok(())
+      })
+    },
+  )
+  .await
+}
+
 #[tauri::command]
 pub async fn sync_init(vault_path: String, project_folder_id: String) -> Result<SyncMappingV1, String> {
   if vault_path.trim().is_empty() {
@@ -643,6 +802,14 @@ pub async fn sync_init(vault_path: String, project_folder_id: String) -> Result<
 }
 
 async fn sync_push_once_internal(vault_path: &str, project_folder_id: &str, auth: &SupabaseAuth) -> Result<SyncSummary, String> {
+  #[derive(Clone)]
+  struct LocalResourceInput {
+    name: String,
+    markdown: String,
+    local_hash: String,
+    source: Option<serde_json::Value>,
+  }
+
   let root = Path::new(vault_path);
   if !root.exists() {
     return Err("vault_path does not exist".to_string());
@@ -661,6 +828,7 @@ async fn sync_push_once_internal(vault_path: &str, project_folder_id: &str, auth
   let mut summary = SyncSummary::default();
   let updated_at = now_iso();
   let mut local_files: HashSet<String> = HashSet::new();
+  let mut local_resources: HashMap<String, LocalResourceInput> = HashMap::new();
 
   // Ensure root mapping exists.
   mapping.folders.insert("".to_string(), project_folder_id.to_string());
@@ -767,6 +935,135 @@ async fn sync_push_once_internal(vault_path: &str, project_folder_id: &str, auth
     );
   }
 
+  // Scan local additional resources (`resources/**/*.md`) and sync into `project_resources`.
+  let resources_root = root.join("resources");
+  if resources_root.exists() {
+    for entry in WalkDir::new(&resources_root)
+      .follow_links(false)
+      .into_iter()
+      .filter_map(Result::ok)
+    {
+      let p = entry.path();
+      if entry.file_type().is_dir() {
+        continue;
+      }
+      if !is_markdown_path(p) {
+        continue;
+      }
+      let rel = match to_rel_posix(root, p) {
+        Some(r) => r,
+        None => continue,
+      };
+      let bytes = fs::read(p).map_err(|e| e.to_string())?;
+      let markdown = String::from_utf8_lossy(&bytes).to_string();
+      let local_hash = sha256_hex(&bytes);
+      let name = p
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("resource.md")
+        .to_string();
+      let source = if rel.starts_with("resources/docling/") {
+        Some(serde_json::json!({
+          "type": "docling",
+          "importedFrom": "filesystem"
+        }))
+      } else {
+        None
+      };
+      local_resources.insert(
+        rel.clone(),
+        LocalResourceInput {
+          name,
+          markdown,
+          local_hash,
+          source,
+        },
+      );
+    }
+  }
+
+  // Upsert local resources to remote.
+  for (rel, lr) in &local_resources {
+    if let Some(prev) = mapping.resources.get(rel) {
+      if prev.local_hash == lr.local_hash {
+        continue;
+      }
+      let row = update_project_resource(
+        &client,
+        &mut auth,
+        &prev.resource_id,
+        &lr.name,
+        &lr.markdown,
+        lr.source.as_ref(),
+        &updated_at,
+      )
+      .await?;
+      mapping.resources.insert(
+        rel.clone(),
+        ResourceMappingV1 {
+          resource_id: prev.resource_id.clone(),
+          local_hash: lr.local_hash.clone(),
+          remote_updated_at: row.updated_at.unwrap_or_else(|| updated_at.clone()),
+        },
+      );
+      continue;
+    }
+
+    let resource_id = match find_project_resource_id(&client, &mut auth, project_folder_id, &lr.name).await? {
+      Some(existing_id) => {
+        let row = update_project_resource(
+          &client,
+          &mut auth,
+          &existing_id,
+          &lr.name,
+          &lr.markdown,
+          lr.source.as_ref(),
+          &updated_at,
+        )
+        .await?;
+        mapping.resources.insert(
+          rel.clone(),
+          ResourceMappingV1 {
+            resource_id: row.id.clone(),
+            local_hash: lr.local_hash.clone(),
+            remote_updated_at: row.updated_at.unwrap_or_else(|| updated_at.clone()),
+          },
+        );
+        row.id
+      }
+      None => {
+        let row = create_project_resource(
+          &client,
+          &mut auth,
+          project_folder_id,
+          &lr.name,
+          &lr.markdown,
+          lr.source.as_ref(),
+          &updated_at,
+        )
+        .await?;
+        mapping.resources.insert(
+          rel.clone(),
+          ResourceMappingV1 {
+            resource_id: row.id.clone(),
+            local_hash: lr.local_hash.clone(),
+            remote_updated_at: row.updated_at.unwrap_or_else(|| updated_at.clone()),
+          },
+        );
+        row.id
+      }
+    };
+    let _ = append_event(
+      vault_path,
+      &SyncEvent {
+        ts: now_iso(),
+        kind: "resource_push".to_string(),
+        path: rel.clone(),
+        detail: format!("Synced local resource to remote resource_id={}", resource_id),
+      },
+    );
+  }
+
   // Reconcile local deletions / moves.
   let to_remove: Vec<(String, String)> = mapping
     .files
@@ -797,6 +1094,41 @@ async fn sync_push_once_internal(vault_path: &str, project_folder_id: &str, auth
       }
       Err(e) => {
         summary.errors.push(format!("Delete failed for {} ({}): {}", rel, file_id, e));
+      }
+    }
+  }
+
+  // Reconcile local resource deletions / moves.
+  let to_remove_resources: Vec<(String, String)> = mapping
+    .resources
+    .iter()
+    .filter_map(|(rel, rm)| {
+      if local_resources.contains_key(rel) {
+        None
+      } else {
+        Some((rel.clone(), rm.resource_id.clone()))
+      }
+    })
+    .collect();
+
+  for (rel, resource_id) in to_remove_resources {
+    match delete_project_resource(&client, &mut auth, &resource_id).await {
+      Ok(()) => {
+        mapping.resources.remove(&rel);
+        let _ = append_event(
+          vault_path,
+          &SyncEvent {
+            ts: now_iso(),
+            kind: "resource_delete".to_string(),
+            path: rel.clone(),
+            detail: format!("Deleted remote project_resource id={}", resource_id),
+          },
+        );
+      }
+      Err(e) => {
+        summary
+          .errors
+          .push(format!("Delete failed for resource {} ({}): {}", rel, resource_id, e));
       }
     }
   }
@@ -1412,7 +1744,12 @@ pub async fn sync_pull_once(vault_path: String, project_folder_id: String, auth:
   let remote_resources = fetch_resources_updated_since(&client, &mut auth, &project_folder_id, &since).await?;
 
   let mut summary = SyncSummary::default();
-  let by_file_id = reverse_file_map(&mapping);
+  let mut by_file_id = reverse_file_map(&mapping);
+  let mut by_resource_id: HashMap<String, String> = mapping
+    .resources
+    .iter()
+    .map(|(rel, rm)| (rm.resource_id.clone(), rel.clone()))
+    .collect();
   let mut conflicts: u32 = 0;
 
   for rf in remote_files {
@@ -1434,19 +1771,39 @@ pub async fn sync_pull_once(vault_path: String, project_folder_id: String, auth:
       continue;
     }
 
-    let rel_path = by_file_id.get(&rf.id).cloned().unwrap_or_else(|| {
-      if folder_rel.is_empty() {
-        rf.name.clone()
+    let desired_rel_path = if folder_rel.is_empty() {
+      rf.name.clone()
+    } else {
+      format!("{}/{}", folder_rel, rf.name)
+    };
+    let mut prev_from_old_rel: Option<FileMappingV1> = None;
+    if let Some(old_rel_path) = by_file_id.get(&rf.id).cloned() {
+      if old_rel_path != desired_rel_path {
+        let old_abs = root.join(&old_rel_path);
+        let new_abs = root.join(&desired_rel_path);
+        if old_abs.exists() && old_abs != new_abs {
+          if new_abs.exists() {
+            let _ = archive_file_to_trash(&vault_path, &old_rel_path);
+          } else if let Err(e) = move_file_with_fallback(&old_abs, &new_abs) {
+            summary.errors.push(format!(
+              "Failed to move renamed file {} -> {}: {}",
+              old_rel_path, desired_rel_path, e
+            ));
+          }
+        }
+        prev_from_old_rel = mapping.files.remove(&old_rel_path);
       } else {
-        format!("{}/{}", folder_rel, rf.name)
+        prev_from_old_rel = mapping.files.get(&old_rel_path).cloned();
       }
-    });
+    }
+    by_file_id.insert(rf.id.clone(), desired_rel_path.clone());
+    let rel_path = desired_rel_path;
 
     let abs_path = root.join(&rel_path);
     let local_bytes = fs::read(&abs_path).ok();
     let local_hash = local_bytes.as_ref().map(|b| sha256_hex(b)).unwrap_or_default();
 
-    let prev = mapping.files.get(&rel_path).cloned();
+    let prev = mapping.files.get(&rel_path).cloned().or(prev_from_old_rel);
     let prev_local_hash = prev.as_ref().map(|m| m.local_hash.clone()).unwrap_or_default();
     let prev_remote_updated = prev.as_ref().map(|m| m.remote_updated_at.clone()).unwrap_or_default();
 
@@ -1501,12 +1858,35 @@ pub async fn sync_pull_once(vault_path: String, project_folder_id: String, auth:
 
   for rr in remote_resources {
     let remote_updated_at = rr.updated_at.clone().unwrap_or_else(now_iso);
-    let mut rel_path = format!("resources/{}", rr.name);
+    let mut desired_rel_path = format!("resources/{}", rr.name);
     if let Some(src) = rr.source.as_ref() {
       if src.get("type").and_then(|v| v.as_str()) == Some("docling") {
-        rel_path = format!("resources/docling/{}", rr.name);
+        desired_rel_path = format!("resources/docling/{}", rr.name);
       }
     }
+    let mut prev_from_old_rel: Option<ResourceMappingV1> = None;
+    if let Some(old_rel_path) = by_resource_id.get(&rr.id).cloned() {
+      if old_rel_path != desired_rel_path {
+        let old_abs = root.join(&old_rel_path);
+        let new_abs = root.join(&desired_rel_path);
+        if old_abs.exists() && old_abs != new_abs {
+          if new_abs.exists() {
+            let _ = archive_file_to_trash(&vault_path, &old_rel_path);
+          } else if let Err(e) = move_file_with_fallback(&old_abs, &new_abs) {
+            summary.errors.push(format!(
+              "Failed to move renamed resource {} -> {}: {}",
+              old_rel_path, desired_rel_path, e
+            ));
+          }
+        }
+        prev_from_old_rel = mapping.resources.remove(&old_rel_path);
+      } else {
+        prev_from_old_rel = mapping.resources.get(&old_rel_path).cloned();
+      }
+    }
+    by_resource_id.insert(rr.id.clone(), desired_rel_path.clone());
+    let rel_path = desired_rel_path;
+
     let abs_path = root.join(&rel_path);
     if let Some(parent) = abs_path.parent() {
       if let Err(e) = fs::create_dir_all(parent) {
@@ -1519,7 +1899,7 @@ pub async fn sync_pull_once(vault_path: String, project_folder_id: String, auth:
     let local_hash = local_bytes.as_ref().map(|b| sha256_hex(b)).unwrap_or_default();
     let content_hash = sha256_hex(rr.markdown.as_bytes());
 
-    let prev = mapping.resources.get(&rel_path).cloned();
+    let prev = mapping.resources.get(&rel_path).cloned().or(prev_from_old_rel);
     let prev_local_hash = prev.as_ref().map(|m| m.local_hash.clone()).unwrap_or_default();
     let prev_remote_updated = prev.as_ref().map(|m| m.remote_updated_at.clone()).unwrap_or_default();
 

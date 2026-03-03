@@ -1,6 +1,6 @@
 [package]
 name = "diregram_sync"
-version = "0.1.0"
+version = "0.2.5"
 description = "Diregram desktop sync app"
 authors = ["Diregram"]
 edition = "2021"
@@ -27,4 +27,3 @@ sha2 = "0.10"
 chrono = { version = "0.4", features = ["serde"] }
 notify = "6"
 once_cell = "1"
-
