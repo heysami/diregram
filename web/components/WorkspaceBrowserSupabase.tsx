@@ -164,9 +164,15 @@ export function WorkspaceBrowserSupabase() {
   const [resourceModal, setResourceModal] = useState<{ id: string; name: string; markdown: string } | null>(null);
   const [aiGenerateOpen, setAiGenerateOpen] = useState(false);
   const [aiGenerateBusy, setAiGenerateBusy] = useState(false);
-  const [aiGenerateRows, setAiGenerateRows] = useState<Array<{ outputKind: 'note' | 'user_story_grid'; fileName: string; prompt: string }>>([
-    { outputKind: 'note', fileName: 'Generated Note', prompt: '' },
-  ]);
+  const [aiGenerateRows, setAiGenerateRows] = useState<
+    Array<{
+      outputKind: 'note' | 'user_story_grid' | 'vision';
+      fileName: string;
+      prompt: string;
+      artifactUrls: string;
+      artifactFiles: string;
+    }>
+  >([{ outputKind: 'note', fileName: 'Generated Note', prompt: '', artifactUrls: '', artifactFiles: '' }]);
   const [aiGenerateError, setAiGenerateError] = useState<string | null>(null);
   const asyncQueue = useAsyncJobQueue();
 
@@ -736,9 +742,17 @@ export function WorkspaceBrowserSupabase() {
   };
 
   const resetAiGenerateModal = () => {
-    setAiGenerateRows([{ outputKind: 'note', fileName: 'Generated Note', prompt: '' }]);
+    setAiGenerateRows([{ outputKind: 'note', fileName: 'Generated Note', prompt: '', artifactUrls: '', artifactFiles: '' }]);
     setAiGenerateError(null);
     setAiGenerateBusy(false);
+  };
+
+  const parseArtifactEntries = (raw: string, maxItems: number) => {
+    return String(raw || '')
+      .split(/[\n,]/g)
+      .map((x) => x.trim())
+      .filter(Boolean)
+      .slice(0, maxItems);
   };
 
   const runAiGenerateFiles = async () => {
@@ -747,14 +761,22 @@ export function WorkspaceBrowserSupabase() {
     setAiGenerateError(null);
     const tasks = aiGenerateRows
       .map((r) => ({
-        outputKind: r.outputKind === 'user_story_grid' ? 'user_story_grid' : 'note',
+        outputKind: r.outputKind === 'user_story_grid' ? 'user_story_grid' : r.outputKind === 'vision' ? 'vision' : 'note',
         fileName: String(r.fileName || '').trim(),
         prompt: String(r.prompt || '').trim(),
+        artifactUrls: parseArtifactEntries(r.artifactUrls, 8),
+        artifactFiles: parseArtifactEntries(r.artifactFiles, 20),
       }))
-      .filter((r) => Boolean(r.fileName) && Boolean(r.prompt))
+      .filter((r) => {
+        if (!r.fileName) return false;
+        if (r.outputKind === 'vision') {
+          return Boolean(r.prompt) || Boolean(r.artifactUrls.length) || Boolean(r.artifactFiles.length);
+        }
+        return Boolean(r.prompt);
+      })
       .slice(0, 20);
     if (!tasks.length) {
-      setAiGenerateError('Add at least one valid row (file name + prompt).');
+      setAiGenerateError('Add at least one valid row. Vision tasks require prompt or artifact URLs/files.');
       return;
     }
     if (tasks.length > 20) {
@@ -1537,7 +1559,7 @@ export function WorkspaceBrowserSupabase() {
             </div>
             <div className="p-4 space-y-3 overflow-auto max-h-[calc(88vh-90px)]">
               <div className="text-xs opacity-80">
-                Queue up to 20 tasks. Output supports Note files and User-story Grid files.
+                Queue up to 20 tasks. Output supports Note, User-story Grid, and Vision files.
               </div>
               {aiGenerateRows.map((row, idx) => (
                 <div key={`ai-task-${idx}`} className="mac-double-outline p-3 space-y-2">
@@ -1547,13 +1569,26 @@ export function WorkspaceBrowserSupabase() {
                       value={row.outputKind}
                       onChange={(e) =>
                         setAiGenerateRows((prev) =>
-                          prev.map((x, i) => (i === idx ? { ...x, outputKind: e.target.value === 'user_story_grid' ? 'user_story_grid' : 'note' } : x)),
+                          prev.map((x, i) =>
+                            i === idx
+                              ? {
+                                  ...x,
+                                  outputKind:
+                                    e.target.value === 'user_story_grid'
+                                      ? 'user_story_grid'
+                                      : e.target.value === 'vision'
+                                        ? 'vision'
+                                        : 'note',
+                                }
+                              : x,
+                          ),
                         )
                       }
                       disabled={aiGenerateBusy}
                     >
                       <option value="note">Note file</option>
                       <option value="user_story_grid">User-story Grid file</option>
+                      <option value="vision">Vision file</option>
                     </select>
                     <input
                       className="mac-field h-8 flex-1 min-w-[200px]"
@@ -1575,11 +1610,43 @@ export function WorkspaceBrowserSupabase() {
                   </div>
                   <textarea
                     className="mac-field w-full min-h-[80px]"
-                    placeholder="Prompt"
+                    placeholder={
+                      row.outputKind === 'vision'
+                        ? 'Style goal and product context (optional if URLs/files are provided)'
+                        : 'Prompt'
+                    }
                     value={row.prompt}
                     onChange={(e) => setAiGenerateRows((prev) => prev.map((x, i) => (i === idx ? { ...x, prompt: e.target.value } : x)))}
                     disabled={aiGenerateBusy}
                   />
+                  {row.outputKind === 'vision' ? (
+                    <div className="grid gap-2 md:grid-cols-2">
+                      <label className="space-y-1">
+                        <div className="text-[11px] opacity-70">Artifact URLs (one per line)</div>
+                        <textarea
+                          className="mac-field w-full min-h-[82px]"
+                          placeholder="https://example.com/page"
+                          value={row.artifactUrls}
+                          onChange={(e) =>
+                            setAiGenerateRows((prev) => prev.map((x, i) => (i === idx ? { ...x, artifactUrls: e.target.value } : x)))
+                          }
+                          disabled={aiGenerateBusy}
+                        />
+                      </label>
+                      <label className="space-y-1">
+                        <div className="text-[11px] opacity-70">Project files/resources (ID or exact name, one per line)</div>
+                        <textarea
+                          className="mac-field w-full min-h-[82px]"
+                          placeholder="Design brief.md"
+                          value={row.artifactFiles}
+                          onChange={(e) =>
+                            setAiGenerateRows((prev) => prev.map((x, i) => (i === idx ? { ...x, artifactFiles: e.target.value } : x)))
+                          }
+                          disabled={aiGenerateBusy}
+                        />
+                      </label>
+                    </div>
+                  ) : null}
                 </div>
               ))}
               <div className="flex items-center justify-between gap-2">
@@ -1588,7 +1655,10 @@ export function WorkspaceBrowserSupabase() {
                   className="mac-btn h-8"
                   disabled={aiGenerateBusy || aiGenerateRows.length >= 20}
                   onClick={() =>
-                    setAiGenerateRows((prev) => [...prev, { outputKind: 'note', fileName: `Generated Note ${prev.length + 1}`, prompt: '' }])
+                    setAiGenerateRows((prev) => [
+                      ...prev,
+                      { outputKind: 'note', fileName: `Generated Note ${prev.length + 1}`, prompt: '', artifactUrls: '', artifactFiles: '' },
+                    ])
                   }
                 >
                   Add task

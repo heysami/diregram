@@ -11,12 +11,15 @@ type AccessPerson = { email?: string; role?: string };
 type FolderRow = { id: string; owner_id: string; access: unknown };
 
 type FileGenerationTaskInput = {
-  outputKind: 'note' | 'user_story_grid';
+  outputKind: 'note' | 'user_story_grid' | 'vision';
   fileName: string;
   prompt: string;
+  artifactUrls?: string[];
+  artifactFiles?: string[];
 };
 
 function coerceOutputKind(input: unknown): FileGenerationTaskInput['outputKind'] {
+  if (input === 'vision') return 'vision';
   return input === 'user_story_grid' ? 'user_story_grid' : 'note';
 }
 
@@ -39,6 +42,14 @@ function canEditFolder(folder: { owner_id: string; access: unknown }, user: { id
 
 function clampText(input: unknown, max: number) {
   return String(input || '').trim().slice(0, max);
+}
+
+function coerceStringList(input: unknown, opts: { maxItems: number; maxCharsPerItem: number }): string[] {
+  if (!Array.isArray(input)) return [];
+  return input
+    .map((x) => clampText(x, opts.maxCharsPerItem))
+    .filter(Boolean)
+    .slice(0, opts.maxItems);
 }
 
 export async function POST(request: Request) {
@@ -76,8 +87,16 @@ export async function POST(request: Request) {
         outputKind: coerceOutputKind(t.outputKind),
         fileName: clampText(t.fileName, 160),
         prompt: clampText(t.prompt, 8000),
+        artifactUrls: coerceStringList(t.artifactUrls, { maxItems: 8, maxCharsPerItem: 1000 }),
+        artifactFiles: coerceStringList(t.artifactFiles, { maxItems: 20, maxCharsPerItem: 220 }),
       }))
-      .filter((t) => Boolean(t.fileName) && Boolean(t.prompt))
+      .filter((t) => {
+        if (!t.fileName) return false;
+        if (t.outputKind === 'vision') {
+          return Boolean(t.prompt) || Boolean(t.artifactUrls?.length) || Boolean(t.artifactFiles?.length);
+        }
+        return Boolean(t.prompt);
+      })
       .slice(0, 20);
     if (!tasks.length) return NextResponse.json({ error: 'No valid tasks' }, { status: 400 });
 
