@@ -32,6 +32,7 @@ export function adjustGotoLayoutAndRouting(opts: {
   const reversedBranchEdgeByKey: Record<string, true> = {};
   const requestedAxisByTarget = new Map<string, number>();
   const excludedSubtreeRootsByTarget = new Map<string, Set<string>>();
+  const mirrorBranchRootsByValidation = new Map<string, Set<string>>();
   const baseAxisById = new Map<string, number>();
   const renderOrderById = new Map<string, number>();
 
@@ -141,13 +142,20 @@ export function adjustGotoLayoutAndRouting(opts: {
 
     routeHintsByGotoId[gotoId] = isCase3 ? 'backtrack' : 'default';
     if (isCase3) {
-      // Reverse arrow direction for the branch path that leads from validation to this goto.
+      // Mark the branch path that leads from validation -> goto so routing can mirror
+      // connector sides while keeping semantic direction parent -> child.
       let cur = nodeMap.get(gotoId);
       while (cur?.parentId) {
         const parentId = cur.parentId;
         reversedBranchEdgeByKey[`${parentId}__${cur.id}`] = true;
         if (parentId === validation.id) break;
         cur = nodeMap.get(parentId);
+      }
+      const gotoBranchRoot = getDirectChildOnPath(validation.id, gotoId);
+      if (gotoBranchRoot) {
+        const set = mirrorBranchRootsByValidation.get(validation.id) || new Set<string>();
+        set.add(gotoBranchRoot);
+        mirrorBranchRootsByValidation.set(validation.id, set);
       }
     }
 
@@ -230,6 +238,41 @@ export function adjustGotoLayoutAndRouting(opts: {
     if (delta > 0) {
       shiftSubtreeAlongAxis(targetId, delta);
     }
+  });
+
+  const mirrorSubtreeAcrossValidation = (validationId: string, branchRootId: string): void => {
+    const validationLayout = adjustedLayout[validationId];
+    const branchRootLayout = adjustedLayout[branchRootId];
+    if (!validationLayout || !branchRootLayout) return;
+
+    const validationAxis = axis === 'x' ? validationLayout.x : validationLayout.y;
+    const branchAxis = axis === 'x' ? branchRootLayout.x : branchRootLayout.y;
+    // In process flow, "forward" is increasing axis (right/down). Only mirror when branch is on forward side.
+    if (!(branchAxis > validationAxis)) return;
+
+    const stack = [branchRootId];
+    const visited = new Set<string>();
+    while (stack.length) {
+      const id = stack.pop()!;
+      if (visited.has(id)) continue;
+      visited.add(id);
+      const l = adjustedLayout[id];
+      if (l) {
+        const curAxis = axis === 'x' ? l.x : l.y;
+        const mirroredAxis = validationAxis - (curAxis - validationAxis);
+        adjustedLayout[id] =
+          axis === 'x' ? { ...l, x: mirroredAxis } : { ...l, y: mirroredAxis };
+      }
+      const n = nodeMap.get(id);
+      if (!n) continue;
+      n.children.forEach((child) => stack.push(child.id));
+    }
+  };
+
+  mirrorBranchRootsByValidation.forEach((branchRoots, validationId) => {
+    branchRoots.forEach((branchRootId) => {
+      mirrorSubtreeAcrossValidation(validationId, branchRootId);
+    });
   });
 
   return { layout: adjustedLayout, routeHintsByGotoId, reversedBranchEdgeByKey };

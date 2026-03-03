@@ -4576,27 +4576,31 @@ export function NexusCanvas({
                     ? (() => {
                         if (!parentNode) {
                           return buildStandardConnectorBezier({
-                            start: { x: endX, y: endY },
-                            end: { x: startX, y: startY },
+                            start: { x: startX, y: startY },
+                            end: { x: endX, y: endY },
                             layoutDirection,
                           });
                         }
                         const fromRect = getRenderedRectForMainCanvasNode({
-                          node,
-                          layout: childLayout,
-                          processNodeType: childType || 'step',
-                          showFlowOn: isShowFlowOnForNode(node.id),
-                        });
-                        const toRect = getRenderedRectForMainCanvasNode({
                           node: parentNode,
                           layout: parentLayout,
                           processNodeType: parentType || 'step',
                           showFlowOn: isShowFlowOnForNode(parentNode.id),
                         });
+                        const toRect = getRenderedRectForMainCanvasNode({
+                          node,
+                          layout: childLayout,
+                          processNodeType: childType || 'step',
+                          showFlowOn: isShowFlowOnForNode(node.id),
+                        });
+                        // Keep validation exits at their existing Yes/No anchor, while
+                        // mirroring the downstream branch entry side for case-3 backtrack.
                         const reverseStart =
-                          layoutDirection === 'vertical'
-                            ? { x: fromRect.x + fromRect.w / 2, y: fromRect.y }
-                            : { x: fromRect.x, y: fromRect.y + fromRect.h / 2 };
+                          parentType === 'validation'
+                            ? { x: startX, y: startY }
+                            : layoutDirection === 'vertical'
+                              ? { x: fromRect.x + fromRect.w / 2, y: fromRect.y }
+                              : { x: fromRect.x, y: fromRect.y + fromRect.h / 2 };
                         const reverseEnd =
                           layoutDirection === 'vertical'
                             ? { x: toRect.x + toRect.w / 2, y: toRect.y + toRect.h }
