@@ -1,7 +1,7 @@
 {
   "name": "diregram-desktop",
   "private": true,
-  "version": "0.2.6",
+  "version": "0.2.7",
   "description": "Diregram desktop sync app (Tauri).",
   "scripts": {
     "dev": "vite",

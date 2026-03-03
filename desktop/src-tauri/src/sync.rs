@@ -225,6 +225,20 @@ fn is_markdown_path(path: &Path) -> bool {
   ext == "md" || ext == "markdown"
 }
 
+fn is_extensionless_path(path: &Path) -> bool {
+  path.extension().is_none()
+}
+
+fn looks_like_text_utf8(bytes: &[u8]) -> bool {
+  if bytes.is_empty() {
+    return true;
+  }
+  if bytes.contains(&0u8) {
+    return false;
+  }
+  std::str::from_utf8(bytes).is_ok()
+}
+
 fn has_separator_outside_fences(markdown: &str) -> bool {
   let mut in_fence = false;
   for line in markdown.lines() {
@@ -862,12 +876,16 @@ async fn sync_push_once_internal(vault_path: &str, project_folder_id: &str, auth
     }
 
     let is_mapped_file = mapping.files.contains_key(&rel);
-    if !is_markdown_path(p) && !is_mapped_file {
+    let is_markdown = is_markdown_path(p);
+    let is_extensionless = is_extensionless_path(p);
+    if !is_markdown && !is_mapped_file && !is_extensionless {
+      continue;
+    }
+    let bytes = fs::read(p).map_err(|e| e.to_string())?;
+    if !is_markdown && !is_mapped_file && !looks_like_text_utf8(&bytes) {
       continue;
     }
     local_files.insert(rel.clone());
-
-    let bytes = fs::read(p).map_err(|e| e.to_string())?;
     let local_hash = sha256_hex(&bytes);
     let content = String::from_utf8_lossy(&bytes).to_string();
     let kind = detect_kind(&content);
@@ -953,10 +971,15 @@ async fn sync_push_once_internal(vault_path: &str, project_folder_id: &str, auth
         None => continue,
       };
       let is_mapped_resource = mapping.resources.contains_key(&rel);
-      if !is_markdown_path(p) && !is_mapped_resource {
+      let is_markdown = is_markdown_path(p);
+      let is_extensionless = is_extensionless_path(p);
+      if !is_markdown && !is_mapped_resource && !is_extensionless {
         continue;
       }
       let bytes = fs::read(p).map_err(|e| e.to_string())?;
+      if !is_markdown && !is_mapped_resource && !looks_like_text_utf8(&bytes) {
+        continue;
+      }
       let markdown = String::from_utf8_lossy(&bytes).to_string();
       let local_hash = sha256_hex(&bytes);
       let name = p
