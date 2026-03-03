@@ -30,7 +30,7 @@ export function adjustGotoLayoutAndRouting(opts: {
   const axis: 'x' | 'y' = layoutDirection === 'vertical' ? 'y' : 'x';
   const routeHintsByGotoId: Record<string, GotoRouteMode> = {};
   const reversedBranchEdgeByKey: Record<string, true> = {};
-  const requestedAxisByTarget = new Map<string, number>();
+  const shiftRequests: Array<{ gotoId: string; targetId: string }> = [];
   const excludedSubtreeRootsByTarget = new Map<string, Set<string>>();
   const mirrorBranchRootsByValidation = new Map<string, Set<string>>();
   const baseAxisById = new Map<string, number>();
@@ -160,10 +160,7 @@ export function adjustGotoLayoutAndRouting(opts: {
     }
 
     if (!(isCase2 || isCase3)) return;
-    const requested = requestedAxisByTarget.get(targetId);
-    if (requested === undefined || gotoAxis > requested) {
-      requestedAxisByTarget.set(targetId, gotoAxis);
-    }
+    shiftRequests.push({ gotoId, targetId });
 
     // If target is an ancestor of the goto path, do not shift only the validation child branch
     // that leads to goto. Keep other descendants movable.
@@ -175,7 +172,7 @@ export function adjustGotoLayoutAndRouting(opts: {
     }
   });
 
-  if (requestedAxisByTarget.size === 0) {
+  if (shiftRequests.length === 0 && mirrorBranchRootsByValidation.size === 0) {
     return { layout, routeHintsByGotoId, reversedBranchEdgeByKey };
   }
 
@@ -184,11 +181,74 @@ export function adjustGotoLayoutAndRouting(opts: {
   flattenedNodes.forEach((n, i) => {
     orderById.set(n.id, i);
   });
-  const targetsOrdered = Array.from(requestedAxisByTarget.entries()).sort((a, b) => {
-    const depthDelta = getDepth(a[0]) - getDepth(b[0]);
-    if (depthDelta !== 0) return depthDelta;
-    return (orderById.get(a[0]) ?? Number.MAX_SAFE_INTEGER) - (orderById.get(b[0]) ?? Number.MAX_SAFE_INTEGER);
+
+  const mirrorSubtreeAcrossValidation = (validationId: string, branchRootId: string): void => {
+    const validationLayout = adjustedLayout[validationId];
+    const baseValidationAxis = baseAxisById.get(validationId);
+    const baseBranchAxis = baseAxisById.get(branchRootId);
+    if (
+      !validationLayout ||
+      baseValidationAxis === undefined ||
+      baseBranchAxis === undefined ||
+      !Number.isFinite(baseValidationAxis) ||
+      !Number.isFinite(baseBranchAxis)
+    ) {
+      return;
+    }
+    // Reverse only branches that were originally on the forward side of the validation node.
+    if (!(baseBranchAxis > baseValidationAxis)) return;
+    const currentValidationAxis = axis === 'x' ? validationLayout.x : validationLayout.y;
+
+    const stack = [branchRootId];
+    const visited = new Set<string>();
+    while (stack.length) {
+      const id = stack.pop()!;
+      if (visited.has(id)) continue;
+      visited.add(id);
+      const l = adjustedLayout[id];
+      if (l) {
+        const baseNodeAxis = baseAxisById.get(id);
+        if (baseNodeAxis === undefined || !Number.isFinite(baseNodeAxis)) {
+          const n = nodeMap.get(id);
+          if (!n) continue;
+          n.children.forEach((child) => stack.push(child.id));
+          continue;
+        }
+        const offsetFromValidation = baseNodeAxis - baseValidationAxis;
+        const mirroredAxis = currentValidationAxis - offsetFromValidation;
+        adjustedLayout[id] =
+          axis === 'x' ? { ...l, x: mirroredAxis } : { ...l, y: mirroredAxis };
+      }
+      const n = nodeMap.get(id);
+      if (!n) continue;
+      n.children.forEach((child) => stack.push(child.id));
+    }
+  };
+
+  mirrorBranchRootsByValidation.forEach((branchRoots, validationId) => {
+    branchRoots.forEach((branchRootId) => {
+      mirrorSubtreeAcrossValidation(validationId, branchRootId);
+    });
   });
+
+  // IMPORTANT order for case-3:
+  // 1) mirror/reverse branch placement first,
+  // 2) then align target subtrees to (possibly mirrored) goto axis.
+  const requestedAxisByTarget = new Map<string, number>();
+  shiftRequests.forEach(({ gotoId, targetId }) => {
+    const gotoLayout = adjustedLayout[gotoId];
+    if (!gotoLayout) return;
+    const gotoAxis = axis === 'x' ? gotoLayout.x : gotoLayout.y;
+    if (!Number.isFinite(gotoAxis)) return;
+    const requested = requestedAxisByTarget.get(targetId);
+    if (requested === undefined || gotoAxis > requested) {
+      requestedAxisByTarget.set(targetId, gotoAxis);
+    }
+  });
+
+  if (requestedAxisByTarget.size === 0) {
+    return { layout: adjustedLayout, routeHintsByGotoId, reversedBranchEdgeByKey };
+  }
 
   const shiftSubtreeAlongAxis = (targetId: string, delta: number): void => {
     if (!delta || !Number.isFinite(delta) || delta <= 0) return;
@@ -230,6 +290,12 @@ export function adjustGotoLayoutAndRouting(opts: {
     }
   };
 
+  const targetsOrdered = Array.from(requestedAxisByTarget.entries()).sort((a, b) => {
+    const depthDelta = getDepth(a[0]) - getDepth(b[0]);
+    if (depthDelta !== 0) return depthDelta;
+    return (orderById.get(a[0]) ?? Number.MAX_SAFE_INTEGER) - (orderById.get(b[0]) ?? Number.MAX_SAFE_INTEGER);
+  });
+
   targetsOrdered.forEach(([targetId, desiredAxis]) => {
     const l = adjustedLayout[targetId];
     if (!l) return;
@@ -238,41 +304,6 @@ export function adjustGotoLayoutAndRouting(opts: {
     if (delta > 0) {
       shiftSubtreeAlongAxis(targetId, delta);
     }
-  });
-
-  const mirrorSubtreeAcrossValidation = (validationId: string, branchRootId: string): void => {
-    const validationLayout = adjustedLayout[validationId];
-    const branchRootLayout = adjustedLayout[branchRootId];
-    if (!validationLayout || !branchRootLayout) return;
-
-    const validationAxis = axis === 'x' ? validationLayout.x : validationLayout.y;
-    const branchAxis = axis === 'x' ? branchRootLayout.x : branchRootLayout.y;
-    // In process flow, "forward" is increasing axis (right/down). Only mirror when branch is on forward side.
-    if (!(branchAxis > validationAxis)) return;
-
-    const stack = [branchRootId];
-    const visited = new Set<string>();
-    while (stack.length) {
-      const id = stack.pop()!;
-      if (visited.has(id)) continue;
-      visited.add(id);
-      const l = adjustedLayout[id];
-      if (l) {
-        const curAxis = axis === 'x' ? l.x : l.y;
-        const mirroredAxis = validationAxis - (curAxis - validationAxis);
-        adjustedLayout[id] =
-          axis === 'x' ? { ...l, x: mirroredAxis } : { ...l, y: mirroredAxis };
-      }
-      const n = nodeMap.get(id);
-      if (!n) continue;
-      n.children.forEach((child) => stack.push(child.id));
-    }
-  };
-
-  mirrorBranchRootsByValidation.forEach((branchRoots, validationId) => {
-    branchRoots.forEach((branchRootId) => {
-      mirrorSubtreeAcrossValidation(validationId, branchRootId);
-    });
   });
 
   return { layout: adjustedLayout, routeHintsByGotoId, reversedBranchEdgeByKey };

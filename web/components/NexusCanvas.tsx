@@ -4635,8 +4635,7 @@ export function NexusCanvas({
                   childType === 'goto' &&
                   !!gotoTargets[node.id] &&
                   selectedNodeId !== node.id &&
-                  isShowFlowOnForNode(node.id) &&
-                  !reverseBranchArrow;
+                  isShowFlowOnForNode(node.id);
 
                 const isConnectorHighlighted =
                   selectedNodeId === node.id ||
