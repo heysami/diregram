@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import {
   normalizeVisionDesignSystem,
   VISION_DECORATIVE_FONT_OPTIONS,
@@ -8,6 +9,7 @@ import {
   type VisionColorRatioV1,
   type VisionDesignSystemV1,
   type VisionImageProfileV1,
+  type VisionPillTargetV1,
   type VisionPrimitiveColorOption,
   type VisionPrimitiveRatioEntryV1,
   type VisionSemanticPaletteV1,
@@ -45,6 +47,14 @@ const FONT_VARIANCE_OPTIONS = [
     description: 'Heading font differs, plus another decorative accent font.',
   },
 ] as const;
+const PILL_TARGET_OPTIONS: Array<{ id: VisionPillTargetV1; label: string; description: string }> = [
+  { id: 'buttons', label: 'Buttons', description: 'Primary/secondary buttons and shell actions' },
+  { id: 'inputs', label: 'Inputs', description: 'Input and select controls' },
+  { id: 'chips', label: 'Chips', description: 'Status chips and small badges' },
+  { id: 'tabs', label: 'Tabs', description: 'Tab/segmented controls' },
+  { id: 'navItems', label: 'Nav items', description: 'Left navigation item pills' },
+  { id: 'tableTags', label: 'Table tags', description: 'Table status tags' },
+];
 
 function clamp(v: number, min: number, max: number) {
   if (!Number.isFinite(v)) return min;
@@ -183,6 +193,7 @@ function PrimitiveBadge({ value, fallbackLabel = 'unset' }: { value?: string; fa
 }
 
 export function DesignSystemControls({ value, onChange }: Props) {
+  const [pillPopoverOpen, setPillPopoverOpen] = useState(false);
   const activeScenarioIndex = Math.max(0, value.scenarios.findIndex((s) => s.id === value.activeScenarioId));
   const activeScenario = value.scenarios[activeScenarioIndex] || value.scenarios[0];
 
@@ -1167,6 +1178,59 @@ export function DesignSystemControls({ value, onChange }: Props) {
             value={value.controls.softness}
             onChange={(next) => commit((draft) => (draft.controls.softness = clamp(Math.round(next), 0, 100)))}
           />
+          <div className="vds-pill-config">
+            <button type="button" className="mac-btn h-8" onClick={() => setPillPopoverOpen((open) => !open)}>
+              {pillPopoverOpen ? 'Hide pill overrides' : 'Force pill components'}
+            </button>
+            <div className="vds-help">
+              Active:{' '}
+              {value.controls.pillTargets.length
+                ? value.controls.pillTargets
+                    .map((id) => PILL_TARGET_OPTIONS.find((opt) => opt.id === id)?.label || id)
+                    .join(', ')
+                : 'none'}
+            </div>
+            {pillPopoverOpen ? (
+              <div className="vds-pill-popover">
+                {PILL_TARGET_OPTIONS.map((opt) => {
+                  const checked = value.controls.pillTargets.includes(opt.id);
+                  return (
+                    <label key={opt.id} className="vds-pill-option">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(e) => {
+                          const nextChecked = e.target.checked;
+                          commit((draft) => {
+                            const set = new Set<VisionPillTargetV1>(draft.controls.pillTargets || []);
+                            if (nextChecked) set.add(opt.id);
+                            else set.delete(opt.id);
+                            draft.controls.pillTargets = Array.from(set);
+                          });
+                        }}
+                      />
+                      <span>
+                        <strong>{opt.label}</strong>
+                        <small>{opt.description}</small>
+                      </span>
+                    </label>
+                  );
+                })}
+                <button
+                  type="button"
+                  className="mac-btn h-8"
+                  disabled={value.controls.pillTargets.length === 0}
+                  onClick={() =>
+                    commit((draft) => {
+                      draft.controls.pillTargets = [];
+                    })
+                  }
+                >
+                  Clear overrides
+                </button>
+              </div>
+            ) : null}
+          </div>
           <SliderRow
             label="Wireframe feeling"
             helper="Always subtle strokes: from near-invisible separators to clearer structural lines without heavy borders."

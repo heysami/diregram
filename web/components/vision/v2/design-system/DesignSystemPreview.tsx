@@ -58,6 +58,7 @@ export function DesignSystemPreview({ value }: Props) {
         : value.controls.fontVariance === 'splitHeadingDecorative'
           ? 'Split + decorative'
           : 'Single font';
+  const pillTargets = new Set(value.controls.pillTargets || []);
 
   const vars = {
     '--vds-font-family': derived.typography.fontFamily,
@@ -182,6 +183,12 @@ export function DesignSystemPreview({ value }: Props) {
         data-font-variance={value.controls.fontVariance}
         data-bold-type-style={value.controls.boldTypographyStyle}
         data-flatness={Math.round(derived.composition.cardUsage * 100)}
+        data-pill-buttons={pillTargets.has('buttons') ? '1' : '0'}
+        data-pill-inputs={pillTargets.has('inputs') ? '1' : '0'}
+        data-pill-chips={pillTargets.has('chips') ? '1' : '0'}
+        data-pill-tabs={pillTargets.has('tabs') ? '1' : '0'}
+        data-pill-nav={pillTargets.has('navItems') ? '1' : '0'}
+        data-pill-table-tags={pillTargets.has('tableTags') ? '1' : '0'}
       >
       <section className="vds-preview-card">
         <div className="vds-preview-card__title">Design system summary</div>

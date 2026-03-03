@@ -164,6 +164,57 @@
   opacity: 0.75;
 }
 
+.vds-pill-config {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.vds-pill-popover {
+  position: absolute;
+  top: 34px;
+  left: 0;
+  right: 0;
+  z-index: 8;
+  border: 1px solid rgba(15, 23, 42, 0.16);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow: 0 14px 28px rgba(15, 23, 42, 0.14);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 240px;
+  overflow: auto;
+}
+
+.vds-pill-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  border: 1px solid rgba(15, 23, 42, 0.1);
+  border-radius: 8px;
+  padding: 6px 8px;
+  background: rgba(248, 250, 252, 0.64);
+}
+
+.vds-pill-option input[type='checkbox'] {
+  margin-top: 2px;
+}
+
+.vds-pill-option strong {
+  display: block;
+  font-size: 12px;
+}
+
+.vds-pill-option small {
+  display: block;
+  font-size: 11px;
+  opacity: 0.72;
+  line-height: 1.35;
+}
+
 .vds-font-picker-preview {
   margin-top: 6px;
   border: 1px solid rgba(15, 23, 42, 0.12);
@@ -1278,13 +1329,30 @@
 
 .vds-preview[data-flat-mode='line'] .vds-form-field input,
 .vds-preview[data-flat-mode='line'] .vds-form-field select {
-  border-radius: 0;
-  border-top: 0;
-  border-left: 0;
-  border-right: 0;
-  background: transparent;
-  padding-left: 0;
-  padding-right: 0;
+  border-radius: calc(var(--vds-radius-input, 10px) * 0.68);
+  border-color: color-mix(in oklab, var(--vds-separator) calc(5% + var(--vds-line-opacity, 0) * 78%), transparent);
+  background: color-mix(in oklab, var(--vds-surface) calc(var(--vds-fill-opacity, 1) * 26%), transparent);
+  padding-left: calc(var(--vds-compact, 8px) * 0.55);
+  padding-right: calc(var(--vds-compact, 8px) * 0.55);
+}
+
+.vds-preview[data-pill-inputs='1'] .vds-form-field input,
+.vds-preview[data-pill-inputs='1'] .vds-form-field select {
+  border-radius: var(--vds-radius-pill, 999px);
+}
+
+.vds-preview[data-pill-inputs='1'][data-flat-mode='line'] .vds-form-field input,
+.vds-preview[data-pill-inputs='1'][data-flat-mode='line'] .vds-form-field select {
+  border-radius: var(--vds-radius-pill, 999px);
+  border-top: var(--vds-border-width, 1px) var(--vds-border-style, solid)
+    color-mix(in oklab, var(--vds-separator) calc(5% + var(--vds-line-opacity, 0) * 95%), transparent);
+  border-left: var(--vds-border-width, 1px) var(--vds-border-style, solid)
+    color-mix(in oklab, var(--vds-separator) calc(5% + var(--vds-line-opacity, 0) * 95%), transparent);
+  border-right: var(--vds-border-width, 1px) var(--vds-border-style, solid)
+    color-mix(in oklab, var(--vds-separator) calc(5% + var(--vds-line-opacity, 0) * 95%), transparent);
+  background: color-mix(in oklab, var(--vds-surface) calc(var(--vds-fill-opacity, 1) * 100%), transparent);
+  padding-left: calc(var(--vds-compact, 8px) * (0.7 + var(--vds-flatness) * 0.35));
+  padding-right: calc(var(--vds-compact, 8px) * (0.7 + var(--vds-flatness) * 0.35));
 }
 
 .vds-form-actions {
@@ -1479,6 +1547,28 @@
   opacity: var(--vds-type-subdued-opacity, 0.74);
   color: var(--vds-text-muted, #64748b);
   line-height: 1.45;
+}
+
+.vds-preview[data-pill-buttons='1'] .vds-shell-action,
+.vds-preview[data-pill-buttons='1'] .vds-variant-row button,
+.vds-preview[data-pill-buttons='1'] .vds-form-actions button {
+  border-radius: var(--vds-radius-pill, 999px);
+}
+
+.vds-preview[data-pill-tabs='1'] .vds-tabs button {
+  border-radius: var(--vds-radius-pill, 999px);
+}
+
+.vds-preview[data-pill-chips='1'] .vds-chip {
+  border-radius: var(--vds-radius-pill, 999px);
+}
+
+.vds-preview[data-pill-nav='1'] .vds-nav-item {
+  border-radius: var(--vds-radius-pill, 999px);
+}
+
+.vds-preview[data-pill-table-tags='1'] .vds-table__tag {
+  border-radius: var(--vds-radius-pill, 999px);
 }
 
 @media (max-width: 1200px) {

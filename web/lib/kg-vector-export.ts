@@ -466,6 +466,7 @@ function exportVisionSemanticKg(opts: {
         controls: {
           typography: controls.typography || null,
           fontVariance: controls.fontVariance,
+          pillTargets: controls.pillTargets || [],
           spacing: controls.spacing || null,
           flatness: controls.flatness,
           zoning: controls.zoning,
@@ -504,6 +505,7 @@ function exportVisionSemanticKg(opts: {
         `Typography base: ${controls?.typography?.baseSizePx || 16}px / ${controls?.typography?.baseWeight || 400}`,
         `Typography growth: size ${controls?.typography?.sizeGrowth || 0}, weight ${controls?.typography?.weightGrowth || 0}, contrast ${controls?.typography?.contrast || 0}`,
         `Font variance mode: ${controls?.fontVariance || 'single'}`,
+        `Forced pill targets: ${Array.isArray(controls?.pillTargets) && controls.pillTargets.length ? controls.pillTargets.join(', ') : 'none'}`,
         `Spacing: pattern ${controls?.spacing?.pattern || 0}, density ${controls?.spacing?.density || 0}, aroundVsInside ${controls?.spacing?.aroundVsInside || 0}`,
         `Flatness ${controls?.flatness || 0}, Zoning ${controls?.zoning || 0}, Softness ${controls?.softness || 0}`,
         `Surface saturation ${controls?.surfaceSaturation || 0}, Item saturation ${controls?.itemSaturation || 0}, Variance ${controls?.colorVariance || 0}, Bleed ${controls?.colorBleed || 0}`,

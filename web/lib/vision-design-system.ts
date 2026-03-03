@@ -65,6 +65,7 @@ export type VisionTypographyControlsV1 = {
 };
 
 export type VisionFontVarianceMode = 'single' | 'singleDecorative' | 'splitHeading' | 'splitHeadingDecorative';
+export type VisionPillTargetV1 = 'buttons' | 'inputs' | 'chips' | 'tabs' | 'navItems' | 'tableTags';
 
 export type VisionSpacingControlsV1 = {
   pattern: number;
@@ -90,6 +91,7 @@ export type VisionDarkModeControlsV1 = {
 export type VisionDesignSystemControlsV1 = {
   typography: VisionTypographyControlsV1;
   fontVariance: VisionFontVarianceMode;
+  pillTargets: VisionPillTargetV1[];
   spacing: VisionSpacingControlsV1;
   flatness: number;
   zoning: number;
@@ -565,6 +567,7 @@ const DEFAULT_CONTROLS: VisionDesignSystemControlsV1 = {
     contrast: 46,
   },
   fontVariance: 'single',
+  pillTargets: [],
   spacing: {
     pattern: 32,
     density: 48,
@@ -992,6 +995,19 @@ function normalizeImageProfile(input: unknown, index: number): VisionImageProfil
   };
 }
 
+function normalizePillTargets(input: unknown): VisionPillTargetV1[] {
+  if (!Array.isArray(input)) return [];
+  const out: VisionPillTargetV1[] = [];
+  for (const raw of input) {
+    const id = String(raw || '').trim();
+    if (id !== 'buttons' && id !== 'inputs' && id !== 'chips' && id !== 'tabs' && id !== 'navItems' && id !== 'tableTags') continue;
+    const normalized = id as VisionPillTargetV1;
+    if (out.includes(normalized)) continue;
+    out.push(normalized);
+  }
+  return out;
+}
+
 function normalizeControls(input: unknown): VisionDesignSystemControlsV1 {
   const src = input && typeof input === 'object' ? (input as Record<string, unknown>) : {};
   const typSrc = src.typography && typeof src.typography === 'object' ? (src.typography as Record<string, unknown>) : {};
@@ -1012,6 +1028,7 @@ function normalizeControls(input: unknown): VisionDesignSystemControlsV1 {
       String(src.fontVariance || '').trim() === 'splitHeadingDecorative'
         ? (String(src.fontVariance || '').trim() as VisionFontVarianceMode)
         : 'single',
+    pillTargets: normalizePillTargets(src.pillTargets),
     spacing: {
       pattern: clamp(Math.round(Number(spacingSrc.pattern)), 0, 100),
       density: clamp(Math.round(Number(spacingSrc.density)), 0, 100),
@@ -1082,6 +1099,7 @@ function withControlDefaults(next: VisionDesignSystemControlsV1): VisionDesignSy
       contrast: Number.isFinite(next.typography.contrast) ? next.typography.contrast : DEFAULT_CONTROLS.typography.contrast,
     },
     fontVariance: next.fontVariance || DEFAULT_CONTROLS.fontVariance,
+    pillTargets: normalizePillTargets(next.pillTargets),
     spacing: {
       pattern: Number.isFinite(next.spacing.pattern) ? next.spacing.pattern : DEFAULT_CONTROLS.spacing.pattern,
       density: Number.isFinite(next.spacing.density) ? next.spacing.density : DEFAULT_CONTROLS.spacing.density,
@@ -1214,6 +1232,8 @@ export function deriveDesignSystemTokens(spec: VisionDesignSystemV1): VisionDesi
   const flatness = norm100(controls.flatness);
   const zoning = norm100(controls.zoning);
   const softness = norm100(controls.softness);
+  const pillTargets = normalizePillTargets(controls.pillTargets);
+  const pillTargetSet = new Set<VisionPillTargetV1>(pillTargets);
   const surfaceSaturation = norm100(controls.surfaceSaturation);
   const itemSaturation = norm100(controls.itemSaturation);
   const variance = norm100(controls.colorVariance);
@@ -1368,14 +1388,16 @@ export function deriveDesignSystemTokens(spec: VisionDesignSystemV1): VisionDesi
 
   const softnessCurve = Math.pow(softness, 1.34);
   const cardRadius = Math.round(lerp(0, 40, softnessCurve));
-  const buttonRadius =
+  const buttonRadiusBase =
     softness > 0.82
       ? Math.round(lerp(14, 999, Math.pow((softness - 0.82) / 0.18, 1.2)))
       : Math.round(lerp(0, 14, Math.pow(softness / 0.82, 0.9)));
-  const inputRadius =
+  const inputRadiusBase =
     softness > 0.9
       ? Math.round(lerp(12, 28, Math.pow((softness - 0.9) / 0.1, 1.12)))
       : Math.round(lerp(0, 12, Math.pow(softness / 0.9, 1.2)));
+  const buttonRadius = pillTargetSet.has('buttons') ? 999 : buttonRadiusBase;
+  const inputRadius = pillTargetSet.has('inputs') ? 999 : inputRadiusBase;
 
   const zoneLevels = 1 + Math.round(zoning * 4);
   const zoneContrast = Number(lerp(0.01, 0.46, Math.pow(zoning, 0.82)).toFixed(3));
@@ -1931,6 +1953,7 @@ export function buildVisionDesignSystemReadout(spec: VisionDesignSystemV1): stri
   lines.push(`Scenario: ${active?.name || 'Base'} (${active?.id || 'base'})`);
   lines.push(`Font family: ${ds.foundations.fontFamily}`);
   lines.push(`Font variance mode: ${ds.controls.fontVariance}`);
+  lines.push(`Forced pill targets: ${ds.controls.pillTargets.length ? ds.controls.pillTargets.join(', ') : 'none'}`);
   lines.push(`Heading font: ${derived.typography.headingFontFamily}`);
   lines.push(`Decorative font: ${derived.typography.decorativeFontFamily}`);
   lines.push(`Typography scale: ${derived.typography.scale.toFixed(3)} (base ${ds.controls.typography.baseSizePx}px / ${ds.controls.typography.baseWeight})`);
@@ -1968,6 +1991,7 @@ export function buildVisionDesignSystemReadout(spec: VisionDesignSystemV1): stri
   lines.push(`- typography weight growth: ${controlBand(ds.controls.typography.weightGrowth)}`);
   lines.push(`- typography contrast: ${controlBand(ds.controls.typography.contrast)}`);
   lines.push(`- font variance: ${ds.controls.fontVariance}`);
+  lines.push(`- pill targets: ${ds.controls.pillTargets.length ? ds.controls.pillTargets.join(', ') : 'none'}`);
   lines.push(`- spacing pattern: ${controlBand(ds.controls.spacing.pattern)}`);
   lines.push(`- spacing density: ${controlBand(ds.controls.spacing.density)}`);
   lines.push(`- flatness: ${controlBand(ds.controls.flatness)}`);
