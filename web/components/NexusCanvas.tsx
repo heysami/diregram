@@ -4593,12 +4593,20 @@ export function NexusCanvas({
                           processNodeType: parentType || 'step',
                           showFlowOn: isShowFlowOnForNode(parentNode.id),
                         });
-                        const routed = buildBacktrackBezierBetweenBoxes({
-                          from: { x: fromRect.x, y: fromRect.y, width: fromRect.w, height: fromRect.h },
-                          to: { x: toRect.x, y: toRect.y, width: toRect.w, height: toRect.h },
+                        const reverseStart =
+                          layoutDirection === 'vertical'
+                            ? { x: fromRect.x + fromRect.w / 2, y: fromRect.y }
+                            : { x: fromRect.x, y: fromRect.y + fromRect.h / 2 };
+                        const reverseEnd =
+                          layoutDirection === 'vertical'
+                            ? { x: toRect.x + toRect.w / 2, y: toRect.y + toRect.h }
+                            : { x: toRect.x + toRect.w, y: toRect.y + toRect.h / 2 };
+                        const routed = buildStandardConnectorBezier({
+                          start: reverseStart,
+                          end: reverseEnd,
                           layoutDirection,
                         });
-                        return { pathD: routed.pathD, mid: routed.mid };
+                        return routed;
                       })()
                     : parentType === 'validation'
                       ? buildValidationConnectorBezier({
@@ -4694,19 +4702,6 @@ export function NexusCanvas({
                             </text>
                           </g>
                         )}
-                        {reverseBranchArrow && (
-                          <text
-                            x={midX}
-                            y={midY - 14}
-                            textAnchor="middle"
-                            fill="#dc2626"
-                            fontSize={10}
-                            fontWeight={700}
-                            pointerEvents="none"
-                          >
-                            REV
-                          </text>
-                        )}
                     </g>
                 );
             })}
@@ -4791,19 +4786,6 @@ export function NexusCanvas({
                         e.stopPropagation();
                       }}
                     />
-                    {routeMode === 'backtrack' && (
-                      <text
-                        x={sourceLayout.x + sourceLayout.width / 2}
-                        y={sourceLayout.y - 8}
-                        textAnchor="middle"
-                        fill="#2563eb"
-                        fontSize={10}
-                        fontWeight={700}
-                        pointerEvents="none"
-                      >
-                        GOTO:BACKTRACK
-                      </text>
-                    )}
                   </g>
                 );
               }
@@ -4836,19 +4818,6 @@ export function NexusCanvas({
                     markerEnd="url(#arrowhead-gray)"
                     opacity={dim ? 0.3 : 0.6}
                   />
-                  {routeMode === 'backtrack' && (
-                    <text
-                      x={(sourceLayout.x + targetLayout.x) / 2}
-                      y={(sourceLayout.y + targetLayout.y) / 2 - 8}
-                      textAnchor="middle"
-                      fill="#2563eb"
-                      fontSize={10}
-                      fontWeight={700}
-                      pointerEvents="none"
-                    >
-                      GOTO:BACKTRACK
-                    </text>
-                  )}
                 </g>
               );
             })}
