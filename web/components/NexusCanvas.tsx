@@ -4569,9 +4569,7 @@ export function NexusCanvas({
                 }
 
                 const reverseBranchArrow =
-                  isProcessConnector &&
-                  isProcessFlowModeEnabled &&
-                  (!!gotoReversedBranchEdges[connectorKey] || !!runtimeBacktrackBranchEdges[connectorKey]);
+                  !!gotoReversedBranchEdges[connectorKey] || !!runtimeBacktrackBranchEdges[connectorKey];
                 
                 const { pathD, mid } =
                   reverseBranchArrow
@@ -4641,7 +4639,7 @@ export function NexusCanvas({
                             }
                             fill="none"
                             markerEnd={
-                              isProcessConnector && !hideArrowForCollapsedGoto
+                              (isProcessConnector || reverseBranchArrow) && !hideArrowForCollapsedGoto
                                 ? (isConnectorHighlighted ? "url(#arrowhead-orange)" : "url(#arrowhead-light)")
                                 : undefined
                             }
@@ -4691,6 +4689,19 @@ export function NexusCanvas({
                               {label.label}
                             </text>
                           </g>
+                        )}
+                        {reverseBranchArrow && (
+                          <text
+                            x={midX}
+                            y={midY - 14}
+                            textAnchor="middle"
+                            fill="#dc2626"
+                            fontSize={10}
+                            fontWeight={700}
+                            pointerEvents="none"
+                          >
+                            REV
+                          </text>
                         )}
                     </g>
                 );
@@ -4776,6 +4787,19 @@ export function NexusCanvas({
                         e.stopPropagation();
                       }}
                     />
+                    {routeMode === 'backtrack' && (
+                      <text
+                        x={sourceLayout.x + sourceLayout.width / 2}
+                        y={sourceLayout.y - 8}
+                        textAnchor="middle"
+                        fill="#2563eb"
+                        fontSize={10}
+                        fontWeight={700}
+                        pointerEvents="none"
+                      >
+                        GOTO:BACKTRACK
+                      </text>
+                    )}
                   </g>
                 );
               }
@@ -4808,6 +4832,19 @@ export function NexusCanvas({
                     markerEnd="url(#arrowhead-gray)"
                     opacity={dim ? 0.3 : 0.6}
                   />
+                  {routeMode === 'backtrack' && (
+                    <text
+                      x={(sourceLayout.x + targetLayout.x) / 2}
+                      y={(sourceLayout.y + targetLayout.y) / 2 - 8}
+                      textAnchor="middle"
+                      fill="#2563eb"
+                      fontSize={10}
+                      fontWeight={700}
+                      pointerEvents="none"
+                    >
+                      GOTO:BACKTRACK
+                    </text>
+                  )}
                 </g>
               );
             })}
