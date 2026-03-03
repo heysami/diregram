@@ -12,7 +12,11 @@ export function adjustGotoLayoutAndRouting(opts: {
   gotoTargets: Record<string, string>;
   layoutDirection: LayoutDirection;
   isShowFlowOnForNode: (nodeId: string) => boolean;
-}): { layout: Record<string, NodeLayout>; routeHintsByGotoId: Record<string, GotoRouteMode> } {
+}): {
+  layout: Record<string, NodeLayout>;
+  routeHintsByGotoId: Record<string, GotoRouteMode>;
+  reversedBranchEdgeByKey: Record<string, true>;
+} {
   const {
     layout,
     flattenedNodes,
@@ -25,6 +29,7 @@ export function adjustGotoLayoutAndRouting(opts: {
 
   const axis: 'x' | 'y' = layoutDirection === 'vertical' ? 'y' : 'x';
   const routeHintsByGotoId: Record<string, GotoRouteMode> = {};
+  const reversedBranchEdgeByKey: Record<string, true> = {};
   const requestedAxisByTarget = new Map<string, number>();
   const excludedChildRootsByTarget = new Map<string, Set<string>>();
   const baseAxisById = new Map<string, number>();
@@ -107,6 +112,16 @@ export function adjustGotoLayoutAndRouting(opts: {
     const isCase3 = !targetIsDescendantOfValidation && targetIsBeforeValidation;
 
     routeHintsByGotoId[gotoId] = isCase3 ? 'backtrack' : 'default';
+    if (isCase3) {
+      // Reverse arrow direction for the branch path that leads from validation to this goto.
+      let cur = nodeMap.get(gotoId);
+      while (cur?.parentId) {
+        const parentId = cur.parentId;
+        reversedBranchEdgeByKey[`${parentId}__${cur.id}`] = true;
+        if (parentId === validation.id) break;
+        cur = nodeMap.get(parentId);
+      }
+    }
 
     if (!(isCase2 || isCase3)) return;
     const requested = requestedAxisByTarget.get(targetId);
@@ -125,7 +140,7 @@ export function adjustGotoLayoutAndRouting(opts: {
   });
 
   if (requestedAxisByTarget.size === 0) {
-    return { layout, routeHintsByGotoId };
+    return { layout, routeHintsByGotoId, reversedBranchEdgeByKey };
   }
 
   const adjustedLayout: Record<string, NodeLayout> = { ...layout };
@@ -190,5 +205,5 @@ export function adjustGotoLayoutAndRouting(opts: {
     }
   });
 
-  return { layout: adjustedLayout, routeHintsByGotoId };
+  return { layout: adjustedLayout, routeHintsByGotoId, reversedBranchEdgeByKey };
 }

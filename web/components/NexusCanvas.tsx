@@ -1104,6 +1104,7 @@ export function NexusCanvas({
   const [connectorLabels, setConnectorLabels] = useState<Record<string, { label: string; color: string }>>({});
   const [gotoTargets, setGotoTargets] = useState<Record<string, string>>({}); // Map from nodeId to targetNodeId
   const [gotoRouteHints, setGotoRouteHints] = useState<Record<string, GotoRouteMode>>({});
+  const [gotoReversedBranchEdges, setGotoReversedBranchEdges] = useState<Record<string, true>>({});
   const [loopTargets, setLoopTargets] = useState<Record<string, string>>({}); // Map from nodeId to targetNodeId
   const [processTypeMenuForId, setProcessTypeMenuForId] = useState<string | null>(null);
   const [processTypeMenuPosition, setProcessTypeMenuPosition] = useState<{ x: number; y: number } | null>(null);
@@ -1671,6 +1672,15 @@ export function NexusCanvas({
         }
         return true;
       };
+      const isSameEdgeFlags = (a: Record<string, true>, b: Record<string, true>): boolean => {
+        const aKeys = Object.keys(a);
+        const bKeys = Object.keys(b);
+        if (aKeys.length !== bKeys.length) return false;
+        for (const key of aKeys) {
+          if (!b[key]) return false;
+        }
+        return true;
+      };
 
       // Sanitize layout values to prevent NaN/Infinity from breaking CSS transforms and viewport centering.
       // If any entry is invalid, coerce it to a safe default so nodes remain renderable.
@@ -1748,6 +1758,9 @@ export function NexusCanvas({
       newLayout = gotoAdjusted.layout;
       setGotoRouteHints((prev) =>
         isSameRouteHints(prev, gotoAdjusted.routeHintsByGotoId) ? prev : gotoAdjusted.routeHintsByGotoId,
+      );
+      setGotoReversedBranchEdges((prev) =>
+        isSameEdgeFlags(prev, gotoAdjusted.reversedBranchEdgeByKey) ? prev : gotoAdjusted.reversedBranchEdgeByKey,
       );
 
       // Conditional hub notes: reserve EXACT space for the notes box without moving the hub group upward.
@@ -4345,6 +4358,17 @@ export function NexusCanvas({
                 <polygon points="0 0, 8 4, 0 8" fill="#000000" stroke="#000000" strokeWidth="1" />
               </marker>
               <marker
+                id="arrowhead-orange-start-reverse"
+                markerWidth="8"
+                markerHeight="8"
+                refX="7"
+                refY="4"
+                orient="auto-start-reverse"
+                markerUnits="userSpaceOnUse"
+              >
+                <polygon points="0 0, 8 4, 0 8" fill="#e11d48" stroke="#e11d48" strokeWidth="1" />
+              </marker>
+              <marker
                 id="arrowhead-gray-start-reverse"
                 markerWidth="8"
                 markerHeight="8"
@@ -4546,6 +4570,8 @@ export function NexusCanvas({
                   !!gotoTargets[node.id] &&
                   selectedNodeId !== node.id &&
                   isShowFlowOnForNode(node.id);
+                const reverseBranchArrow =
+                  isProcessConnector && isProcessFlowModeEnabled && !!gotoReversedBranchEdges[connectorKey];
 
                 const isConnectorHighlighted =
                   selectedNodeId === node.id ||
@@ -4563,8 +4589,15 @@ export function NexusCanvas({
                               isConnectorHighlighted || selectedNodeId === node.id || dropTargetId === node.id ? '2.5' : '1.5'
                             }
                             fill="none"
+                            markerStart={
+                              isProcessConnector && !hideArrowForCollapsedGoto && reverseBranchArrow
+                                ? (isConnectorHighlighted
+                                  ? "url(#arrowhead-orange-start-reverse)"
+                                  : "url(#arrowhead-light-start-reverse)")
+                                : undefined
+                            }
                             markerEnd={
-                              isProcessConnector && !hideArrowForCollapsedGoto
+                              isProcessConnector && !hideArrowForCollapsedGoto && !reverseBranchArrow
                                 ? (isConnectorHighlighted ? "url(#arrowhead-orange)" : "url(#arrowhead-light)")
                                 : undefined
                             }
