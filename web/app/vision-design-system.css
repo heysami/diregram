@@ -1325,11 +1325,17 @@
   background: color-mix(in oklab, var(--vds-surface) calc(var(--vds-fill-opacity, 1) * 100%), transparent);
   padding: 0 calc(var(--vds-compact, 8px) * (0.7 + var(--vds-flatness) * 0.35));
   font-size: var(--vds-type-body-size, 14px);
+  transition: border-radius 140ms ease, padding 140ms ease, background-color 140ms ease;
+}
+
+.vds-form-field select {
+  appearance: none;
+  -webkit-appearance: none;
 }
 
 .vds-preview[data-flat-mode='line'] .vds-form-field input,
 .vds-preview[data-flat-mode='line'] .vds-form-field select {
-  border-radius: calc(var(--vds-radius-input, 10px) * 0.68);
+  border-radius: var(--vds-radius-input, 10px);
   border-color: color-mix(in oklab, var(--vds-separator) calc(5% + var(--vds-line-opacity, 0) * 78%), transparent);
   background: color-mix(in oklab, var(--vds-surface) calc(var(--vds-fill-opacity, 1) * 26%), transparent);
   padding-left: calc(var(--vds-compact, 8px) * 0.55);

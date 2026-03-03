@@ -1394,8 +1394,8 @@ export function deriveDesignSystemTokens(spec: VisionDesignSystemV1): VisionDesi
       : Math.round(lerp(0, 14, Math.pow(softness / 0.82, 0.9)));
   const inputRadiusBase =
     softness > 0.9
-      ? Math.round(lerp(12, 28, Math.pow((softness - 0.9) / 0.1, 1.12)))
-      : Math.round(lerp(0, 12, Math.pow(softness / 0.9, 1.2)));
+      ? Math.round(lerp(22, 34, Math.pow((softness - 0.9) / 0.1, 1.08)))
+      : Math.round(lerp(0, 22, Math.pow(softness / 0.9, 1.05)));
   const buttonRadius = pillTargetSet.has('buttons') ? 999 : buttonRadiusBase;
   const inputRadius = pillTargetSet.has('inputs') ? 999 : inputRadiusBase;
 
