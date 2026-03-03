@@ -3,6 +3,7 @@ import { Lexend, Sometype_Mono } from "next/font/google";
 import "./globals.css";
 import "./vision-style-panel.css";
 import "./design-system-v2.css";
+import "./vision-design-system.css";
 
 const lexend = Lexend({
   variable: "--font-lexend",

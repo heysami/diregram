@@ -1,18 +1,24 @@
 'use client';
 
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import type { Editor, TLEditorSnapshot } from 'tldraw';
 import type * as Y from 'yjs';
 import { useHtmlThemeOverride } from '@/hooks/use-html-theme-override';
 import type { VisionDoc } from '@/lib/visionjson';
+import {
+  defaultVisionDesignSystem,
+  normalizeVisionDesignSystem,
+  type VisionDesignSystemV1,
+} from '@/lib/vision-design-system';
 import { VisionCanvas } from '@/components/vision/v2/VisionCanvas';
 import { MarkdownPopup } from '@/components/vision/v2/shell/MarkdownPopup';
 import { VisionImportModal } from '@/components/vision/v2/shell/VisionImportModal';
 import { TldrawHeaderActions } from '@/components/vision/v2/shell/TldrawHeaderActions';
 import { useCardCount } from '@/components/vision/v2/hooks/useCardCount';
 import { CommentsPanel } from '@/components/CommentsPanel';
+import { DesignSystemWorkbench } from '@/components/vision/v2/design-system/DesignSystemWorkbench';
 import { deleteAnchor, getThread, isVisionPointCommentTargetKey } from '@/lib/node-comments';
 import { upsertTemplateHeader, type NexusTemplateHeader } from '@/lib/nexus-template';
 import { InsertFromTemplateModal, type WorkspaceFileLite as TemplateWorkspaceFileLite } from '@/components/templates/InsertFromTemplateModal';
@@ -68,6 +74,7 @@ export function VisionEditor({
   const [markdownOpen, setMarkdownOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [insertCardTemplateOpen, setInsertCardTemplateOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<'designSystem' | 'customVisualElements'>('customVisualElements');
   useCardCount(doc); // keep memoized for future use (e.g. status line); doesn't render now.
 
   const [activeTool, setActiveTool] = useState<'select' | 'comment'>('select');
@@ -129,6 +136,32 @@ export function VisionEditor({
     }
   }, [activeTool, canvasEditor]);
 
+  const designSystem = useMemo(() => {
+    const raw = (doc as any)?.designSystem as VisionDesignSystemV1 | undefined;
+    if (!raw) return defaultVisionDesignSystem();
+    return normalizeVisionDesignSystem(raw);
+  }, [doc]);
+
+  const updateVisionDoc = useCallback(
+    (patch: Record<string, unknown>) => {
+      const base = doc && (doc as any).version === 2 ? (doc as any) : { version: 2 };
+      onChange({ ...base, ...patch, version: 2, updatedAt: new Date().toISOString() } as any);
+    },
+    [doc, onChange],
+  );
+
+  const activateTab = useCallback(
+    (next: 'designSystem' | 'customVisualElements') => {
+      if (next !== 'customVisualElements') {
+        cleanupDanglingVisionPoint(commentPanel.targetKey);
+        setActiveTool('select');
+        setCommentPanel({ targetKey: null });
+      }
+      setActiveTab(next);
+    },
+    [cleanupDanglingVisionPoint, commentPanel.targetKey],
+  );
+
   return (
     <main className="mac-desktop dg-screen-fade-in h-screen w-screen relative overflow-hidden dg-vision-editor">
       <header className="mac-menubar h-12 px-4 flex items-center justify-between gap-3 shrink-0 z-[100] relative">
@@ -140,13 +173,33 @@ export function VisionEditor({
           <TldrawHeaderActions editor={canvasEditor} />
           <div className="text-[13px] font-bold tracking-tight truncate">{title || 'Vision'}</div>
           <div className="text-[11px] opacity-70 whitespace-nowrap">{statusLabel || ''}</div>
+          <div className="ml-2 inline-flex items-center gap-1 rounded-md border border-black/15 bg-white/80 p-1">
+            <button
+              type="button"
+              className={['mac-btn h-8', activeTab === 'designSystem' ? 'mac-btn--primary' : ''].join(' ')}
+              onClick={() => activateTab('designSystem')}
+              title="Design system controls and adaptive preview"
+            >
+              Design System
+            </button>
+            <button
+              type="button"
+              className={['mac-btn h-8', activeTab === 'customVisualElements' ? 'mac-btn--primary' : ''].join(' ')}
+              onClick={() => activateTab('customVisualElements')}
+              title="Current custom visual elements canvas"
+            >
+              Custom Visual Elements
+            </button>
+          </div>
         </div>
 
         <div className="flex items-center gap-2">
           <button
             type="button"
             className="mac-btn h-8 disabled:opacity-40 disabled:cursor-not-allowed"
-            disabled={!templateFiles || !loadTemplateMarkdown || (templateFiles || []).length === 0 || !canvasEditor}
+            disabled={
+              activeTab !== 'customVisualElements' || !templateFiles || !loadTemplateMarkdown || (templateFiles || []).length === 0 || !canvasEditor
+            }
             title={!canvasEditor ? 'Canvas not ready yet' : (templateFiles || []).length === 0 ? 'No templates yet.' : 'Create a new card from a template'}
             onClick={() => setInsertCardTemplateOpen(true)}
           >
@@ -158,6 +211,7 @@ export function VisionEditor({
           <button
             type="button"
             className={['mac-btn h-8', activeTool === 'comment' ? 'mac-btn--dark' : ''].join(' ')}
+            disabled={activeTab !== 'customVisualElements'}
             onClick={() => {
               setActiveTool((t) => {
                 const next = t === 'comment' ? 'select' : 'comment';
@@ -223,34 +277,45 @@ export function VisionEditor({
       />
 
       <div className="absolute inset-0 top-12">
-        <div className="h-full w-full overflow-hidden mac-canvas-bg">
-          <VisionCanvas
-            fileId={fileId}
-            sessionStorageKey={`vision:tldraw:canvas:session:${fileId}`}
-            initialSnapshot={((doc as any).tldraw as Partial<TLEditorSnapshot>) || null}
-            onChangeSnapshot={(snapshot) => {
-              onChange({ version: 2, tldraw: snapshot, updatedAt: new Date().toISOString() } as any);
-            }}
-            onReadyEditor={(ed) => setCanvasEditor(ed)}
-            yDoc={yDoc}
-            activeTool={activeTool}
-            activeCommentTargetKey={commentPanel.targetKey}
-            onOpenComments={(info) => {
-              setActiveTool('comment');
-              setCommentPanel({
-                targetKey: info.targetKey,
-                targetLabel: info.targetLabel,
-                scrollToThreadId: info.scrollToThreadId,
-              });
-            }}
-            onSaveTemplateFile={onSaveTemplateFile}
-            templateSourceLabel={templateSourceLabel}
-            globalTemplatesEnabled={globalTemplatesEnabled}
-          />
-        </div>
+        {activeTab === 'customVisualElements' ? (
+          <div className="h-full w-full overflow-hidden mac-canvas-bg">
+            <VisionCanvas
+              fileId={fileId}
+              sessionStorageKey={`vision:tldraw:canvas:session:${fileId}`}
+              initialSnapshot={((doc as any).tldraw as Partial<TLEditorSnapshot>) || null}
+              onChangeSnapshot={(snapshot) => {
+                updateVisionDoc({ tldraw: snapshot });
+              }}
+              onReadyEditor={(ed) => setCanvasEditor(ed)}
+              yDoc={yDoc}
+              activeTool={activeTool}
+              activeCommentTargetKey={commentPanel.targetKey}
+              onOpenComments={(info) => {
+                setActiveTool('comment');
+                setCommentPanel({
+                  targetKey: info.targetKey,
+                  targetLabel: info.targetLabel,
+                  scrollToThreadId: info.scrollToThreadId,
+                });
+              }}
+              onSaveTemplateFile={onSaveTemplateFile}
+              templateSourceLabel={templateSourceLabel}
+              globalTemplatesEnabled={globalTemplatesEnabled}
+            />
+          </div>
+        ) : (
+          <div className="h-full w-full dg-vision-design-system">
+            <DesignSystemWorkbench
+              value={designSystem}
+              onChange={(next) => {
+                updateVisionDoc({ designSystem: next });
+              }}
+            />
+          </div>
+        )}
       </div>
 
-      {activeTool === 'comment' ? (
+      {activeTab === 'customVisualElements' && activeTool === 'comment' ? (
         <div className="fixed right-3 top-14 bottom-3 z-[9500] pointer-events-none">
           <div className="h-full pointer-events-auto">
             <CommentsPanel

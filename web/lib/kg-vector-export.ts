@@ -5,6 +5,7 @@ import { loadFileSnapshot } from '@/lib/local-doc-snapshots';
 import { parseNexusMarkdown } from '@/lib/nexus-parser';
 import { extractExpandedIdsFromMarkdown } from '@/lib/expanded-state-storage';
 import { loadVisionDoc } from '@/lib/visionjson';
+import { buildVisionDesignSystemReadout, extractVisionDesignSystemReadout, type VisionDesignSystemV1 } from '@/lib/vision-design-system';
 import { readTemplateHeader } from '@/lib/nexus-template';
 import { loadTestDoc } from '@/lib/testjson';
 import { extractRunningNumbersFromMarkdown } from '@/lib/node-running-numbers';
@@ -351,6 +352,14 @@ function visionShapeEntityId(fileId: string, shapeId: string) {
   return `visionShape:${fileId}:${shapeId}`;
 }
 
+function visionDesignSystemEntityId(fileId: string) {
+  return `visionDesignSystem:${fileId}`;
+}
+
+function visionDesignScenarioEntityId(fileId: string, scenarioId: string) {
+  return `visionDesignScenario:${fileId}:${scenarioId}`;
+}
+
 function exportVisionSemanticKg(opts: {
   file: ProjectFileRow;
   fileEntity: string;
@@ -361,83 +370,225 @@ function exportVisionSemanticKg(opts: {
   const { file: f, fileEntity: fid, entities, edges, chunks } = opts;
   try {
     const v = loadVisionDoc(f.content || '').doc as any;
+    const designSystem = (v?.designSystem || null) as VisionDesignSystemV1 | null;
     const snap = v?.tldraw || null;
     const store = snap?.document?.store;
-    if (!store || typeof store !== 'object') return;
+    if (store && typeof store === 'object') {
+      for (const rec of Object.values<any>(store)) {
+        if (!rec || rec.typeName !== 'shape') continue;
+        const shapeId = String(rec.id || '').trim();
+        const shapeType = String(rec.type || '').trim();
+        if (!shapeId || !shapeType) continue;
 
-    for (const rec of Object.values<any>(store)) {
-      if (!rec || rec.typeName !== 'shape') continue;
-      const shapeId = String(rec.id || '').trim();
-      const shapeType = String(rec.type || '').trim();
-      if (!shapeId || !shapeType) continue;
-
-      const sid = visionShapeEntityId(f.id, shapeId);
-      entities.push({
-        type: 'entity',
-        id: sid,
-        entityType: 'visionShape',
-        fileId: f.id,
-        shapeId,
-        shapeType,
-        x: typeof rec.x === 'number' ? rec.x : undefined,
-        y: typeof rec.y === 'number' ? rec.y : undefined,
-        opacity: typeof rec.opacity === 'number' ? rec.opacity : undefined,
-        parentId: typeof rec.parentId === 'string' ? rec.parentId : undefined,
-        index: rec.index,
-        // Keep props lightweight but semantic-friendly.
-        props: (() => {
-          const p = rec.props as any;
-          if (!p || typeof p !== 'object') return undefined;
-          const out: Record<string, unknown> = {};
-          if (typeof p.title === 'string' && p.title.trim()) out.title = String(p.title).trim();
-          if (typeof p.text === 'string' && p.text.trim()) out.text = String(p.text).trim();
-          if (typeof p.color === 'string' && p.color.trim()) out.color = String(p.color).trim();
-          if (typeof p.fill === 'string' && p.fill.trim()) out.fill = String(p.fill).trim();
-          if (typeof p.size === 'string' && p.size.trim()) out.size = String(p.size).trim();
-          if (p.start && typeof p.start === 'object') out.start = p.start;
-          if (p.end && typeof p.end === 'object') out.end = p.end;
-          if (typeof p.w === 'number') out.w = p.w;
-          if (typeof p.h === 'number') out.h = p.h;
-          return Object.keys(out).length ? out : undefined;
-        })(),
-      });
-      edges.push({ type: 'edge', id: edgeId('file_has_vision_shape', fid, sid), edgeType: 'file_has_vision_shape', src: fid, dst: sid });
-
-      // Specialize nxcard as a first-class entity (used by embeds).
-      if (shapeType === 'nxcard') {
-        const cid = visionCardEntityId(f.id, shapeId);
-        const title = typeof rec?.props?.title === 'string' ? String(rec.props.title).trim() : '';
-        const hasThumb = !!(rec?.props?.thumb && String(rec.props.thumb).trim());
+        const sid = visionShapeEntityId(f.id, shapeId);
         entities.push({
           type: 'entity',
-          id: cid,
-          entityType: 'visionCard',
+          id: sid,
+          entityType: 'visionShape',
           fileId: f.id,
-          cardId: shapeId,
-          title,
-          hasThumb,
-          shapeEntityId: sid,
+          shapeId,
+          shapeType,
+          x: typeof rec.x === 'number' ? rec.x : undefined,
+          y: typeof rec.y === 'number' ? rec.y : undefined,
+          opacity: typeof rec.opacity === 'number' ? rec.opacity : undefined,
+          parentId: typeof rec.parentId === 'string' ? rec.parentId : undefined,
+          index: rec.index,
+          // Keep props lightweight but semantic-friendly.
+          props: (() => {
+            const p = rec.props as any;
+            if (!p || typeof p !== 'object') return undefined;
+            const out: Record<string, unknown> = {};
+            if (typeof p.title === 'string' && p.title.trim()) out.title = String(p.title).trim();
+            if (typeof p.text === 'string' && p.text.trim()) out.text = String(p.text).trim();
+            if (typeof p.color === 'string' && p.color.trim()) out.color = String(p.color).trim();
+            if (typeof p.fill === 'string' && p.fill.trim()) out.fill = String(p.fill).trim();
+            if (typeof p.size === 'string' && p.size.trim()) out.size = String(p.size).trim();
+            if (p.start && typeof p.start === 'object') out.start = p.start;
+            if (p.end && typeof p.end === 'object') out.end = p.end;
+            if (typeof p.w === 'number') out.w = p.w;
+            if (typeof p.h === 'number') out.h = p.h;
+            return Object.keys(out).length ? out : undefined;
+          })(),
         });
-        edges.push({ type: 'edge', id: edgeId('file_has_card', fid, cid), edgeType: 'file_has_card', src: fid, dst: cid });
-        edges.push({ type: 'edge', id: edgeId('vision_card_is_shape', cid, sid), edgeType: 'vision_card_is_shape', src: cid, dst: sid });
-        const text = title ? `Vision card: ${title}` : `Vision card: ${shapeId}`;
-        chunks.push({ type: 'chunk', id: chunkId(f.id, `visioncard:${shapeId}`), fileId: f.id, fileKind: f.kind, text, anchor: `visioncard:${shapeId}` });
-        continue;
+        edges.push({ type: 'edge', id: edgeId('file_has_vision_shape', fid, sid), edgeType: 'file_has_vision_shape', src: fid, dst: sid });
+
+        // Specialize nxcard as a first-class entity (used by embeds).
+        if (shapeType === 'nxcard') {
+          const cid = visionCardEntityId(f.id, shapeId);
+          const title = typeof rec?.props?.title === 'string' ? String(rec.props.title).trim() : '';
+          const hasThumb = !!(rec?.props?.thumb && String(rec.props.thumb).trim());
+          entities.push({
+            type: 'entity',
+            id: cid,
+            entityType: 'visionCard',
+            fileId: f.id,
+            cardId: shapeId,
+            title,
+            hasThumb,
+            shapeEntityId: sid,
+          });
+          edges.push({ type: 'edge', id: edgeId('file_has_card', fid, cid), edgeType: 'file_has_card', src: fid, dst: cid });
+          edges.push({ type: 'edge', id: edgeId('vision_card_is_shape', cid, sid), edgeType: 'vision_card_is_shape', src: cid, dst: sid });
+          const text = title ? `Vision card: ${title}` : `Vision card: ${shapeId}`;
+          chunks.push({ type: 'chunk', id: chunkId(f.id, `visioncard:${shapeId}`), fileId: f.id, fileKind: f.kind, text, anchor: `visioncard:${shapeId}` });
+          continue;
+        }
+
+        // Semantic-friendly chunks for common annotation shapes.
+        if (shapeType === 'arrow') {
+          const p: any = rec.props || {};
+          const label = typeof p.text === 'string' ? String(p.text).trim() : '';
+          const text = label ? `Vision arrow: ${label}` : `Vision arrow`;
+          chunks.push({ type: 'chunk', id: chunkId(f.id, `visionshape:${shapeId}`), fileId: f.id, fileKind: f.kind, text, anchor: `visionshape:${shapeId}` });
+          continue;
+        }
+        if (shapeType === 'text') {
+          const p: any = rec.props || {};
+          const t = typeof p.text === 'string' ? String(p.text).trim() : '';
+          if (t) chunks.push({ type: 'chunk', id: chunkId(f.id, `visionshape:${shapeId}`), fileId: f.id, fileKind: f.kind, text: `Vision text: ${t}`, anchor: `visionshape:${shapeId}` });
+          continue;
+        }
+      }
+    }
+
+    if (designSystem) {
+      const dsId = visionDesignSystemEntityId(f.id);
+      const controls = designSystem.controls || ({} as any);
+      const activeScenario = (designSystem.scenarios || []).find((s) => s.id === designSystem.activeScenarioId) || designSystem.scenarios?.[0] || null;
+      entities.push({
+        type: 'entity',
+        id: dsId,
+        entityType: 'visionDesignSystem',
+        fileId: f.id,
+        activeScenarioId: designSystem.activeScenarioId,
+        fontFamily: designSystem.foundations?.fontFamily || '',
+        updatedAt: designSystem.updatedAt || null,
+        controls: {
+          typography: controls.typography || null,
+          spacing: controls.spacing || null,
+          flatness: controls.flatness,
+          zoning: controls.zoning,
+          softness: controls.softness,
+          saturation: controls.saturation,
+          colorVariance: controls.colorVariance,
+          colorBleed: controls.colorBleed,
+          wireframeFeeling: controls.wireframeFeeling,
+          visualRange: controls.visualRange,
+          skeuomorphism: controls.skeuomorphism,
+          negativeZoneStyle: controls.negativeZoneStyle,
+          boldness: controls.boldness,
+        },
+      });
+      edges.push({
+        type: 'edge',
+        id: edgeId('file_has_vision_design_system', fid, dsId),
+        edgeType: 'file_has_vision_design_system',
+        src: fid,
+        dst: dsId,
+      });
+
+      const controlsChunk = [
+        `Vision design system controls`,
+        `Typography base: ${controls?.typography?.baseSizePx || 16}px / ${controls?.typography?.baseWeight || 400}`,
+        `Typography growth: size ${controls?.typography?.sizeGrowth || 0}, weight ${controls?.typography?.weightGrowth || 0}`,
+        `Spacing: pattern ${controls?.spacing?.pattern || 0}, density ${controls?.spacing?.density || 0}, aroundVsInside ${controls?.spacing?.aroundVsInside || 0}`,
+        `Flatness ${controls?.flatness || 0}, Zoning ${controls?.zoning || 0}, Softness ${controls?.softness || 0}`,
+        `Saturation ${controls?.saturation || 0}, Variance ${controls?.colorVariance || 0}, Bleed ${controls?.colorBleed || 0}`,
+        `Wireframe ${controls?.wireframeFeeling || 0}, VisualRange ${controls?.visualRange || 0}, Skeuomorphism ${controls?.skeuomorphism || 0}`,
+        `NegativeZoneStyle ${controls?.negativeZoneStyle || 0}, Boldness ${controls?.boldness || 0}`,
+      ]
+        .filter(Boolean)
+        .join('\n');
+      chunks.push({
+        type: 'chunk',
+        id: chunkId(f.id, 'vision-design-system:controls'),
+        fileId: f.id,
+        fileKind: f.kind,
+        text: controlsChunk,
+        anchor: 'vision-design-system:controls',
+      });
+
+      for (const scenario of designSystem.scenarios || []) {
+        const scenarioId = visionDesignScenarioEntityId(f.id, String(scenario.id || 'scenario'));
+        entities.push({
+          type: 'entity',
+          id: scenarioId,
+          entityType: 'visionDesignScenario',
+          fileId: f.id,
+          scenarioId: scenario.id,
+          name: scenario.name,
+          palette: scenario.palette,
+          ratios: scenario.ratios,
+          isActive: scenario.id === designSystem.activeScenarioId,
+        });
+        edges.push({
+          type: 'edge',
+          id: edgeId('vision_design_system_has_scenario', dsId, scenarioId),
+          edgeType: 'vision_design_system_has_scenario',
+          src: dsId,
+          dst: scenarioId,
+        });
+        const paletteText = [
+          `Vision scenario: ${scenario.name} (${scenario.id})`,
+          `Primary: ${scenario.palette?.primary || ''}`,
+          `Accent: ${(scenario.palette?.accent || []).join(', ')}`,
+          `Neutral: ${(scenario.palette?.neutral || []).join(', ')}`,
+          `Semantic: success ${scenario.palette?.semantic?.success || ''}, warning ${scenario.palette?.semantic?.warning || ''}, error ${scenario.palette?.semantic?.error || ''}, info ${scenario.palette?.semantic?.info || ''}`,
+          ...(scenario.ratios || []).map(
+            (r: any) =>
+              `Ratio[${String(r?.scope || 'ui')}]: neutral ${Number(r?.neutralPct || 0)}%, primary ${Number(r?.primaryPct || 0)}%, accent ${Number(r?.accentPct || 0)}%, semantic ${Number(r?.semanticPct || 0)}%`,
+          ),
+        ]
+          .filter(Boolean)
+          .join('\n');
+        chunks.push({
+          type: 'chunk',
+          id: chunkId(f.id, `vision-design-system:scenario:${scenario.id}`),
+          fileId: f.id,
+          fileKind: f.kind,
+          text: paletteText,
+          anchor: `vision-design-system:scenario:${scenario.id}`,
+        });
       }
 
-      // Semantic-friendly chunks for common annotation shapes.
-      if (shapeType === 'arrow') {
-        const p: any = rec.props || {};
-        const label = typeof p.text === 'string' ? String(p.text).trim() : '';
-        const text = label ? `Vision arrow: ${label}` : `Vision arrow`;
-        chunks.push({ type: 'chunk', id: chunkId(f.id, `visionshape:${shapeId}`), fileId: f.id, fileKind: f.kind, text, anchor: `visionshape:${shapeId}` });
-        continue;
+      const imageProfiles = Array.isArray(designSystem.foundations?.imageProfiles) ? designSystem.foundations.imageProfiles : [];
+      if (imageProfiles.length) {
+        const imageChunk = imageProfiles
+          .map((p: any) => {
+            return [
+              `Profile: ${String(p?.name || '')}`,
+              `Style: ${String(p?.style || '')}`,
+              `Lighting: ${String(p?.lighting || '')}`,
+              `Line weight: ${String(p?.lineWeight || '')}`,
+              `Notes: ${String(p?.notes || '')}`,
+              `Placeholder: ${String(p?.placeholder || '')}`,
+            ]
+              .filter(Boolean)
+              .join('\n');
+          })
+          .join('\n\n');
+        if (imageChunk.trim()) {
+          chunks.push({
+            type: 'chunk',
+            id: chunkId(f.id, 'vision-design-system:image-profiles'),
+            fileId: f.id,
+            fileKind: f.kind,
+            text: imageChunk.trim(),
+            anchor: 'vision-design-system:image-profiles',
+          });
+        }
       }
-      if (shapeType === 'text') {
-        const p: any = rec.props || {};
-        const t = typeof p.text === 'string' ? String(p.text).trim() : '';
-        if (t) chunks.push({ type: 'chunk', id: chunkId(f.id, `visionshape:${shapeId}`), fileId: f.id, fileKind: f.kind, text: `Vision text: ${t}`, anchor: `visionshape:${shapeId}` });
-        continue;
+
+      const readout = extractVisionDesignSystemReadout(f.content || '') || buildVisionDesignSystemReadout(designSystem);
+      if (readout.trim()) {
+        chunks.push({
+          type: 'chunk',
+          id: chunkId(f.id, 'vision-design-system:readout'),
+          fileId: f.id,
+          fileKind: f.kind,
+          text: readout.trim().slice(0, 50_000),
+          anchor: 'vision-design-system:readout',
+        });
       }
     }
   } catch {

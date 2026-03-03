@@ -85,8 +85,11 @@ export function useVisionDocStateFromYjs(yDoc: Y.Doc | null): {
 
         // Prefer worker for parsing, to keep the UI thread responsive.
         const payload = extractVisionJsonPayload(md);
+        const hasDesignSystemMirror = md.includes('```vision-design-system');
         const worker = parseWorkerRef.current;
-        if (worker && payload) {
+        // If design-system mirror blocks exist, keep parsing on main thread so loadVisionDoc
+        // can apply canonical/fallback merge rules in one place.
+        if (worker && payload && !hasDesignSystemMirror) {
           try {
             worker.postMessage({ seq: mySeq, payload });
             return;
@@ -141,4 +144,3 @@ export function useVisionDocStateFromYjs(yDoc: Y.Doc | null): {
 
   return { visionDoc, setVisionDoc, rawMarkdownPreview, rawMarkdownChars };
 }
-

@@ -1,3 +1,10 @@
+import {
+  coerceVisionDesignSystem,
+  extractVisionDesignSystemPayload,
+  parseVisionDesignSystemPayload,
+  upsertVisionDesignSystemBlocks,
+  type VisionDesignSystemV1,
+} from '@/lib/vision-design-system';
 type JsonObject = Record<string, unknown>;
 
 // ---------------------------------------------------------------------------
@@ -66,6 +73,8 @@ export type VisionDocV2 = {
   version: 2;
   /** tldraw snapshot (typically document-only). */
   tldraw?: unknown;
+  /** Optional project-level design system spec for preview and RAG extraction. */
+  designSystem?: VisionDesignSystemV1;
   /** Best-effort updated timestamp (not required for correctness). */
   updatedAt?: string;
 };
@@ -93,10 +102,12 @@ function coerceDoc(x: unknown): VisionDoc | null {
   const r = x as JsonObject;
   if (r.version !== 2) return null;
   const tldraw = (r as any).tldraw;
+  const designSystem = coerceVisionDesignSystem((r as any).designSystem);
   const updatedAt = typeof (r as any).updatedAt === 'string' ? String((r as any).updatedAt) : undefined;
   return {
     version: 2,
     ...(tldraw !== undefined ? { tldraw } : null),
+    ...(designSystem ? { designSystem } : null),
     ...(updatedAt ? { updatedAt } : null),
   };
 }
@@ -132,7 +143,22 @@ export function parseVisionJsonPayload(payload: string): VisionDoc | null {
 export function loadVisionDoc(markdown: string): LoadVisionDocResult {
   const payload = extractVisionJsonPayload(markdown);
   const coerced = payload ? parseVisionJsonPayload(payload) : null;
-  if (coerced) return { doc: coerced, source: 'visionjson' };
+  if (coerced) {
+    if (coerced.version === 2 && !coerced.designSystem) {
+      const dsPayload = extractVisionDesignSystemPayload(markdown);
+      const fallbackDs = dsPayload ? parseVisionDesignSystemPayload(dsPayload) : null;
+      if (fallbackDs) {
+        return {
+          doc: { ...coerced, designSystem: fallbackDs },
+          source: 'visionjson',
+        };
+      }
+    }
+    return { doc: coerced, source: 'visionjson' };
+  }
+  const dsPayload = extractVisionDesignSystemPayload(markdown);
+  const fallbackDs = dsPayload ? parseVisionDesignSystemPayload(dsPayload) : null;
+  if (fallbackDs) return { doc: { version: 2, designSystem: fallbackDs }, source: 'default' };
   return { doc: defaultVisionDoc(), source: 'default' };
 }
 
@@ -143,11 +169,14 @@ export function saveVisionDoc(markdown: string, doc: VisionDoc): string {
   // file size and can freeze the browser during save/parse cycles.
   const payload = JSON.stringify(doc);
   const block = ['```visionjson', payload, '```'].join('\n');
-  if (getVisionJsonFullBlockRegex().test(text)) {
-    return text.replace(getVisionJsonFullBlockRegex(), block);
-  }
-  const needsLeadingNewline = text.length > 0 && !text.endsWith('\n');
-  const sep = text.trim().length === 0 ? '' : '\n\n';
-  return text + (needsLeadingNewline ? '\n' : '') + sep + block + '\n';
-}
+  const afterVisionJson = getVisionJsonFullBlockRegex().test(text)
+    ? text.replace(getVisionJsonFullBlockRegex(), block)
+    : (() => {
+        const needsLeadingNewline = text.length > 0 && !text.endsWith('\n');
+        const sep = text.trim().length === 0 ? '' : '\n\n';
+        return text + (needsLeadingNewline ? '\n' : '') + sep + block + '\n';
+      })();
 
+  const designSystem = doc && (doc as any).version === 2 ? coerceVisionDesignSystem((doc as any).designSystem) : null;
+  return upsertVisionDesignSystemBlocks(afterVisionJson, designSystem);
+}
