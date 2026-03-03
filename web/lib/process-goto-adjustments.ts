@@ -31,7 +31,7 @@ export function adjustGotoLayoutAndRouting(opts: {
   const routeHintsByGotoId: Record<string, GotoRouteMode> = {};
   const reversedBranchEdgeByKey: Record<string, true> = {};
   const requestedAxisByTarget = new Map<string, number>();
-  const excludedChildRootsByTarget = new Map<string, Set<string>>();
+  const excludedSubtreeRootsByTarget = new Map<string, Set<string>>();
   const baseAxisById = new Map<string, number>();
 
   Object.entries(layout).forEach(([id, l]) => {
@@ -43,7 +43,8 @@ export function adjustGotoLayoutAndRouting(opts: {
     while (cur?.parentId) {
       const parent = nodeMap.get(cur.parentId);
       if (!parent) return null;
-      if (processNodeTypes[parent.id] === 'validation' && parent.children.length >= 2) {
+      const parentType = processNodeTypes[parent.id];
+      if (parentType === 'validation' || parentType === 'branch') {
         return parent;
       }
       cur = parent;
@@ -132,13 +133,13 @@ export function adjustGotoLayoutAndRouting(opts: {
       requestedAxisByTarget.set(targetId, gotoAxis);
     }
 
-    // If target is an ancestor of the goto node, do not shift the goto-containing branch.
-    // Otherwise the goto anchor moves together with target and alignment cannot converge.
-    const protectedChild = getDirectChildOnPath(targetId, gotoId);
-    if (protectedChild) {
-      const set = excludedChildRootsByTarget.get(targetId) || new Set<string>();
-      set.add(protectedChild);
-      excludedChildRootsByTarget.set(targetId, set);
+    // If target is an ancestor of the goto path, do not shift only the validation child branch
+    // that leads to goto. Keep other descendants movable.
+    const gotoBranchRoot = getDirectChildOnPath(validation.id, gotoId);
+    if (gotoBranchRoot && isDescendantOf(targetId, gotoBranchRoot)) {
+      const set = excludedSubtreeRootsByTarget.get(targetId) || new Set<string>();
+      set.add(gotoBranchRoot);
+      excludedSubtreeRootsByTarget.set(targetId, set);
     }
   });
 
@@ -161,7 +162,7 @@ export function adjustGotoLayoutAndRouting(opts: {
     if (!delta || !Number.isFinite(delta) || delta <= 0) return;
     const targetNode = nodeMap.get(targetId);
     if (!targetNode) return;
-    const excludedChildren = excludedChildRootsByTarget.get(targetId) || new Set<string>();
+    const excludedRoots = excludedSubtreeRootsByTarget.get(targetId) || new Set<string>();
 
     const targetLayout = adjustedLayout[targetId];
     if (targetLayout) {
@@ -173,9 +174,7 @@ export function adjustGotoLayoutAndRouting(opts: {
 
     const stack: string[] = [];
     targetNode.children.forEach((child) => {
-      if (!excludedChildren.has(child.id)) {
-        stack.push(child.id);
-      }
+      stack.push(child.id);
     });
     const visited = new Set<string>();
 
@@ -183,6 +182,7 @@ export function adjustGotoLayoutAndRouting(opts: {
       const currentId = stack.pop()!;
       if (visited.has(currentId)) continue;
       visited.add(currentId);
+      if (excludedRoots.has(currentId)) continue;
 
       const l = adjustedLayout[currentId];
       if (l) {
