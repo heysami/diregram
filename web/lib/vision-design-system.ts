@@ -1479,12 +1479,34 @@ export function deriveDesignSystemTokens(spec: VisionDesignSystemV1): VisionDesi
   const buttonBgBase = variance >= 0.6 ? accentButtonCandidate : primaryItemColor;
   const buttonBg = wireframeMix > 0.75 ? mix(buttonBgBase, surfaceBg, 0.45) : buttonBgBase;
   const buttonText = ensureContrastText(buttonBg, '#ffffff', 4.5);
-  const deriveActionOnSurfaces = (surfacesHex: string[], desiredBgHex: string) => {
+  const deriveActionOnSurfaces = (
+    surfacesHex: string[],
+    desiredBgHex: string,
+    opts?: {
+      tonalOnBold?: boolean;
+    },
+  ) => {
     const surfaces = surfacesHex.length
       ? surfacesHex.map((surfaceHex) => normalizeHex(surfaceHex, '#0f172a'))
       : ['#0f172a'];
     const desired = normalizeHex(desiredBgHex, '#3b82f6');
     const surfaceAvg = surfaces.reduce((acc, s) => mix(acc, s, 0.5), surfaces[0] || '#0f172a');
+    if (opts?.tonalOnBold) {
+      let bg = mix(surfaceAvg, '#0f172a', 0.2);
+      let separation = Math.min(...surfaces.map((surface) => contrastRatio(bg, surface)));
+      if (separation < 1.05) {
+        bg = mix(surfaceAvg, '#0f172a', 0.3);
+        separation = Math.min(...surfaces.map((surface) => contrastRatio(bg, surface)));
+      }
+      if (separation < 1.05) {
+        bg = mix(surfaceAvg, '#ffffff', 0.12);
+      }
+      return {
+        bg,
+        text: ensureContrastText(bg, '#ffffff', 4.5),
+        border: 'transparent',
+      };
+    }
     const desiredText = ensureContrastText(desired, '#ffffff', 4.5);
     const desiredSurfaceContrast = Math.min(...surfaces.map((surface) => contrastRatio(desired, surface)));
     let bg = desired;
@@ -1508,7 +1530,8 @@ export function deriveDesignSystemTokens(spec: VisionDesignSystemV1): VisionDesi
   };
   const topSurfaceRef = String(topNavBg).startsWith('linear-gradient') ? topGradientRef : normalizeHex(topNavBg, panelBg);
   const leftSurfaceRef = String(leftNavBg).startsWith('linear-gradient') ? leftGradientRef : normalizeHex(leftNavBg, surfaceBg);
-  const unifiedNavAction = deriveActionOnSurfaces([topSurfaceRef, leftSurfaceRef], buttonBg);
+  const useTonalNavActions = boldIntent >= 0.5 && boldZonePolicy !== 'neutral';
+  const unifiedNavAction = deriveActionOnSurfaces([topSurfaceRef, leftSurfaceRef], buttonBg, { tonalOnBold: useTonalNavActions });
 
   const darkCfg = controls.darkMode;
   const darkPrimaryAuto = mix(primary, '#93c5fd', 0.26);
@@ -1572,7 +1595,9 @@ export function deriveDesignSystemTokens(spec: VisionDesignSystemV1): VisionDesi
   const darkTopSurfaceRef = String(darkTopNavBg).startsWith('linear-gradient') ? mix(darkPrimary, darkAccent, 0.5) : normalizeHex(darkTopNavBg, darkPanelBg);
   const darkLeftSurfaceRef =
     String(darkLeftNavBg).startsWith('linear-gradient') ? mix(darkPrimary, '#0f172a', 0.36) : normalizeHex(darkLeftNavBg, darkSurfaceBg);
-  const darkUnifiedNavAction = deriveActionOnSurfaces([darkTopSurfaceRef, darkLeftSurfaceRef], darkButtonBg);
+  const darkUnifiedNavAction = deriveActionOnSurfaces([darkTopSurfaceRef, darkLeftSurfaceRef], darkButtonBg, {
+    tonalOnBold: useTonalNavActions,
+  });
   const darkItemColors = itemColors
     .map((color, idx) => {
       const anchor = idx === 0 ? darkPrimary : darkAccent;
