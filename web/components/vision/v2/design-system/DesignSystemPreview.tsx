@@ -1,22 +1,27 @@
 'use client';
 
 import type { CSSProperties } from 'react';
-import { deriveDesignSystemTokens, type VisionDesignSystemV1 } from '@/lib/vision-design-system';
+import { deriveDesignSystemTokens, type VisionDesignSystemV1, type VisionTypographyTokenV1 } from '@/lib/vision-design-system';
 
 type Props = {
   value: VisionDesignSystemV1;
 };
 
-function t(token: string, fallback: number, value: VisionDesignSystemV1) {
-  const derived = value.derived || deriveDesignSystemTokens(value);
-  const item = derived.typography.tokens.find((x) => x.token === token);
-  return item?.sizePx || fallback;
+function getToken(tokens: VisionTypographyTokenV1[], token: VisionTypographyTokenV1['token']) {
+  return tokens.find((x) => x.token === token) || null;
 }
 
 export function DesignSystemPreview({ value }: Props) {
   const derived = value.derived || deriveDesignSystemTokens(value);
   const activeScenario = value.scenarios.find((s) => s.id === value.activeScenarioId) || value.scenarios[0];
   const activeImage = value.foundations.imageProfiles[0] || null;
+  const uiRatio = activeScenario?.ratios.find((r) => r.scope === 'ui' || r.scope === 'all') || activeScenario?.ratios[0];
+
+  const caption = getToken(derived.typography.tokens, 'caption');
+  const label = getToken(derived.typography.tokens, 'label');
+  const body = getToken(derived.typography.tokens, 'body');
+  const h4 = getToken(derived.typography.tokens, 'h4');
+  const h2 = getToken(derived.typography.tokens, 'h2');
 
   const vars = {
     '--vds-font-family': value.foundations.fontFamily,
@@ -34,40 +39,70 @@ export function DesignSystemPreview({ value }: Props) {
     '--vds-btn-bg': derived.preview.buttonBg,
     '--vds-btn-text': derived.preview.buttonText,
     '--vds-shadow': derived.preview.shadow,
+    '--vds-radius-xs': `${derived.shape.radiusXs}px`,
+    '--vds-radius-sm': `${derived.shape.radiusSm}px`,
+    '--vds-radius-md': `${derived.shape.radiusMd}px`,
+    '--vds-radius-lg': `${derived.shape.radiusLg}px`,
+    '--vds-radius-xl': `${derived.shape.radiusXl}px`,
     '--vds-radius-card': `${derived.shape.cardRadius}px`,
     '--vds-radius-button': `${derived.shape.buttonRadius}px`,
     '--vds-radius-input': `${derived.shape.inputRadius}px`,
+    '--vds-radius-pill': '999px',
     '--vds-gap': `${derived.spacing.gapPx}px`,
+    '--vds-stack': `${derived.spacing.stackPx}px`,
+    '--vds-compact': `${derived.spacing.compactPx}px`,
+    '--vds-micro': `${derived.spacing.microPx}px`,
     '--vds-around': `${derived.spacing.aroundPx}px`,
     '--vds-inside': `${derived.spacing.insidePx}px`,
     '--vds-border-width': `${derived.effects.borderWidth}px`,
     '--vds-border-style': derived.effects.borderStyle,
+    '--vds-card-usage': `${derived.composition.cardUsage}`,
+    '--vds-zone-contrast': `${derived.composition.zoneContrast}`,
+    '--vds-line-opacity': `${derived.effects.wireframeLineOpacity}`,
+    '--vds-fill-opacity': `${derived.effects.wireframeFillOpacity}`,
+    '--vds-gradient-strength': `${derived.effects.gradientStrength}`,
+    '--vds-bevel-strength': `${derived.effects.bevelStrength}`,
+    '--vds-gloss-strength': `${derived.effects.glossStrength}`,
+    '--vds-inner-shadow-strength': `${derived.effects.innerShadowStrength}`,
     '--vds-negative-bg': derived.negativeZone.background,
+    '--vds-type-caption-size': `${caption?.sizePx || 12}px`,
+    '--vds-type-caption-weight': `${caption?.weight || 400}`,
+    '--vds-type-label-size': `${label?.sizePx || 13}px`,
+    '--vds-type-label-weight': `${label?.weight || 500}`,
+    '--vds-type-body-size': `${body?.sizePx || 15}px`,
+    '--vds-type-body-weight': `${body?.weight || 400}`,
+    '--vds-type-subtitle-size': `${h4?.sizePx || 20}px`,
+    '--vds-type-subtitle-weight': `${h4?.weight || 600}`,
+    '--vds-type-title-size': `${h2?.sizePx || 28}px`,
+    '--vds-type-title-weight': `${h2?.weight || 720}`,
   } as CSSProperties;
 
-  const headingSize = t('h2', 24, value);
-  const subHeadingSize = t('h4', 18, value);
-  const bodySize = t('body', 14, value);
-
   return (
-    <div className="vds-preview" style={vars}>
+    <div
+      className="vds-preview"
+      style={vars}
+      data-carded={derived.composition.cardUsage > 0.5 ? '1' : '0'}
+      data-wireframe={derived.effects.wireframeMix > 0.6 ? '1' : '0'}
+      data-visual-range={derived.effects.visualRangeMix > 0.55 ? '1' : '0'}
+      data-skeuo={derived.effects.materialBudget > 0.5 ? '1' : '0'}
+    >
       <section className="vds-preview-card">
-        <div className="vds-preview-card__title">Theme summary</div>
-        <div className="vds-summary-grid" style={{ fontSize: `${bodySize}px` }}>
+        <div className="vds-preview-card__title">Design system summary</div>
+        <div className="vds-summary-grid">
           <div>
             <strong>Scenario</strong>
             <p>{activeScenario?.name || 'Base'}</p>
           </div>
           <div>
-            <strong>Zone policy</strong>
+            <strong>Bold zone policy</strong>
             <p>{derived.composition.boldZonePolicy}</p>
           </div>
           <div>
-            <strong>Saturation</strong>
+            <strong>Saturation policy</strong>
             <p>{derived.composition.saturationPolicy}</p>
           </div>
           <div>
-            <strong>Variance</strong>
+            <strong>Variance level</strong>
             <p>{derived.composition.varianceLevel}</p>
           </div>
           <div>
@@ -79,6 +114,17 @@ export function DesignSystemPreview({ value }: Props) {
             <p>{Math.round(derived.composition.cardUsage * 100)}%</p>
           </div>
         </div>
+        {uiRatio ? (
+          <div className="vds-ratio-preview">
+            <div className="vds-ratio-preview__label">UI color ratio</div>
+            <div className="vds-ratio-bar">
+              <span style={{ width: `${uiRatio.neutralPct}%` }} className="is-neutral" />
+              <span style={{ width: `${uiRatio.primaryPct}%` }} className="is-primary" />
+              <span style={{ width: `${uiRatio.accentPct}%` }} className="is-accent" />
+              <span style={{ width: `${uiRatio.semanticPct}%` }} className="is-semantic" />
+            </div>
+          </div>
+        ) : null}
       </section>
 
       <section className="vds-preview-shell">
@@ -99,12 +145,8 @@ export function DesignSystemPreview({ value }: Props) {
             <div className="vds-nav-item">Settings</div>
           </aside>
           <main className="vds-shell-content">
-            <div className="vds-shell-headline" style={{ fontSize: `${headingSize}px` }}>
-              Weekly operational snapshot
-            </div>
-            <div className="vds-shell-subtitle" style={{ fontSize: `${subHeadingSize}px` }}>
-              Navigation and edge zones respond to boldness and zoning controls.
-            </div>
+            <div className="vds-shell-headline">Weekly operational snapshot</div>
+            <div className="vds-shell-subtitle">Type scale, edge-zone boldness, and zoning depth respond to your controls.</div>
             <div className="vds-kpi-grid">
               <div className="vds-kpi-card">
                 <div>Conversion</div>
@@ -126,17 +168,19 @@ export function DesignSystemPreview({ value }: Props) {
       <section className="vds-preview-grid">
         <article className="vds-preview-card">
           <div className="vds-preview-card__title">Tabs and segmented controls</div>
-          <div className={[ 'vds-tabs', derived.composition.cardUsage > 0.5 ? 'is-bookmark' : 'is-underline' ].join(' ')}>
-            <button type="button" className="is-active">Summary</button>
+          <div className={['vds-tabs', derived.composition.cardUsage > 0.5 ? 'is-bookmark' : 'is-underline'].join(' ')}>
+            <button type="button" className="is-active">
+              Summary
+            </button>
             <button type="button">Breakdown</button>
             <button type="button">Forecast</button>
           </div>
-          <div className="vds-preview-note">Flatness changes this from lightweight underlines to heavier tab surfaces.</div>
+          <div className="vds-preview-note">Flatness + softness combine to shift between line tabs and heavier tab surfaces.</div>
         </article>
 
         <article className="vds-preview-card">
           <div className="vds-preview-card__title">List vs card treatment</div>
-          <div className="vds-list-preview" data-carded={derived.composition.cardUsage > 0.5 ? '1' : '0'}>
+          <div className="vds-list-preview">
             <div className="vds-list-row">
               <span>Order #1287</span>
               <span>Shipped</span>
@@ -176,7 +220,7 @@ export function DesignSystemPreview({ value }: Props) {
 
         <article className="vds-preview-card">
           <div className="vds-preview-card__title">Table density sample</div>
-          <table className="vds-table" style={{ fontSize: `${bodySize}px` }}>
+          <table className="vds-table">
             <thead>
               <tr>
                 <th>User</th>
@@ -202,6 +246,18 @@ export function DesignSystemPreview({ value }: Props) {
               </tr>
             </tbody>
           </table>
+        </article>
+
+        <article className="vds-preview-card">
+          <div className="vds-preview-card__title">Accent variance sample</div>
+          <div className="vds-chip-row">
+            {(derived.color.accents.length ? derived.color.accents : [derived.color.primary]).map((color, i) => (
+              <span key={`${color}-${i}`} className="vds-chip" style={{ background: color }}>
+                Accent {i + 1}
+              </span>
+            ))}
+          </div>
+          <div className="vds-preview-note">Higher color variance enables more accent families and broader hue spread.</div>
         </article>
 
         <article className="vds-preview-card">

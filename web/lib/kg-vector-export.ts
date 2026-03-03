@@ -472,6 +472,8 @@ function exportVisionSemanticKg(opts: {
           saturation: controls.saturation,
           colorVariance: controls.colorVariance,
           colorBleed: controls.colorBleed,
+          colorBleedTone: controls.colorBleedTone,
+          colorBleedCustom: controls.colorBleedCustom,
           wireframeFeeling: controls.wireframeFeeling,
           visualRange: controls.visualRange,
           skeuomorphism: controls.skeuomorphism,
@@ -494,6 +496,7 @@ function exportVisionSemanticKg(opts: {
         `Spacing: pattern ${controls?.spacing?.pattern || 0}, density ${controls?.spacing?.density || 0}, aroundVsInside ${controls?.spacing?.aroundVsInside || 0}`,
         `Flatness ${controls?.flatness || 0}, Zoning ${controls?.zoning || 0}, Softness ${controls?.softness || 0}`,
         `Saturation ${controls?.saturation || 0}, Variance ${controls?.colorVariance || 0}, Bleed ${controls?.colorBleed || 0}`,
+        `Bleed tone ${controls?.colorBleedTone || 'primary'} (${controls?.colorBleedCustom || ''})`,
         `Wireframe ${controls?.wireframeFeeling || 0}, VisualRange ${controls?.visualRange || 0}, Skeuomorphism ${controls?.skeuomorphism || 0}`,
         `NegativeZoneStyle ${controls?.negativeZoneStyle || 0}, Boldness ${controls?.boldness || 0}`,
       ]
