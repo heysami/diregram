@@ -4563,15 +4563,16 @@ export function NexusCanvas({
 
                 // Special visual behavior: when a process-flow "goto" node is collapsed into a fake line,
                 // the incoming connector should NOT render an arrowhead.
+                const reverseBranchArrow =
+                  isProcessConnector && isProcessFlowModeEnabled && !!gotoReversedBranchEdges[connectorKey];
                 const hideArrowForCollapsedGoto =
                   isProcessConnector &&
                   isProcessFlowModeEnabled &&
                   childType === 'goto' &&
                   !!gotoTargets[node.id] &&
                   selectedNodeId !== node.id &&
-                  isShowFlowOnForNode(node.id);
-                const reverseBranchArrow =
-                  isProcessConnector && isProcessFlowModeEnabled && !!gotoReversedBranchEdges[connectorKey];
+                  isShowFlowOnForNode(node.id) &&
+                  !reverseBranchArrow;
 
                 const isConnectorHighlighted =
                   selectedNodeId === node.id ||
