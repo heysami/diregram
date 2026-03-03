@@ -426,6 +426,12 @@ create table if not exists public.async_jobs (
   heartbeat_at timestamptz
 );
 
+-- Ensure existing databases refresh the kind check (table may have been created before new kinds existed).
+alter table public.async_jobs drop constraint if exists async_jobs_kind_check;
+alter table public.async_jobs
+  add constraint async_jobs_kind_check
+  check (kind in ('rag_ingest', 'rag_ingest_jwt', 'docling_convert', 'ai_file_generation', 'ai_grid_rule'));
+
 create index if not exists async_jobs_status_run_idx
   on public.async_jobs (status, run_after, created_at);
 

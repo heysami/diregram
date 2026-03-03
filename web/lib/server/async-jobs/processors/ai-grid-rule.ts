@@ -250,6 +250,13 @@ export async function runAiGridRuleJob(job: AsyncJobRow): Promise<Record<string,
 
   const updatedCount = updates.filter((u) => u.ok).length;
   const failedCount = updates.length - updatedCount;
+  if (updatedCount === 0 && failedCount > 0) {
+    const first = updates.find((u) => !u.ok && u.error)?.error || 'No values generated';
+    throw new Error(`All rows failed: ${String(first).slice(0, 500)}`);
+  }
+  if (updatedCount > 0 && !appliedToFile) {
+    throw new Error('Generated values but failed to apply updates to the grid file (concurrency conflict).');
+  }
   return {
     ok: true,
     fileId,

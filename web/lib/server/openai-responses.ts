@@ -9,7 +9,35 @@ type OpenAIResponsesInputItem = {
 
 type OpenAIResponsesOutput = {
   output_text?: string;
+  output?: unknown;
+  error?: unknown;
 };
+
+type ResponsesContentItem = {
+  type?: string;
+  text?: string;
+};
+
+type ResponsesOutputItem = {
+  type?: string;
+  content?: unknown;
+};
+
+function extractResponseText(json: OpenAIResponsesOutput): string {
+  const direct = String(json.output_text || '').trim();
+  if (direct) return direct;
+
+  const output = Array.isArray(json.output) ? (json.output as ResponsesOutputItem[]) : [];
+  const chunks: string[] = [];
+  output.forEach((item) => {
+    const content = Array.isArray(item?.content) ? (item.content as ResponsesContentItem[]) : [];
+    content.forEach((part) => {
+      const t = String(part?.text || '').trim();
+      if (t) chunks.push(t);
+    });
+  });
+  return chunks.join('\n').trim();
+}
 
 type RagMatchRow = {
   owner_id: string;
@@ -61,7 +89,10 @@ export async function runOpenAIResponsesText(
     throw new Error(`OpenAI responses failed (${res.status}): ${msg || res.statusText}`);
   }
   const json = (await res.json()) as OpenAIResponsesOutput;
-  return String(json.output_text || '').trim();
+  const text = extractResponseText(json);
+  if (text) return text;
+  const err = json.error && typeof json.error === 'object' ? JSON.stringify(json.error).slice(0, 600) : String(json.error || '').trim();
+  throw new Error(`OpenAI responses returned empty output${err ? `: ${err}` : ''}`);
 }
 
 export async function queryProjectKbContext(input: {

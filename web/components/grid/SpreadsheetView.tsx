@@ -250,6 +250,7 @@ export function SpreadsheetView({
   const [aiRulesBusy, setAiRulesBusy] = useState(false);
   const [aiRulesError, setAiRulesError] = useState<string | null>(null);
   const [editingRuleId, setEditingRuleId] = useState<string | null>(null);
+  const [ruleDraftTableId, setRuleDraftTableId] = useState<string>('');
   const [ruleDraft, setRuleDraft] = useState<{
     name: string;
     mode: 'derive' | 'research';
@@ -665,6 +666,7 @@ export function SpreadsheetView({
     const sourceCols = activeTableDataCols.slice(0, Math.max(1, activeTableDataCols.length - 1));
     const targetCol = activeTableDataCols[activeTableDataCols.length - 1] || activeTableDataCols[0] || '';
     setEditingRuleId(null);
+    setRuleDraftTableId(activeTable.id);
     setRuleDraft({
       name: `AI rule ${aiRules.length + 1}`,
       mode: 'derive',
@@ -678,6 +680,7 @@ export function SpreadsheetView({
 
   const startEditAiRule = useCallback((rule: GridAiRuleV1) => {
     setEditingRuleId(rule.id);
+    setRuleDraftTableId(rule.tableId);
     setRuleDraft({
       name: rule.name,
       mode: rule.mode,
@@ -690,8 +693,9 @@ export function SpreadsheetView({
   }, []);
 
   const saveAiRuleDraft = useCallback(() => {
-    if (!activeTable) {
-      topToast.show('Select a table first.');
+    const tableId = String(ruleDraftTableId || '').trim();
+    if (!tableId) {
+      topToast.show('Pick a table first.');
       return;
     }
     const prompt = String(ruleDraft.prompt || '').trim();
@@ -704,7 +708,7 @@ export function SpreadsheetView({
     const nextRule: GridAiRuleV1 = {
       id: editingRuleId || `airule-${Date.now()}`,
       name,
-      tableId: activeTable.id,
+      tableId,
       mode: ruleDraft.mode === 'research' ? 'research' : 'derive',
       prompt,
       sourceColumnIds,
@@ -718,7 +722,7 @@ export function SpreadsheetView({
     updateSheetAiRules(nextRules);
     setEditingRuleId(null);
     topToast.show('Rule saved');
-  }, [activeTable, ruleDraft, editingRuleId, aiRules, updateSheetAiRules, topToast]);
+  }, [ruleDraftTableId, ruleDraft, editingRuleId, aiRules, updateSheetAiRules, topToast]);
 
   const deleteAiRule = useCallback(
     (ruleId: string) => {
@@ -2322,7 +2326,7 @@ export function SpreadsheetView({
               ? () => {
                   setAiRulesError(null);
                   setAiRulesOpen(true);
-                  if (!editingRuleId) startCreateAiRule();
+                  if (!editingRuleId && activeTable) startCreateAiRule();
                 }
               : undefined
           }
@@ -2416,6 +2420,7 @@ export function SpreadsheetView({
             </div>
             <div className="p-4 space-y-3 overflow-auto max-h-[calc(88vh-90px)]">
               <div className="text-xs opacity-80">Rules are saved on this sheet. Run against selected rows or visible rows.</div>
+              {!activeTable ? <div className="text-xs mac-double-outline p-2">Select a table in the grid to create a new rule.</div> : null}
               {aiRulesError ? <div className="text-xs mac-double-outline p-2">{aiRulesError}</div> : null}
 
               <div className="space-y-2">
