@@ -687,6 +687,9 @@
   height: calc(32px + var(--vds-compact, 8px));
   background: var(--vds-top-nav-bg);
   color: var(--vds-top-nav-text);
+  --vds-shell-action-bg: var(--vds-top-action-bg, var(--vds-btn-bg));
+  --vds-shell-action-text: var(--vds-top-action-text, var(--vds-btn-text));
+  --vds-shell-action-border: var(--vds-top-action-border, color-mix(in oklab, var(--vds-btn-bg) 72%, #000));
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -703,24 +706,6 @@
   opacity: 0.92;
 }
 
-.vds-shell-topbar__action {
-  height: calc(22px + var(--vds-micro, 4px) * 0.5);
-  border: 1px solid color-mix(in oklab, var(--vds-separator) 24%, transparent);
-  border-radius: var(--vds-radius-sm, 8px);
-  padding: 0 calc(var(--vds-compact, 8px) * 0.72);
-  background: color-mix(in oklab, var(--vds-surface) 76%, white);
-  color: var(--vds-text-primary, #0f172a);
-  font-size: var(--vds-type-caption-size, 12px);
-  font-weight: var(--vds-type-label-weight, 600);
-  line-height: 1;
-}
-
-.vds-shell-topbar__action.is-primary {
-  background: var(--vds-btn-bg);
-  color: var(--vds-btn-text);
-  border-color: color-mix(in oklab, var(--vds-btn-bg) 72%, #000);
-}
-
 .vds-shell-body {
   display: grid;
   grid-template-columns: 170px 1fr;
@@ -730,6 +715,9 @@
 .vds-shell-leftnav {
   background: var(--vds-left-nav-bg);
   color: var(--vds-left-nav-text);
+  --vds-shell-action-bg: var(--vds-left-action-bg, var(--vds-btn-bg));
+  --vds-shell-action-text: var(--vds-left-action-text, var(--vds-btn-text));
+  --vds-shell-action-border: var(--vds-left-action-border, color-mix(in oklab, var(--vds-btn-bg) 72%, #000));
   padding: var(--vds-around, 14px) var(--vds-compact, 8px);
   display: flex;
   flex-direction: column;
@@ -741,20 +729,20 @@
   padding-top: calc(var(--vds-gap, 12px) * 0.7);
 }
 
-.vds-shell-leftnav__action {
-  width: 100%;
-  height: calc(28px + var(--vds-micro, 4px) * 0.56);
-  border: 1px solid color-mix(in oklab, var(--vds-separator) 24%, transparent);
+.vds-shell-action {
+  height: calc(26px + var(--vds-micro, 4px) * 0.56);
+  border: 1px solid var(--vds-shell-action-border, color-mix(in oklab, var(--vds-separator) 24%, transparent));
   border-radius: var(--vds-radius-button, 10px);
   padding: 0 calc(var(--vds-compact, 8px) * 0.8);
+  background: var(--vds-shell-action-bg, color-mix(in oklab, var(--vds-surface) 76%, white));
+  color: var(--vds-shell-action-text, var(--vds-text-primary, #0f172a));
   font-size: var(--vds-type-label-size, 13px);
   font-weight: var(--vds-type-label-weight, 600);
+  line-height: 1;
 }
 
-.vds-shell-leftnav__action.is-primary {
-  background: var(--vds-btn-bg);
-  color: var(--vds-btn-text);
-  border-color: color-mix(in oklab, var(--vds-btn-bg) 72%, #000);
+.vds-shell-action.is-block {
+  width: 100%;
 }
 
 .vds-nav-item {
@@ -1536,7 +1524,7 @@
     align-items: center;
   }
 
-  .vds-shell-leftnav__action {
+  .vds-shell-action.is-block {
     width: auto;
     white-space: nowrap;
   }

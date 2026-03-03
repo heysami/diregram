@@ -73,8 +73,14 @@ export function DesignSystemPreview({ value }: Props) {
     '--vds-text-muted': themeMode === 'dark' ? modeColor!.textMuted : derived.color.textMuted,
     '--vds-top-nav-bg': modePreview.topNavBg,
     '--vds-top-nav-text': modePreview.topNavText,
+    '--vds-top-action-bg': modePreview.topNavActionBg,
+    '--vds-top-action-text': modePreview.topNavActionText,
+    '--vds-top-action-border': modePreview.topNavActionBorder,
     '--vds-left-nav-bg': modePreview.leftNavBg,
     '--vds-left-nav-text': modePreview.leftNavText,
+    '--vds-left-action-bg': modePreview.leftNavActionBg,
+    '--vds-left-action-text': modePreview.leftNavActionText,
+    '--vds-left-action-border': modePreview.leftNavActionBorder,
     '--vds-content-bg': modePreview.contentBg,
     '--vds-card-bg': modePreview.cardBg,
     '--vds-card-border': modePreview.cardBorder,
@@ -242,7 +248,7 @@ export function DesignSystemPreview({ value }: Props) {
             <span>Global search</span>
             <span>Notifications</span>
             <span>User</span>
-            <button type="button" className="vds-shell-topbar__action is-primary">
+            <button type="button" className="vds-shell-action is-primary">
               New report
             </button>
           </div>
@@ -255,7 +261,7 @@ export function DesignSystemPreview({ value }: Props) {
             <div className="vds-nav-item">Billing</div>
             <div className="vds-nav-item">Settings</div>
             <div className="vds-shell-leftnav__actions">
-              <button type="button" className="vds-shell-leftnav__action is-primary">
+              <button type="button" className="vds-shell-action is-primary is-block">
                 + Create
               </button>
             </div>
