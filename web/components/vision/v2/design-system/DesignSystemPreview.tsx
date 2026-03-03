@@ -11,6 +11,10 @@ function getToken(tokens: VisionTypographyTokenV1[], token: VisionTypographyToke
   return tokens.find((x) => x.token === token) || null;
 }
 
+function colorAt(pool: string[], index: number, fallback: string) {
+  return pool[index % Math.max(pool.length, 1)] || fallback;
+}
+
 export function DesignSystemPreview({ value }: Props) {
   const derived = value.derived || deriveDesignSystemTokens(value);
   const activeScenario = value.scenarios.find((s) => s.id === value.activeScenarioId) || value.scenarios[0];
@@ -23,13 +27,28 @@ export function DesignSystemPreview({ value }: Props) {
   const h4 = getToken(derived.typography.tokens, 'h4');
   const h2 = getToken(derived.typography.tokens, 'h2');
 
+  const itemColors = derived.color.itemColors.length ? derived.color.itemColors : [derived.color.primary, ...derived.color.accents];
+  const fontVarianceLabel =
+    value.controls.fontVariance === 'singleDecorative'
+      ? 'Single + decorative'
+      : value.controls.fontVariance === 'splitHeading'
+        ? 'Split heading'
+        : value.controls.fontVariance === 'splitHeadingDecorative'
+          ? 'Split + decorative'
+          : 'Single font';
+
   const vars = {
-    '--vds-font-family': value.foundations.fontFamily,
+    '--vds-font-family': derived.typography.fontFamily,
+    '--vds-font-heading': derived.typography.headingFontFamily,
+    '--vds-font-decorative': derived.typography.decorativeFontFamily,
     '--vds-canvas': derived.color.canvasBg,
     '--vds-surface': derived.color.surfaceBg,
     '--vds-panel': derived.color.panelBg,
     '--vds-separator': derived.color.separator,
     '--vds-focus': derived.preview.focusColor,
+    '--vds-text-primary': derived.color.textPrimary,
+    '--vds-text-secondary': derived.color.textSecondary,
+    '--vds-text-muted': derived.color.textMuted,
     '--vds-top-nav-bg': derived.preview.topNavBg,
     '--vds-top-nav-text': derived.preview.topNavText,
     '--vds-left-nav-bg': derived.preview.leftNavBg,
@@ -39,6 +58,12 @@ export function DesignSystemPreview({ value }: Props) {
     '--vds-btn-bg': derived.preview.buttonBg,
     '--vds-btn-text': derived.preview.buttonText,
     '--vds-shadow': derived.preview.shadow,
+    '--vds-shadow-color': derived.preview.shadowColor,
+    '--vds-shadow-accent': derived.preview.shadowAccent,
+    '--vds-shadow-highlight': derived.preview.shadowHighlight,
+    '--vds-gradient-from': derived.preview.gradientFrom,
+    '--vds-gradient-mid': derived.preview.gradientMid,
+    '--vds-gradient-to': derived.preview.gradientTo,
     '--vds-radius-xs': `${derived.shape.radiusXs}px`,
     '--vds-radius-sm': `${derived.shape.radiusSm}px`,
     '--vds-radius-md': `${derived.shape.radiusMd}px`,
@@ -64,6 +89,12 @@ export function DesignSystemPreview({ value }: Props) {
     '--vds-bevel-strength': `${derived.effects.bevelStrength}`,
     '--vds-gloss-strength': `${derived.effects.glossStrength}`,
     '--vds-inner-shadow-strength': `${derived.effects.innerShadowStrength}`,
+    '--vds-flatness': `${derived.composition.cardUsage}`,
+    '--vds-zoning': `${derived.composition.zoneContrast}`,
+    '--vds-boldness': `${value.controls.boldness / 100}`,
+    '--vds-variance': `${value.controls.colorVariance / 100}`,
+    '--vds-surface-sat': `${value.controls.surfaceSaturation / 100}`,
+    '--vds-item-sat': `${value.controls.itemSaturation / 100}`,
     '--vds-negative-bg': derived.negativeZone.background,
     '--vds-type-caption-size': `${caption?.sizePx || 12}px`,
     '--vds-type-caption-weight': `${caption?.weight || 400}`,
@@ -75,6 +106,16 @@ export function DesignSystemPreview({ value }: Props) {
     '--vds-type-subtitle-weight': `${h4?.weight || 600}`,
     '--vds-type-title-size': `${h2?.sizePx || 28}px`,
     '--vds-type-title-weight': `${h2?.weight || 720}`,
+    '--vds-type-caption-opacity': `${derived.typography.captionOpacity}`,
+    '--vds-type-label-opacity': `${derived.typography.labelOpacity}`,
+    '--vds-type-body-opacity': `${derived.typography.bodyOpacity}`,
+    '--vds-type-subdued-opacity': `${derived.typography.subduedOpacity}`,
+    '--vds-item-color-1': colorAt(itemColors, 0, derived.color.primary),
+    '--vds-item-color-2': colorAt(itemColors, 1, derived.color.accents[0] || derived.color.primary),
+    '--vds-item-color-3': colorAt(itemColors, 2, derived.color.accents[1] || derived.color.primary),
+    '--vds-item-color-4': colorAt(itemColors, 3, derived.color.accents[2] || derived.color.primary),
+    '--vds-item-color-5': colorAt(itemColors, 4, derived.color.accents[0] || derived.color.primary),
+    '--vds-item-color-6': colorAt(itemColors, 5, derived.color.accents[1] || derived.color.primary),
   } as CSSProperties;
 
   return (
@@ -83,8 +124,14 @@ export function DesignSystemPreview({ value }: Props) {
       style={vars}
       data-carded={derived.composition.cardUsage > 0.5 ? '1' : '0'}
       data-wireframe={derived.effects.wireframeMix > 0.6 ? '1' : '0'}
+      data-wire-mode={derived.effects.wireframeMix < 0.18 ? 'low' : derived.effects.wireframeMix > 0.66 ? 'high' : 'mid'}
       data-visual-range={derived.effects.visualRangeMix > 0.55 ? '1' : '0'}
       data-skeuo={derived.effects.materialBudget > 0.5 ? '1' : '0'}
+      data-skeuo-style={value.controls.skeuomorphismStyle}
+      data-variance={value.controls.colorVariance > 60 ? 'high' : value.controls.colorVariance > 30 ? 'medium' : 'low'}
+      data-flat-mode={derived.composition.cardUsage < 0.34 ? 'line' : derived.composition.cardUsage < 0.67 ? 'mixed' : 'card'}
+      data-font-variance={value.controls.fontVariance}
+      data-flatness={Math.round(derived.composition.cardUsage * 100)}
     >
       <section className="vds-preview-card">
         <div className="vds-preview-card__title">Design system summary</div>
@@ -113,15 +160,32 @@ export function DesignSystemPreview({ value }: Props) {
             <strong>Card usage</strong>
             <p>{Math.round(derived.composition.cardUsage * 100)}%</p>
           </div>
+          <div>
+            <strong>Font variance</strong>
+            <p>{fontVarianceLabel}</p>
+          </div>
         </div>
         {uiRatio ? (
           <div className="vds-ratio-preview">
-            <div className="vds-ratio-preview__label">UI color ratio</div>
+            <div className="vds-ratio-preview__label">UI primitive ratio</div>
             <div className="vds-ratio-bar">
-              <span style={{ width: `${uiRatio.neutralPct}%` }} className="is-neutral" />
-              <span style={{ width: `${uiRatio.primaryPct}%` }} className="is-primary" />
-              <span style={{ width: `${uiRatio.accentPct}%` }} className="is-accent" />
-              <span style={{ width: `${uiRatio.semanticPct}%` }} className="is-semantic" />
+              {(uiRatio.primitiveBreakdown || []).map((entry) => {
+                const primitive = entry.primitiveId === 'primary' ? null : entry.primitiveId;
+                const color =
+                  entry.primitiveId === 'primary'
+                    ? 'var(--vds-item-color-1)'
+                    : primitive?.startsWith('slate-') || primitive?.startsWith('zinc-')
+                      ? '#d4d4d8'
+                      : undefined;
+                return <span key={entry.id} style={{ width: `${entry.pct}%`, background: color }} />;
+              })}
+            </div>
+            <div className="vds-ratio-preview__legend">
+              {(uiRatio.primitiveBreakdown || []).slice(0, 6).map((entry) => (
+                <span key={`${entry.id}-legend`}>
+                  {entry.primitiveId} {entry.pct}% ({entry.usage || 'all'})
+                </span>
+              ))}
             </div>
           </div>
         ) : null}
@@ -146,7 +210,7 @@ export function DesignSystemPreview({ value }: Props) {
           </aside>
           <main className="vds-shell-content">
             <div className="vds-shell-headline">Weekly operational snapshot</div>
-            <div className="vds-shell-subtitle">Type scale, edge-zone boldness, and zoning depth respond to your controls.</div>
+            <div className="vds-shell-subtitle">Type hierarchy, spacing rhythm, and zoning depth adapt in real time.</div>
             <div className="vds-kpi-grid">
               <div className="vds-kpi-card">
                 <div>Conversion</div>
@@ -167,6 +231,16 @@ export function DesignSystemPreview({ value }: Props) {
 
       <section className="vds-preview-grid">
         <article className="vds-preview-card">
+          <div className="vds-preview-card__title">Font variance showcase</div>
+          <div className="vds-font-showcase">
+            <div className="vds-font-decor-bg">KINETIC SIGNAL</div>
+            <div className="vds-font-tech-label">System narrative layer</div>
+            <h3 className="vds-font-hero-title">Adaptive commerce interface</h3>
+            <p className="vds-font-body-line">UI controls stay consistent while hero/decorative text can split by mode.</p>
+          </div>
+        </article>
+
+        <article className="vds-preview-card">
           <div className="vds-preview-card__title">Tabs and segmented controls</div>
           <div className={['vds-tabs', derived.composition.cardUsage > 0.5 ? 'is-bookmark' : 'is-underline'].join(' ')}>
             <button type="button" className="is-active">
@@ -175,23 +249,35 @@ export function DesignSystemPreview({ value }: Props) {
             <button type="button">Breakdown</button>
             <button type="button">Forecast</button>
           </div>
-          <div className="vds-preview-note">Flatness + softness combine to shift between line tabs and heavier tab surfaces.</div>
+          <div className="vds-preview-note">Flatness + softness shift from line tabs to heavier segmented tab bodies.</div>
         </article>
 
         <article className="vds-preview-card">
           <div className="vds-preview-card__title">List vs card treatment</div>
           <div className="vds-list-preview">
             <div className="vds-list-row">
-              <span>Order #1287</span>
-              <span>Shipped</span>
+              <span className="vds-dot" style={{ background: 'var(--vds-item-color-1)' }} />
+              <div className="vds-list-main">
+                <strong>Order #1287</strong>
+                <span>Priority fulfillment</span>
+              </div>
+              <span className="vds-list-state is-good">Shipped</span>
             </div>
             <div className="vds-list-row">
-              <span>Order #1288</span>
-              <span>Review</span>
+              <span className="vds-dot" style={{ background: 'var(--vds-item-color-2)' }} />
+              <div className="vds-list-main">
+                <strong>Order #1288</strong>
+                <span>Address mismatch</span>
+              </div>
+              <span className="vds-list-state is-warn">Review</span>
             </div>
             <div className="vds-list-row">
-              <span>Order #1289</span>
-              <span>Pending</span>
+              <span className="vds-dot" style={{ background: 'var(--vds-item-color-3)' }} />
+              <div className="vds-list-main">
+                <strong>Order #1289</strong>
+                <span>Awaiting payment</span>
+              </div>
+              <span className="vds-list-state is-muted">Pending</span>
             </div>
           </div>
         </article>
@@ -230,18 +316,36 @@ export function DesignSystemPreview({ value }: Props) {
             </thead>
             <tbody>
               <tr>
-                <td>Alex</td>
-                <td>Active</td>
+                <td>
+                  <span className="vds-dot" style={{ background: 'var(--vds-item-color-1)' }} /> Alex
+                </td>
+                <td>
+                  <span className="vds-table__tag" style={{ background: 'var(--vds-item-color-1)' }}>
+                    Active
+                  </span>
+                </td>
                 <td>94</td>
               </tr>
               <tr>
-                <td>Rina</td>
-                <td>Review</td>
+                <td>
+                  <span className="vds-dot" style={{ background: 'var(--vds-item-color-2)' }} /> Rina
+                </td>
+                <td>
+                  <span className="vds-table__tag" style={{ background: 'var(--vds-item-color-2)' }}>
+                    Review
+                  </span>
+                </td>
                 <td>81</td>
               </tr>
               <tr>
-                <td>Omar</td>
-                <td>Blocked</td>
+                <td>
+                  <span className="vds-dot" style={{ background: 'var(--vds-item-color-3)' }} /> Omar
+                </td>
+                <td>
+                  <span className="vds-table__tag" style={{ background: 'var(--vds-item-color-3)' }}>
+                    Blocked
+                  </span>
+                </td>
                 <td>55</td>
               </tr>
             </tbody>
@@ -249,15 +353,88 @@ export function DesignSystemPreview({ value }: Props) {
         </article>
 
         <article className="vds-preview-card">
-          <div className="vds-preview-card__title">Accent variance sample</div>
-          <div className="vds-chip-row">
-            {(derived.color.accents.length ? derived.color.accents : [derived.color.primary]).map((color, i) => (
-              <span key={`${color}-${i}`} className="vds-chip" style={{ background: color }}>
-                Accent {i + 1}
-              </span>
-            ))}
+          <div className="vds-preview-card__title">Semantic states</div>
+          <div className="vds-semantic-stack">
+            <div className="vds-semantic-card is-success">Success: Deployment is healthy</div>
+            <div className="vds-semantic-card is-warning">Warning: 3 items need review</div>
+            <div className="vds-semantic-card is-error">Error: Payment connection failed</div>
+            <div className="vds-semantic-card is-info">Info: New version available</div>
           </div>
-          <div className="vds-preview-note">Higher color variance enables more accent families and broader hue spread.</div>
+        </article>
+
+        <article className="vds-preview-card">
+          <div className="vds-preview-card__title">Button and badge variants</div>
+          <div className="vds-variant-row">
+            <button type="button" className="is-primary">
+              Primary
+            </button>
+            <button type="button" className="is-secondary">
+              Secondary
+            </button>
+            <button type="button" className="is-ghost">
+              Ghost
+            </button>
+          </div>
+          <div className="vds-chip-row">
+            <span className="vds-chip" style={{ background: 'var(--vds-item-color-1)' }}>
+              In progress
+            </span>
+            <span className="vds-chip" style={{ background: 'var(--vds-item-color-2)' }}>
+              On hold
+            </span>
+            <span className="vds-chip" style={{ background: 'var(--vds-item-color-3)' }}>
+              Completed
+            </span>
+          </div>
+        </article>
+
+        <article className="vds-preview-card">
+          <div className="vds-preview-card__title">Semantic feedback elements</div>
+          <div className="vds-alert-stack">
+            <div className="vds-alert is-success">
+              <strong>Success</strong>
+              <span>Inventory synced 2m ago</span>
+            </div>
+            <div className="vds-alert is-warning">
+              <strong>Warning</strong>
+              <span>2 shipments delayed</span>
+            </div>
+            <div className="vds-alert is-error">
+              <strong>Error</strong>
+              <span>Payment gateway timeout</span>
+            </div>
+            <div className="vds-alert is-info">
+              <strong>Info</strong>
+              <span>New SLA policy available</span>
+            </div>
+          </div>
+        </article>
+
+        <article className="vds-preview-card">
+          <div className="vds-preview-card__title">Activity feed and metadata</div>
+          <div className="vds-activity-list">
+            <div className="vds-activity-item">
+              <span className="vds-dot" style={{ background: 'var(--vds-item-color-1)' }} />
+              <div>
+                <strong>Build deployed</strong>
+                <p>api-gateway • 2 minutes ago</p>
+              </div>
+            </div>
+            <div className="vds-activity-item">
+              <span className="vds-dot" style={{ background: 'var(--vds-item-color-4)' }} />
+              <div>
+                <strong>Escalation opened</strong>
+                <p>Billing queue • 18 minutes ago</p>
+              </div>
+            </div>
+            <div className="vds-activity-item">
+              <span className="vds-dot" style={{ background: 'var(--vds-item-color-5)' }} />
+              <div>
+                <strong>Retention trend updated</strong>
+                <p>Analytics • 31 minutes ago</p>
+              </div>
+            </div>
+          </div>
         </article>
 
         <article className="vds-preview-card">

@@ -8,9 +8,18 @@ export type VisionSemanticPaletteV1 = {
 };
 
 export type VisionPalettePairingsV1 = {
+  primaryPrimitive?: string;
   accentPrimitives?: string[];
   neutralPrimitives?: string[];
   semanticPrimitives?: Partial<Record<keyof VisionSemanticPaletteV1, string>>;
+  primitiveOverrides?: Record<string, string>;
+};
+
+export type VisionPrimitiveRatioEntryV1 = {
+  id: string;
+  primitiveId: string;
+  pct: number;
+  usage?: 'surface' | 'item' | 'all';
 };
 
 export type VisionPaletteV1 = {
@@ -27,6 +36,7 @@ export type VisionColorRatioV1 = {
   primaryPct: number;
   accentPct: number;
   semanticPct: number;
+  primitiveBreakdown?: VisionPrimitiveRatioEntryV1[];
 };
 
 export type VisionColorScenarioV1 = {
@@ -51,7 +61,10 @@ export type VisionTypographyControlsV1 = {
   baseWeight: number;
   sizeGrowth: number;
   weightGrowth: number;
+  contrast: number;
 };
+
+export type VisionFontVarianceMode = 'single' | 'singleDecorative' | 'splitHeading' | 'splitHeadingDecorative';
 
 export type VisionSpacingControlsV1 = {
   pattern: number;
@@ -61,18 +74,22 @@ export type VisionSpacingControlsV1 = {
 
 export type VisionDesignSystemControlsV1 = {
   typography: VisionTypographyControlsV1;
+  fontVariance: VisionFontVarianceMode;
   spacing: VisionSpacingControlsV1;
   flatness: number;
   zoning: number;
   softness: number;
-  saturation: number;
+  surfaceSaturation: number;
+  itemSaturation: number;
   colorVariance: number;
   colorBleed: number;
   colorBleedTone: 'primary' | 'accent' | 'warm' | 'cool' | 'custom';
   colorBleedCustom: string;
+  colorBleedText: number;
   wireframeFeeling: number;
   visualRange: number;
   skeuomorphism: number;
+  skeuomorphismStyle: 'subtle' | 'neomorphic' | 'glass' | 'glow' | 'embossed';
   negativeZoneStyle: number;
   boldness: number;
 };
@@ -87,7 +104,15 @@ export type VisionTypographyTokenV1 = {
 export type VisionDesignSystemDerivedV1 = {
   typography: {
     fontFamily: string;
+    headingFontFamily: string;
+    decorativeFontFamily: string;
+    varianceMode: VisionFontVarianceMode;
     scale: number;
+    contrast: number;
+    captionOpacity: number;
+    labelOpacity: number;
+    bodyOpacity: number;
+    subduedOpacity: number;
     tokens: VisionTypographyTokenV1[];
   };
   spacing: {
@@ -123,9 +148,13 @@ export type VisionDesignSystemDerivedV1 = {
   color: {
     primary: string;
     accents: string[];
+    itemColors: string[];
     neutrals: string[];
     semantic: VisionSemanticPaletteV1;
     textOnPrimary: string;
+    textPrimary: string;
+    textSecondary: string;
+    textMuted: string;
     canvasBg: string;
     surfaceBg: string;
     panelBg: string;
@@ -164,6 +193,12 @@ export type VisionDesignSystemDerivedV1 = {
     buttonText: string;
     focusColor: string;
     shadow: string;
+    shadowColor: string;
+    shadowAccent: string;
+    shadowHighlight: string;
+    gradientFrom: string;
+    gradientMid: string;
+    gradientTo: string;
   };
 };
 
@@ -229,18 +264,171 @@ export type VisionGoogleFontOption = {
 
 export const VISION_GOOGLE_FONT_OPTIONS: VisionGoogleFontOption[] = [
   { id: 'inter', label: 'Inter', family: 'Inter, system-ui, sans-serif' },
-  { id: 'lexend', label: 'Lexend', family: 'Lexend, system-ui, sans-serif' },
-  { id: 'manrope', label: 'Manrope', family: 'Manrope, system-ui, sans-serif' },
-  { id: 'poppins', label: 'Poppins', family: 'Poppins, system-ui, sans-serif' },
-  { id: 'nunito-sans', label: 'Nunito Sans', family: 'Nunito Sans, system-ui, sans-serif' },
-  { id: 'source-sans-3', label: 'Source Sans 3', family: 'Source Sans 3, system-ui, sans-serif' },
-  { id: 'ibm-plex-sans', label: 'IBM Plex Sans', family: 'IBM Plex Sans, system-ui, sans-serif' },
-  { id: 'roboto', label: 'Roboto', family: 'Roboto, system-ui, sans-serif' },
-  { id: 'work-sans', label: 'Work Sans', family: 'Work Sans, system-ui, sans-serif' },
-  { id: 'space-grotesk', label: 'Space Grotesk', family: 'Space Grotesk, system-ui, sans-serif' },
-  { id: 'dm-sans', label: 'DM Sans', family: 'DM Sans, system-ui, sans-serif' },
   { id: 'plus-jakarta-sans', label: 'Plus Jakarta Sans', family: 'Plus Jakarta Sans, system-ui, sans-serif' },
+  { id: 'manrope', label: 'Manrope', family: 'Manrope, system-ui, sans-serif' },
+  { id: 'dm-sans', label: 'DM Sans', family: 'DM Sans, system-ui, sans-serif' },
+  { id: 'lexend', label: 'Lexend', family: 'Lexend, system-ui, sans-serif' },
+  { id: 'space-grotesk', label: 'Space Grotesk', family: 'Space Grotesk, system-ui, sans-serif' },
+  { id: 'sora', label: 'Sora', family: 'Sora, system-ui, sans-serif' },
+  { id: 'outfit', label: 'Outfit', family: 'Outfit, system-ui, sans-serif' },
+  { id: 'poppins', label: 'Poppins', family: 'Poppins, system-ui, sans-serif' },
+  { id: 'urbanist', label: 'Urbanist', family: 'Urbanist, system-ui, sans-serif' },
 ];
+
+export const VISION_DECORATIVE_FONT_OPTIONS: VisionGoogleFontOption[] = [
+  { id: 'bricolage-grotesque', label: 'Bricolage Grotesque', family: 'Bricolage Grotesque, system-ui, sans-serif' },
+  { id: 'caveat', label: 'Caveat', family: 'Caveat, cursive' },
+];
+
+function normalizeFontKey(family: string): string {
+  return String(family || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function hasFontToken(family: string, token: string): boolean {
+  const key = normalizeFontKey(family);
+  const query = normalizeFontKey(token);
+  return key.includes(query);
+}
+
+function pickHeadingCompanion(base: string): string {
+  if (hasFontToken(base, 'space grotesk') || hasFontToken(base, 'sora') || hasFontToken(base, 'lexend')) {
+    return 'Plus Jakarta Sans, system-ui, sans-serif';
+  }
+  if (hasFontToken(base, 'poppins') || hasFontToken(base, 'outfit')) {
+    return 'Space Grotesk, system-ui, sans-serif';
+  }
+  if (hasFontToken(base, 'dm sans') || hasFontToken(base, 'inter') || hasFontToken(base, 'manrope')) {
+    return 'Sora, system-ui, sans-serif';
+  }
+  return 'Space Grotesk, system-ui, sans-serif';
+}
+
+function pickDecorativeCompanion(base: string, mode: VisionFontVarianceMode): string {
+  if (mode === 'splitHeadingDecorative') return 'Caveat, cursive';
+  if (hasFontToken(base, 'space grotesk') || hasFontToken(base, 'sora')) return 'Bricolage Grotesque, system-ui, sans-serif';
+  return 'Bricolage Grotesque, system-ui, sans-serif';
+}
+
+function primitiveById(id: string): VisionPrimitiveColorOption | null {
+  const key = String(id || '').trim();
+  if (!key) return null;
+  return VISION_TAILWIND_PRIMITIVE_COLORS.find((it) => it.id === key) || null;
+}
+
+function parsePrimitiveId(id: string): { family: string; shade: number } | null {
+  const m = String(id || '').trim().toLowerCase().match(/^([a-z]+)-(\d{2,3})$/);
+  if (!m) return null;
+  const shade = Number(m[2]);
+  if (!Number.isFinite(shade)) return null;
+  return { family: m[1], shade };
+}
+
+function toneLightnessForShade(shade: number): number {
+  const anchors: Array<[number, number]> = [
+    [50, 0.97],
+    [100, 0.94],
+    [200, 0.88],
+    [300, 0.78],
+    [400, 0.67],
+    [500, 0.56],
+    [600, 0.47],
+    [700, 0.39],
+    [800, 0.31],
+    [900, 0.22],
+  ];
+  const target = clamp(Math.round(shade), 50, 900);
+  for (let i = 0; i < anchors.length - 1; i++) {
+    const [fromShade, fromL] = anchors[i]!;
+    const [toShade, toL] = anchors[i + 1]!;
+    if (target >= fromShade && target <= toShade) {
+      const t = (target - fromShade) / Math.max(1, toShade - fromShade);
+      return lerp(fromL, toL, t);
+    }
+  }
+  return target <= 50 ? 0.97 : 0.22;
+}
+
+function toneFromOverride(base: string, shade: number): string {
+  const normalizedBase = normalizeHex(base, '#2563eb');
+  const rgb = toRgb(normalizedBase);
+  const hsl = rgbToHsl(rgb.r, rgb.g, rgb.b);
+  const targetL = toneLightnessForShade(shade);
+  const satBoost = shade <= 200 ? 0.88 : shade >= 800 ? 0.92 : 1;
+  const toned = hslToRgb(hsl.h, clamp01(hsl.s * satBoost), targetL);
+  return rgbToHex(toned.r, toned.g, toned.b);
+}
+
+function resolvePrimitiveHex(id: string, pairings?: VisionPalettePairingsV1): string | null {
+  const key = String(id || '').trim();
+  if (!key || key === 'primary') return null;
+  const primitive = primitiveById(key);
+  if (!primitive) return null;
+  const parsed = parsePrimitiveId(key);
+  const family = parsed?.family || primitive.family;
+  const shade = parsed?.shade || primitive.shade;
+  const override = pairings?.primitiveOverrides?.[family];
+  if (!override) return primitive.hex;
+  return toneFromOverride(normalizeHex(override, primitive.hex), shade);
+}
+
+function ratioBreakdownFromLegacy(row: VisionColorRatioV1): VisionPrimitiveRatioEntryV1[] {
+  const out: VisionPrimitiveRatioEntryV1[] = [];
+  if (row.neutralPct > 0) out.push({ id: 'neutral', primitiveId: 'slate-100', pct: row.neutralPct, usage: 'surface' });
+  if (row.primaryPct > 0) out.push({ id: 'primary', primitiveId: 'primary', pct: row.primaryPct, usage: 'item' });
+  if (row.accentPct > 0) out.push({ id: 'accent', primitiveId: 'violet-600', pct: row.accentPct, usage: 'item' });
+  if (row.semanticPct > 0) out.push({ id: 'semantic', primitiveId: 'green-600', pct: row.semanticPct, usage: 'item' });
+  return out.length ? out : [{ id: 'neutral', primitiveId: 'slate-100', pct: 100, usage: 'surface' }];
+}
+
+function normalizeRatioBreakdown(value: unknown): VisionPrimitiveRatioEntryV1[] {
+  const rows = Array.isArray(value) ? value : [];
+  const out: VisionPrimitiveRatioEntryV1[] = [];
+  for (const it of rows) {
+    const r = it && typeof it === 'object' ? (it as Record<string, unknown>) : {};
+    const primitiveId = String(r.primitiveId || '').trim();
+    if (!primitiveId) continue;
+    const usageRaw = String(r.usage || '').trim();
+    const usage = usageRaw === 'surface' || usageRaw === 'item' || usageRaw === 'all' ? usageRaw : 'item';
+    out.push({
+      id: String(r.id || primitiveId || `ratio-${out.length + 1}`),
+      primitiveId,
+      pct: clampPercent(r.pct),
+      usage: usage as VisionPrimitiveRatioEntryV1['usage'],
+    });
+  }
+  return out;
+}
+
+function summarizeBreakdown(row: VisionColorRatioV1): Pick<VisionColorRatioV1, 'neutralPct' | 'primaryPct' | 'accentPct' | 'semanticPct'> {
+  const entries = row.primitiveBreakdown || [];
+  let neutralPct = 0;
+  let primaryPct = 0;
+  let accentPct = 0;
+  const semanticPct = 0;
+  for (const item of entries) {
+    const pct = clampPercent(item.pct);
+    if (item.primitiveId === 'primary') {
+      primaryPct += pct;
+      continue;
+    }
+    const primitive = primitiveById(item.primitiveId);
+    if (!primitive) {
+      accentPct += pct;
+      continue;
+    }
+    if (primitive.kind === 'neutral') neutralPct += pct;
+    else accentPct += pct;
+  }
+  return {
+    neutralPct: clamp(neutralPct, 0, 100),
+    primaryPct: clamp(primaryPct, 0, 100),
+    accentPct: clamp(accentPct, 0, 100),
+    semanticPct: clamp(semanticPct, 0, 100),
+  };
+}
 
 const DEFAULT_SEMANTIC: VisionSemanticPaletteV1 = {
   success: '#16a34a',
@@ -258,6 +446,7 @@ const DEFAULT_SCENARIO: VisionColorScenarioV1 = {
     neutral: ['#f8fafc', '#e2e8f0', '#64748b', '#0f172a'],
     semantic: { ...DEFAULT_SEMANTIC },
     pairings: {
+      primaryPrimitive: 'blue-600',
       accentPrimitives: ['violet-600', 'orange-500', 'teal-500'],
       neutralPrimitives: ['slate-50', 'slate-200', 'slate-600', 'slate-900'],
       semanticPrimitives: {
@@ -266,6 +455,7 @@ const DEFAULT_SCENARIO: VisionColorScenarioV1 = {
         error: 'red-600',
         info: 'blue-600',
       },
+      primitiveOverrides: {},
     },
   },
   ratios: [
@@ -275,6 +465,13 @@ const DEFAULT_SCENARIO: VisionColorScenarioV1 = {
       primaryPct: 16,
       accentPct: 6,
       semanticPct: 4,
+      primitiveBreakdown: [
+        { id: 'neutral-base', primitiveId: 'slate-100', pct: 52, usage: 'surface' },
+        { id: 'neutral-strong', primitiveId: 'slate-700', pct: 22, usage: 'surface' },
+        { id: 'primary', primitiveId: 'primary', pct: 16, usage: 'item' },
+        { id: 'accent-1', primitiveId: 'violet-600', pct: 6, usage: 'item' },
+        { id: 'accent-2', primitiveId: 'orange-500', pct: 4, usage: 'item' },
+      ],
     },
   ],
 };
@@ -295,7 +492,9 @@ const DEFAULT_CONTROLS: VisionDesignSystemControlsV1 = {
     baseWeight: 400,
     sizeGrowth: 44,
     weightGrowth: 30,
+    contrast: 46,
   },
+  fontVariance: 'single',
   spacing: {
     pattern: 32,
     density: 48,
@@ -304,14 +503,17 @@ const DEFAULT_CONTROLS: VisionDesignSystemControlsV1 = {
   flatness: 44,
   zoning: 46,
   softness: 36,
-  saturation: 30,
+  surfaceSaturation: 18,
+  itemSaturation: 52,
   colorVariance: 34,
   colorBleed: 20,
   colorBleedTone: 'primary',
   colorBleedCustom: '#2563eb',
+  colorBleedText: 12,
   wireframeFeeling: 16,
   visualRange: 24,
   skeuomorphism: 18,
+  skeuomorphismStyle: 'subtle',
   negativeZoneStyle: 16,
   boldness: 22,
 };
@@ -386,6 +588,58 @@ function rgbToHex(r: number, g: number, b: number): string {
   return `#${rr}${gg}${bb}`;
 }
 
+function rgbToHsl(r: number, g: number, b: number): { h: number; s: number; l: number } {
+  const rr = clamp(r, 0, 255) / 255;
+  const gg = clamp(g, 0, 255) / 255;
+  const bb = clamp(b, 0, 255) / 255;
+  const max = Math.max(rr, gg, bb);
+  const min = Math.min(rr, gg, bb);
+  const d = max - min;
+  const l = (max + min) / 2;
+  if (d === 0) return { h: 0, s: 0, l };
+  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+  let h = 0;
+  if (max === rr) h = (gg - bb) / d + (gg < bb ? 6 : 0);
+  else if (max === gg) h = (bb - rr) / d + 2;
+  else h = (rr - gg) / d + 4;
+  return { h: h / 6, s, l };
+}
+
+function hueToRgb(p: number, q: number, t: number): number {
+  let tt = t;
+  if (tt < 0) tt += 1;
+  if (tt > 1) tt -= 1;
+  if (tt < 1 / 6) return p + (q - p) * 6 * tt;
+  if (tt < 1 / 2) return q;
+  if (tt < 2 / 3) return p + (q - p) * (2 / 3 - tt) * 6;
+  return p;
+}
+
+function hslToRgb(h: number, s: number, l: number): { r: number; g: number; b: number } {
+  const hh = ((h % 1) + 1) % 1;
+  const ss = clamp01(s);
+  const ll = clamp01(l);
+  if (ss === 0) {
+    const v = Math.round(ll * 255);
+    return { r: v, g: v, b: v };
+  }
+  const q = ll < 0.5 ? ll * (1 + ss) : ll + ss - ll * ss;
+  const p = 2 * ll - q;
+  return {
+    r: Math.round(hueToRgb(p, q, hh + 1 / 3) * 255),
+    g: Math.round(hueToRgb(p, q, hh) * 255),
+    b: Math.round(hueToRgb(p, q, hh - 1 / 3) * 255),
+  };
+}
+
+function shiftHue(hex: string, degrees: number, satMult = 1, lightnessDelta = 0): string {
+  const base = toRgb(normalizeHex(hex, '#2563eb'));
+  const hsl = rgbToHsl(base.r, base.g, base.b);
+  const hh = ((hsl.h * 360 + degrees) % 360 + 360) % 360;
+  const shifted = hslToRgb(hh / 360, clamp01(hsl.s * satMult), clamp01(hsl.l + lightnessDelta));
+  return rgbToHex(shifted.r, shifted.g, shifted.b);
+}
+
 function mix(hexA: string, hexB: string, t: number): string {
   const a = toRgb(hexA);
   const b = toRgb(hexB);
@@ -442,6 +696,7 @@ function coerceRatioScope(value: unknown): VisionRatioScope {
 function normalizePalettePairings(value: unknown): VisionPalettePairingsV1 | undefined {
   const src = value && typeof value === 'object' ? (value as Record<string, unknown>) : null;
   if (!src) return undefined;
+  const primaryPrimitive = String(src.primaryPrimitive || '').trim();
 
   const accentPrimitives = Array.isArray(src.accentPrimitives)
     ? src.accentPrimitives.map((it) => String(it || '').trim()).filter(Boolean)
@@ -457,8 +712,24 @@ function normalizePalettePairings(value: unknown): VisionPalettePairingsV1 | und
     if (v) semanticPrimitives[key] = v;
   }
 
-  if (!accentPrimitives.length && !neutralPrimitives.length && Object.keys(semanticPrimitives).length === 0) return undefined;
-  return { accentPrimitives, neutralPrimitives, semanticPrimitives };
+  const overridesSrc = src.primitiveOverrides && typeof src.primitiveOverrides === 'object' ? (src.primitiveOverrides as Record<string, unknown>) : {};
+  const primitiveOverrides: Record<string, string> = {};
+  for (const [k, v] of Object.entries(overridesSrc)) {
+    const key = String(k || '').trim().toLowerCase();
+    if (!key) continue;
+    primitiveOverrides[key] = normalizeHex(v, '');
+  }
+
+  if (!primaryPrimitive && !accentPrimitives.length && !neutralPrimitives.length && Object.keys(semanticPrimitives).length === 0 && !Object.keys(primitiveOverrides).length) {
+    return undefined;
+  }
+  return {
+    ...(primaryPrimitive ? { primaryPrimitive } : null),
+    accentPrimitives,
+    neutralPrimitives,
+    semanticPrimitives,
+    ...(Object.keys(primitiveOverrides).length ? { primitiveOverrides } : null),
+  };
 }
 
 function normalizeScenario(input: unknown, index: number): VisionColorScenarioV1 {
@@ -472,28 +743,60 @@ function normalizeScenario(input: unknown, index: number): VisionColorScenarioV1
   const ratios = ratiosRaw
     .map((it) => {
       const r = it && typeof it === 'object' ? (it as Record<string, unknown>) : {};
-      return {
+      const legacyRow: VisionColorRatioV1 = {
         scope: coerceRatioScope(r.scope),
         neutralPct: clampPercent(r.neutralPct),
         primaryPct: clampPercent(r.primaryPct),
         accentPct: clampPercent(r.accentPct),
         semanticPct: clampPercent(r.semanticPct),
+        primitiveBreakdown: normalizeRatioBreakdown(r.primitiveBreakdown),
+      };
+      if (!legacyRow.primitiveBreakdown || legacyRow.primitiveBreakdown.length === 0) {
+        legacyRow.primitiveBreakdown = ratioBreakdownFromLegacy(legacyRow);
+      }
+      const summary = summarizeBreakdown(legacyRow);
+      return {
+        ...legacyRow,
+        neutralPct: summary.neutralPct,
+        primaryPct: summary.primaryPct,
+        accentPct: summary.accentPct,
+        semanticPct: summary.semanticPct,
       } satisfies VisionColorRatioV1;
     })
     .filter(Boolean);
+
+  const pairingsPrimary = pairings?.primaryPrimitive ? resolvePrimitiveHex(pairings.primaryPrimitive, pairings) : null;
+  const primaryColor = normalizeHex(pairingsPrimary || paletteSrc.primary, DEFAULT_SCENARIO.palette.primary);
+
+  const accentFromPairings = (pairings?.accentPrimitives || [])
+    .map((id) => resolvePrimitiveHex(id, pairings))
+    .filter((c): c is string => !!c);
+  const neutralFromPairings = (pairings?.neutralPrimitives || [])
+    .map((id) => resolvePrimitiveHex(id, pairings))
+    .filter((c): c is string => !!c);
+  const semanticFromPairings = {
+    success: pairings?.semanticPrimitives?.success ? resolvePrimitiveHex(pairings.semanticPrimitives.success, pairings) : null,
+    warning: pairings?.semanticPrimitives?.warning ? resolvePrimitiveHex(pairings.semanticPrimitives.warning, pairings) : null,
+    error: pairings?.semanticPrimitives?.error ? resolvePrimitiveHex(pairings.semanticPrimitives.error, pairings) : null,
+    info: pairings?.semanticPrimitives?.info ? resolvePrimitiveHex(pairings.semanticPrimitives.info, pairings) : null,
+  };
 
   return {
     id: String(src.id || '').trim() || (index === 0 ? 'base' : `scenario-${index + 1}`),
     name: String(src.name || '').trim() || (index === 0 ? 'Base' : `Scenario ${index + 1}`),
     palette: {
-      primary: normalizeHex(paletteSrc.primary, DEFAULT_SCENARIO.palette.primary),
-      accent: normalizeHexList(paletteSrc.accent, DEFAULT_SCENARIO.palette.accent),
-      neutral: normalizeHexList(paletteSrc.neutral, DEFAULT_SCENARIO.palette.neutral),
+      primary: primaryColor,
+      accent: accentFromPairings.length
+        ? normalizeHexList(accentFromPairings, DEFAULT_SCENARIO.palette.accent)
+        : normalizeHexList(paletteSrc.accent, DEFAULT_SCENARIO.palette.accent),
+      neutral: neutralFromPairings.length
+        ? normalizeHexList(neutralFromPairings, DEFAULT_SCENARIO.palette.neutral)
+        : normalizeHexList(paletteSrc.neutral, DEFAULT_SCENARIO.palette.neutral),
       semantic: {
-        success: normalizeHex(semanticSrc.success, DEFAULT_SEMANTIC.success),
-        warning: normalizeHex(semanticSrc.warning, DEFAULT_SEMANTIC.warning),
-        error: normalizeHex(semanticSrc.error, DEFAULT_SEMANTIC.error),
-        info: normalizeHex(semanticSrc.info, DEFAULT_SEMANTIC.info),
+        success: normalizeHex(semanticFromPairings.success || semanticSrc.success, DEFAULT_SEMANTIC.success),
+        warning: normalizeHex(semanticFromPairings.warning || semanticSrc.warning, DEFAULT_SEMANTIC.warning),
+        error: normalizeHex(semanticFromPairings.error || semanticSrc.error, DEFAULT_SEMANTIC.error),
+        info: normalizeHex(semanticFromPairings.info || semanticSrc.info, DEFAULT_SEMANTIC.info),
       },
       ...(pairings ? { pairings } : null),
     },
@@ -525,7 +828,14 @@ function normalizeControls(input: unknown): VisionDesignSystemControlsV1 {
       baseWeight: clamp(Math.round(Number(typSrc.baseWeight)), 300, 700) || DEFAULT_CONTROLS.typography.baseWeight,
       sizeGrowth: clamp(Math.round(Number(typSrc.sizeGrowth)), 0, 100),
       weightGrowth: clamp(Math.round(Number(typSrc.weightGrowth)), 0, 100),
+      contrast: clamp(Math.round(Number(typSrc.contrast)), 0, 100),
     },
+    fontVariance:
+      String(src.fontVariance || '').trim() === 'singleDecorative' ||
+      String(src.fontVariance || '').trim() === 'splitHeading' ||
+      String(src.fontVariance || '').trim() === 'splitHeadingDecorative'
+        ? (String(src.fontVariance || '').trim() as VisionFontVarianceMode)
+        : 'single',
     spacing: {
       pattern: clamp(Math.round(Number(spacingSrc.pattern)), 0, 100),
       density: clamp(Math.round(Number(spacingSrc.density)), 0, 100),
@@ -534,7 +844,8 @@ function normalizeControls(input: unknown): VisionDesignSystemControlsV1 {
     flatness: clamp(Math.round(Number(src.flatness)), 0, 100),
     zoning: clamp(Math.round(Number(src.zoning)), 0, 100),
     softness: clamp(Math.round(Number(src.softness)), 0, 100),
-    saturation: clamp(Math.round(Number(src.saturation)), 0, 100),
+    surfaceSaturation: clamp(Math.round(Number(src.surfaceSaturation ?? src.saturation)), 0, 100),
+    itemSaturation: clamp(Math.round(Number(src.itemSaturation ?? src.saturation)), 0, 100),
     colorVariance: clamp(Math.round(Number(src.colorVariance)), 0, 100),
     colorBleed: clamp(Math.round(Number(src.colorBleed)), 0, 100),
     colorBleedTone:
@@ -545,9 +856,17 @@ function normalizeControls(input: unknown): VisionDesignSystemControlsV1 {
         ? (String(src.colorBleedTone || '').trim() as VisionDesignSystemControlsV1['colorBleedTone'])
         : 'primary',
     colorBleedCustom: normalizeHex(src.colorBleedCustom, DEFAULT_CONTROLS.colorBleedCustom),
+    colorBleedText: clamp(Math.round(Number(src.colorBleedText)), 0, 100),
     wireframeFeeling: clamp(Math.round(Number(src.wireframeFeeling)), 0, 100),
     visualRange: clamp(Math.round(Number(src.visualRange)), 0, 100),
     skeuomorphism: clamp(Math.round(Number(src.skeuomorphism)), 0, 100),
+    skeuomorphismStyle:
+      String(src.skeuomorphismStyle || '').trim() === 'neomorphic' ||
+      String(src.skeuomorphismStyle || '').trim() === 'glass' ||
+      String(src.skeuomorphismStyle || '').trim() === 'glow' ||
+      String(src.skeuomorphismStyle || '').trim() === 'embossed'
+        ? (String(src.skeuomorphismStyle || '').trim() as VisionDesignSystemControlsV1['skeuomorphismStyle'])
+        : 'subtle',
     negativeZoneStyle: clamp(Math.round(Number(src.negativeZoneStyle)), 0, 100),
     boldness: clamp(Math.round(Number(src.boldness)), 0, 100),
   };
@@ -560,7 +879,9 @@ function withControlDefaults(next: VisionDesignSystemControlsV1): VisionDesignSy
       baseWeight: next.typography.baseWeight || DEFAULT_CONTROLS.typography.baseWeight,
       sizeGrowth: Number.isFinite(next.typography.sizeGrowth) ? next.typography.sizeGrowth : DEFAULT_CONTROLS.typography.sizeGrowth,
       weightGrowth: Number.isFinite(next.typography.weightGrowth) ? next.typography.weightGrowth : DEFAULT_CONTROLS.typography.weightGrowth,
+      contrast: Number.isFinite(next.typography.contrast) ? next.typography.contrast : DEFAULT_CONTROLS.typography.contrast,
     },
+    fontVariance: next.fontVariance || DEFAULT_CONTROLS.fontVariance,
     spacing: {
       pattern: Number.isFinite(next.spacing.pattern) ? next.spacing.pattern : DEFAULT_CONTROLS.spacing.pattern,
       density: Number.isFinite(next.spacing.density) ? next.spacing.density : DEFAULT_CONTROLS.spacing.density,
@@ -569,14 +890,17 @@ function withControlDefaults(next: VisionDesignSystemControlsV1): VisionDesignSy
     flatness: Number.isFinite(next.flatness) ? next.flatness : DEFAULT_CONTROLS.flatness,
     zoning: Number.isFinite(next.zoning) ? next.zoning : DEFAULT_CONTROLS.zoning,
     softness: Number.isFinite(next.softness) ? next.softness : DEFAULT_CONTROLS.softness,
-    saturation: Number.isFinite(next.saturation) ? next.saturation : DEFAULT_CONTROLS.saturation,
+    surfaceSaturation: Number.isFinite(next.surfaceSaturation) ? next.surfaceSaturation : DEFAULT_CONTROLS.surfaceSaturation,
+    itemSaturation: Number.isFinite(next.itemSaturation) ? next.itemSaturation : DEFAULT_CONTROLS.itemSaturation,
     colorVariance: Number.isFinite(next.colorVariance) ? next.colorVariance : DEFAULT_CONTROLS.colorVariance,
     colorBleed: Number.isFinite(next.colorBleed) ? next.colorBleed : DEFAULT_CONTROLS.colorBleed,
     colorBleedTone: next.colorBleedTone || DEFAULT_CONTROLS.colorBleedTone,
     colorBleedCustom: normalizeHex(next.colorBleedCustom, DEFAULT_CONTROLS.colorBleedCustom),
+    colorBleedText: Number.isFinite(next.colorBleedText) ? next.colorBleedText : DEFAULT_CONTROLS.colorBleedText,
     wireframeFeeling: Number.isFinite(next.wireframeFeeling) ? next.wireframeFeeling : DEFAULT_CONTROLS.wireframeFeeling,
     visualRange: Number.isFinite(next.visualRange) ? next.visualRange : DEFAULT_CONTROLS.visualRange,
     skeuomorphism: Number.isFinite(next.skeuomorphism) ? next.skeuomorphism : DEFAULT_CONTROLS.skeuomorphism,
+    skeuomorphismStyle: next.skeuomorphismStyle || DEFAULT_CONTROLS.skeuomorphismStyle,
     negativeZoneStyle: Number.isFinite(next.negativeZoneStyle) ? next.negativeZoneStyle : DEFAULT_CONTROLS.negativeZoneStyle,
     boldness: Number.isFinite(next.boldness) ? next.boldness : DEFAULT_CONTROLS.boldness,
   };
@@ -604,27 +928,34 @@ export function deriveDesignSystemTokens(spec: VisionDesignSystemV1): VisionDesi
   const controls = withControlDefaults(spec.controls);
   const scenarios = spec.scenarios.length ? spec.scenarios : [DEFAULT_SCENARIO];
   const active = scenarios.find((s) => s.id === spec.activeScenarioId) || scenarios[0] || DEFAULT_SCENARIO;
+  const baseFontFamily = String(spec.foundations.fontFamily || '').trim() || 'Inter, system-ui, sans-serif';
+  const headingCompanion = pickHeadingCompanion(baseFontFamily);
+  const decorativeCompanion = pickDecorativeCompanion(baseFontFamily, controls.fontVariance);
+  const headingFontFamily =
+    controls.fontVariance === 'splitHeading' || controls.fontVariance === 'splitHeadingDecorative' ? headingCompanion : baseFontFamily;
+  const decorativeFontFamily =
+    controls.fontVariance === 'singleDecorative' || controls.fontVariance === 'splitHeadingDecorative' ? decorativeCompanion : baseFontFamily;
 
   const tSize = norm100(controls.typography.sizeGrowth);
   const tWeight = norm100(controls.typography.weightGrowth);
   const baseSize = controls.typography.baseSizePx;
   const baseWeight = controls.typography.baseWeight;
-  const scale = lerp(1.02, 1.3, tSize);
-  const weightSpread = lerp(20, 320, tWeight);
+  const scale = lerp(1.03, 1.28, tSize);
+  const weightSpread = lerp(16, 360, tWeight);
   const typeMeta: Array<{ token: VisionTypographyTokenV1['token']; exponent: number; weightRank: number; lh: number }> = [
-    { token: 'caption', exponent: -1.1, weightRank: -0.16, lh: 1.45 },
-    { token: 'label', exponent: -0.6, weightRank: -0.08, lh: 1.42 },
+    { token: 'caption', exponent: -1.35, weightRank: -0.18, lh: 1.48 },
+    { token: 'label', exponent: -0.75, weightRank: -0.08, lh: 1.45 },
     { token: 'body', exponent: 0, weightRank: 0, lh: 1.38 },
-    { token: 'h6', exponent: 0.9, weightRank: 0.22, lh: 1.33 },
-    { token: 'h5', exponent: 1.6, weightRank: 0.38, lh: 1.28 },
-    { token: 'h4', exponent: 2.3, weightRank: 0.55, lh: 1.24 },
-    { token: 'h3', exponent: 3.0, weightRank: 0.72, lh: 1.19 },
-    { token: 'h2', exponent: 3.7, weightRank: 0.87, lh: 1.14 },
-    { token: 'h1', exponent: 4.4, weightRank: 1, lh: 1.08 },
+    { token: 'h6', exponent: 0.78, weightRank: 0.2, lh: 1.33 },
+    { token: 'h5', exponent: 1.45, weightRank: 0.36, lh: 1.28 },
+    { token: 'h4', exponent: 2.12, weightRank: 0.53, lh: 1.24 },
+    { token: 'h3', exponent: 2.82, weightRank: 0.7, lh: 1.19 },
+    { token: 'h2', exponent: 3.5, weightRank: 0.86, lh: 1.14 },
+    { token: 'h1', exponent: 4.18, weightRank: 1, lh: 1.08 },
   ];
   const typographyTokens: VisionTypographyTokenV1[] = typeMeta.map((it) => {
     const rawSize = baseSize * Math.pow(scale, it.exponent);
-    const sizePx = Math.max(10, Math.round(rawSize));
+    const sizePx = Math.max(9, Math.round(rawSize));
     const weight = Math.round(clamp(baseWeight + weightSpread * it.weightRank, 280, 900));
     const lineHeight = Math.max(Math.round(sizePx * it.lh), sizePx + 4);
     return { token: it.token, sizePx, weight, lineHeight };
@@ -634,7 +965,8 @@ export function deriveDesignSystemTokens(spec: VisionDesignSystemV1): VisionDesi
   const spacingDensity = norm100(controls.spacing.density);
   const aroundVsInside = norm100(controls.spacing.aroundVsInside);
   const spacingTemplates = [
-    [0, 2, 4, 6, 8, 12, 16, 20, 24, 32, 40],
+    [0, 2, 4, 6, 8, 10, 12, 16, 20, 24, 32],
+    [0, 2, 4, 8, 12, 16, 20, 24, 28, 32, 40],
     [0, 4, 8, 12, 16, 24, 32, 40, 48, 64, 80],
     [0, 4, 8, 16, 24, 32, 48, 64, 80, 96, 120],
   ];
@@ -644,23 +976,26 @@ export function deriveDesignSystemTokens(spec: VisionDesignSystemV1): VisionDesi
   const fromTemplate = spacingTemplates[patternIdx] || spacingTemplates[0];
   const toTemplate = spacingTemplates[Math.min(patternIdx + 1, spacingTemplates.length - 1)] || fromTemplate;
   const baseSpacingScale = fromTemplate.map((v, i) => lerp(v, toTemplate[i] || v, patternFrac));
-  const densityFactor = lerp(0.72, 1.44, spacingDensity);
+  const densityFactor = lerp(0.62, 1.56, spacingDensity);
   const spacingScale = baseSpacingScale.map((v) => toEvenPx(v * densityFactor));
-  const aroundIndex = clamp(Math.round(6 + (aroundVsInside - 0.5) * 2), 2, spacingScale.length - 1);
-  const insideIndex = clamp(Math.round(5 - (aroundVsInside - 0.5) * 2), 1, spacingScale.length - 1);
+  const aroundInsideBias = lerp(-2.2, 2.2, aroundVsInside);
+  const aroundIndex = clamp(Math.round(6 + aroundInsideBias), 2, spacingScale.length - 1);
+  const insideIndex = clamp(Math.round(5 - aroundInsideBias), 1, spacingScale.length - 1);
   const aroundPx = spacingScale[aroundIndex] || 24;
   const insidePx = spacingScale[insideIndex] || 16;
-  const gapPx = spacingScale[5] || 12;
-  const compactPx = spacingScale[3] || 8;
-  const microPx = spacingScale[2] || 4;
-  const stackPx = spacingScale[6] || 20;
+  const gapPx = Math.max(6, spacingScale[5] || 12);
+  const compactPx = Math.max(4, spacingScale[3] || 8);
+  const microPx = Math.max(2, spacingScale[2] || 4);
+  const stackPx = Math.max(gapPx, spacingScale[6] || 20);
 
   const flatness = norm100(controls.flatness);
   const zoning = norm100(controls.zoning);
   const softness = norm100(controls.softness);
-  const saturation = norm100(controls.saturation);
+  const surfaceSaturation = norm100(controls.surfaceSaturation);
+  const itemSaturation = norm100(controls.itemSaturation);
   const variance = norm100(controls.colorVariance);
   const bleed = norm100(controls.colorBleed);
+  const bleedText = norm100(controls.colorBleedText);
   const wireframeRaw = norm100(controls.wireframeFeeling);
   const visualRaw = norm100(controls.visualRange);
   const blendSum = wireframeRaw + visualRaw;
@@ -668,16 +1003,65 @@ export function deriveDesignSystemTokens(spec: VisionDesignSystemV1): VisionDesi
   const visualRangeMix = blendSum > 1 ? visualRaw / blendSum : visualRaw;
   const skeuo = norm100(controls.skeuomorphism);
   const boldIntent = norm100(controls.boldness);
-
-  const accentPool = (active.palette.accent || []).length ? active.palette.accent : DEFAULT_SCENARIO.palette.accent;
-  const accentCount = Math.max(1, Math.min(accentPool.length, 1 + Math.round(variance * 4)));
-  const activeAccents = variance < 0.12 ? [] : accentPool.slice(0, accentCount);
+  const typeContrast = norm100(controls.typography.contrast);
 
   const primary = normalizeHex(active.palette.primary, DEFAULT_SCENARIO.palette.primary);
   const neutralBase = normalizeHex(active.palette.neutral[0], '#f8fafc');
   const neutralPanel = normalizeHex(active.palette.neutral[1], '#e2e8f0');
   const separatorBase = normalizeHex(active.palette.neutral[2], '#64748b');
   const fallbackText = normalizeHex(active.palette.neutral[3], '#0f172a');
+
+  const uniqueColors = (list: string[]): string[] => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const raw of list) {
+      const c = normalizeHex(raw, '');
+      if (!c || seen.has(c)) continue;
+      seen.add(c);
+      out.push(c);
+    }
+    return out;
+  };
+
+  const uiRatio = active.ratios.find((r) => r.scope === 'ui' || r.scope === 'all') || active.ratios[0] || DEFAULT_SCENARIO.ratios[0];
+  const rawBreakdown = uiRatio.primitiveBreakdown && uiRatio.primitiveBreakdown.length ? uiRatio.primitiveBreakdown : ratioBreakdownFromLegacy(uiRatio);
+  const uiBreakdown = rawBreakdown
+    .map((it, idx) => ({
+      ...it,
+      id: it.id || `entry-${idx + 1}`,
+      primitiveId: String(it.primitiveId || 'primary'),
+      pct: clampPercent(it.pct),
+      usage: it.usage || 'all',
+    }))
+    .sort((a, b) => b.pct - a.pct);
+
+  const resolveEntryColor = (entry: { primitiveId: string }) => {
+    if (entry.primitiveId === 'primary') return primary;
+    const resolved = resolvePrimitiveHex(entry.primitiveId, active.palette.pairings);
+    if (resolved) return resolved;
+    const primitive = primitiveById(entry.primitiveId);
+    if (primitive) return primitive.hex;
+    return primary;
+  };
+
+  const itemEntries = uiBreakdown.filter((it) => it.usage !== 'surface');
+  const surfaceEntries = uiBreakdown.filter((it) => it.usage !== 'item');
+  const normalizedItemEntries = itemEntries.length ? itemEntries : [{ id: 'primary', primitiveId: 'primary', pct: 100, usage: 'item' as const }];
+  const normalizedSurfaceEntries = surfaceEntries.length ? surfaceEntries : [{ id: 'neutral', primitiveId: 'slate-100', pct: 100, usage: 'surface' as const }];
+  const itemColorCandidates = uniqueColors(normalizedItemEntries.map((it) => resolveEntryColor(it)));
+  const surfaceColorCandidates = uniqueColors(normalizedSurfaceEntries.map((it) => resolveEntryColor(it)));
+
+  const fallbackItemColors = uniqueColors([primary, ...(active.palette.accent || DEFAULT_SCENARIO.palette.accent)]);
+  const itemBasePalette = itemColorCandidates.length ? itemColorCandidates : fallbackItemColors;
+  const ratioColorBudget = clamp01(normalizedItemEntries.reduce((acc, it) => acc + it.pct, 0) / 100);
+  const variationCap = Math.max(1, Math.min(8, itemBasePalette.length));
+  const varianceGain = clamp01(Math.pow(variance, 0.88) * (0.45 + ratioColorBudget * 0.9));
+  const targetItemColors = Math.max(1, Math.min(variationCap, 1 + Math.round((variationCap - 1) * varianceGain)));
+  const varianceScopedPalette = itemBasePalette.slice(0, targetItemColors);
+  const accentPool = uniqueColors(
+    varianceScopedPalette.filter((c) => normalizeHex(c, primary) !== normalizeHex(primary, primary)).concat(active.palette.accent || []),
+  );
+  const activeAccents = variance < 0.08 ? [] : accentPool.slice(0, Math.max(1, Math.min(6, targetItemColors - 1 || 1)));
 
   const bleedSource =
     controls.colorBleedTone === 'accent'
@@ -690,48 +1074,61 @@ export function deriveDesignSystemTokens(spec: VisionDesignSystemV1): VisionDesi
             ? normalizeHex(controls.colorBleedCustom, primary)
             : primary;
 
-  const tintAmount = Number((bleed * 0.42).toFixed(3));
-  const saturationWhiten = lerp(0.22, 0.01, saturation);
-  const saturationTint =
-    saturation < 0.33
-      ? lerp(0, 0.08, saturation / 0.33)
-      : saturation < 0.66
-        ? lerp(0.08, 0.2, (saturation - 0.33) / 0.33)
-        : lerp(0.2, 0.36, (saturation - 0.66) / 0.34);
+  const tintAmount = Number((bleed * 0.46).toFixed(3));
+  const neutralWhiten = surfaceSaturation < 0.35 ? lerp(0.52, 0.24, surfaceSaturation / 0.35) : surfaceSaturation < 0.68 ? lerp(0.24, 0.08, (surfaceSaturation - 0.35) / 0.33) : 0.08;
+  const canvasNeutral = mix(neutralBase, '#ffffff', neutralWhiten);
+  const surfaceNeutral = mix(neutralPanel, '#ffffff', lerp(0.34, 0.1, surfaceSaturation));
+  const panelNeutral = mix(neutralPanel, neutralBase, lerp(0.16, 0.58, surfaceSaturation));
+  const neutralBleed = bleed <= 0.001 ? 0 : tintAmount;
+  const canvasBg = mix(canvasNeutral, bleedSource, neutralBleed * 0.26);
+  const surfaceBg = mix(surfaceNeutral, bleedSource, neutralBleed * 0.34);
+  const panelBg = mix(panelNeutral, bleedSource, neutralBleed * 0.46);
+  const separator = mix(separatorBase, bleedSource, neutralBleed * 0.58);
+  const surfaceTintSource = surfaceColorCandidates[0] || primary;
+  const wellTintMix =
+    surfaceSaturation < 0.28
+      ? 0
+      : surfaceSaturation < 0.58
+        ? lerp(0.06, 0.24, (surfaceSaturation - 0.28) / 0.3)
+        : lerp(0.24, 0.64, (surfaceSaturation - 0.58) / 0.42);
+  const wellSurface = mix(surfaceBg, surfaceTintSource, wellTintMix);
 
-  const canvasBase = mix(neutralBase, '#ffffff', saturationWhiten);
-  const surfaceBase = mix(neutralBase, neutralPanel, 0.45);
-  const panelBase = mix(neutralPanel, neutralBase, 0.3);
-  const canvasBg = mix(canvasBase, bleedSource, tintAmount * 0.34 + saturationTint * 0.25);
-  const surfaceBg = mix(mix(surfaceBase, '#ffffff', lerp(0.25, 0.02, saturation)), bleedSource, tintAmount * 0.2 + saturationTint * 0.18);
-  const panelBg = mix(panelBase, bleedSource, tintAmount * 0.28 + saturationTint * 0.2);
-  const separator = mix(separatorBase, bleedSource, tintAmount * 0.6);
-
-  const uiRatio = active.ratios.find((r) => r.scope === 'ui' || r.scope === 'all') || active.ratios[0] || DEFAULT_SCENARIO.ratios[0];
-  const colorBudget = clamp01((uiRatio.primaryPct + uiRatio.accentPct + uiRatio.semanticPct) / 100);
-  const boldZoneCoverage = Math.min(lerp(0.1, 0.78, boldIntent), colorBudget);
+  const colorBudget = clamp01(
+    normalizedItemEntries
+      .filter((it) => {
+        if (it.primitiveId === 'primary') return true;
+        const primitive = primitiveById(it.primitiveId);
+        return primitive ? primitive.kind === 'accent' : true;
+      })
+      .reduce((acc, it) => acc + it.pct, 0) / 100,
+  );
+  const boldZoneCoverage = clamp01(lerp(0.02, 1, boldIntent) * (0.3 + colorBudget * 0.7));
   const boldZonePolicy: VisionDesignSystemDerivedV1['composition']['boldZonePolicy'] =
     boldIntent < 0.22 ? 'neutral' : boldIntent < 0.48 ? 'brandTint' : boldIntent < 0.78 ? 'brandSolid' : 'mediaBacked';
 
   const topNavBg =
     boldZonePolicy === 'neutral'
-      ? mix(panelBg, primary, 0.04 + boldIntent * 0.08)
+      ? mix(panelBg, primary, 0.02 + boldZoneCoverage * 0.08)
       : boldZonePolicy === 'brandTint'
-        ? mix(panelBg, primary, lerp(0.18, 0.46, boldIntent))
+        ? mix(panelBg, primary, lerp(0.14, 0.56, boldZoneCoverage))
         : boldZonePolicy === 'brandSolid'
-          ? mix(primary, activeAccents[0] || primary, variance * 0.16)
-          : `linear-gradient(132deg, ${mix(primary, '#0f172a', 0.1)}, ${activeAccents[0] || primary}, ${mix(primary, '#ffffff', 0.2)})`;
+          ? mix(primary, activeAccents[0] || primary, 0.08 + variance * 0.24)
+          : `linear-gradient(132deg, ${mix(primary, '#0f172a', 0.14)}, ${activeAccents[0] || primary}, ${mix(primary, '#ffffff', 0.2)})`;
   const leftNavBg =
     boldZonePolicy === 'neutral'
-      ? mix(surfaceBg, primary, 0.03 + boldIntent * 0.06)
+      ? mix(surfaceBg, primary, 0.02 + boldZoneCoverage * 0.06)
       : boldZonePolicy === 'brandTint'
-        ? mix(surfaceBg, primary, lerp(0.14, 0.36, boldIntent))
+        ? mix(surfaceBg, primary, lerp(0.12, 0.42, boldZoneCoverage))
         : boldZonePolicy === 'brandSolid'
-          ? mix(primary, '#0f172a', 0.12)
-          : `linear-gradient(180deg, ${mix(primary, '#0f172a', 0.16)}, ${activeAccents[0] || primary})`;
+          ? mix(primary, '#0f172a', 0.16)
+          : `linear-gradient(180deg, ${mix(primary, '#0f172a', 0.2)}, ${activeAccents[0] || primary})`;
 
   const topNavText = ensureContrastText(String(topNavBg).startsWith('linear-gradient') ? primary : topNavBg, '#ffffff', 4.5);
   const leftNavText = ensureContrastText(String(leftNavBg).startsWith('linear-gradient') ? mix(primary, '#0f172a', 0.12) : leftNavBg, '#ffffff', 4.5);
+  const textTintMix = bleed <= 0.001 ? 0 : bleedText * (0.08 + bleed * 0.44);
+  const textPrimary = ensureContrastText(canvasBg, mix(fallbackText, bleedSource, textTintMix), 5.2);
+  const textSecondary = ensureContrastText(canvasBg, mix(textPrimary, bleedSource, textTintMix * 0.52), 4.5);
+  const textMuted = ensureContrastText(canvasBg, mix(textSecondary, bleedSource, textTintMix * 0.4), 3.8);
 
   const softnessCurve = Math.pow(softness, 1.12);
   const cardRadius = Math.round(lerp(2, 30, softnessCurve));
@@ -740,24 +1137,100 @@ export function deriveDesignSystemTokens(spec: VisionDesignSystemV1): VisionDesi
 
   const zoneLevels = 1 + Math.round(zoning * 3);
   const zoneContrast = Number(lerp(0.02, 0.3, Math.pow(zoning, 0.92)).toFixed(3));
-  const saturationPolicy = saturation < 0.34 ? 'semanticOnly' : saturation < 0.66 ? 'focused' : 'broad';
+  const saturationPolicy = itemSaturation < 0.34 ? 'semanticOnly' : itemSaturation < 0.66 ? 'focused' : 'broad';
   const varianceLevel = variance < 0.34 ? 'low' : variance < 0.66 ? 'medium' : 'high';
 
-  const materialBudget = clamp01(skeuo * (0.42 + (1 - flatness) * 0.58));
+  const materialBudget = clamp01(skeuo * (0.32 + (1 - flatness) * 0.68));
   const borderStyle: 'solid' | 'dashed' = wireframeMix > 0.82 ? 'dashed' : 'solid';
-  const borderWidth = Number(lerp(0.35, 2.8, wireframeMix).toFixed(2));
-  const wireframeLineOpacity = Number(lerp(0.08, 0.78, wireframeMix).toFixed(3));
-  const wireframeFillOpacity = Number(lerp(1, 0.34, wireframeMix).toFixed(3));
-  const gradientStrength = Number((visualRangeMix * (1 - wireframeMix * 0.6)).toFixed(3));
-  const bevelStrength = Number((materialBudget * (0.45 + gradientStrength * 0.5)).toFixed(3));
-  const glossStrength = Number((materialBudget * (0.25 + gradientStrength * 0.7)).toFixed(3));
-  const innerShadowStrength = Number((materialBudget * (0.2 + wireframeMix * 0.3)).toFixed(3));
-  const shadowStrength = Number(lerp(0.06, 0.4, materialBudget).toFixed(3));
-  const highlightStrength = Number(lerp(0.02, 0.28, materialBudget).toFixed(3));
-  const shadow = `0 ${Math.round(4 + shadowStrength * 24)}px ${Math.round(10 + shadowStrength * 36)}px rgba(15,23,42,${(0.08 + shadowStrength * 0.24).toFixed(3)})`;
+  const borderWidth = Number(lerp(0, 3.2, Math.pow(wireframeMix, 0.94)).toFixed(2));
+  const wireframeLineOpacity = Number(lerp(0, 0.86, Math.pow(wireframeMix, 0.9)).toFixed(3));
+  const wireframeFillOpacity = Number(lerp(1, 0.18, Math.pow(wireframeMix, 0.9)).toFixed(3));
+  const gradientStrength = Number((visualRangeMix * (0.45 + materialBudget * 0.22) * (1 - wireframeMix * 0.62)).toFixed(3));
+  const styleBevelMult =
+    controls.skeuomorphismStyle === 'neomorphic'
+      ? 1.26
+      : controls.skeuomorphismStyle === 'glass'
+        ? 0.72
+        : controls.skeuomorphismStyle === 'glow'
+          ? 0.66
+          : controls.skeuomorphismStyle === 'embossed'
+            ? 1.42
+            : 1;
+  const styleGlossMult =
+    controls.skeuomorphismStyle === 'glass'
+      ? 1.62
+      : controls.skeuomorphismStyle === 'glow'
+        ? 1.34
+        : controls.skeuomorphismStyle === 'embossed'
+          ? 0.58
+          : 1;
+  const styleShadowMult =
+    controls.skeuomorphismStyle === 'neomorphic'
+      ? 1.36
+      : controls.skeuomorphismStyle === 'glass'
+        ? 0.84
+      : controls.skeuomorphismStyle === 'glow'
+          ? 1.58
+          : controls.skeuomorphismStyle === 'embossed'
+            ? 1.18
+            : 1;
+  const bevelStrength = Number((materialBudget * (0.42 + gradientStrength * 0.58) * styleBevelMult).toFixed(3));
+  const glossStrength = Number((materialBudget * (0.24 + gradientStrength * 0.74) * styleGlossMult).toFixed(3));
+  const innerShadowStrength = Number((materialBudget * (0.2 + wireframeMix * 0.28) * (controls.skeuomorphismStyle === 'glass' ? 0.48 : 1.12)).toFixed(3));
+  const shadowStrength = Number(lerp(0.04, 0.42, materialBudget * styleShadowMult).toFixed(3));
+  const highlightStrength = Number(lerp(0.02, 0.3, materialBudget * (controls.skeuomorphismStyle === 'glow' ? 1.32 : 1)).toFixed(3));
+  const gradientBase = activeAccents[0] || primary;
+  const gradientNeighborA = shiftHue(gradientBase, 24, 1.06, 0.02);
+  const gradientNeighborB = shiftHue(gradientBase, -26, 1.02, -0.02);
+  const gradientFrom = mix(gradientNeighborA, primary, 0.26 + visualRangeMix * 0.28);
+  const gradientMid = mix(primary, activeAccents[1] || gradientNeighborB, 0.32 + variance * 0.28);
+  const gradientTo = mix(gradientNeighborB, activeAccents[0] || primary, 0.36 + visualRangeMix * 0.34);
 
-  const buttonBgBase =
-    saturation < 0.2 ? mix(primary, '#e2e8f0', 0.45) : saturation < 0.55 ? mix(primary, '#ffffff', 0.25) : mix(primary, activeAccents[0] || primary, 0.1);
+  const shadowColor = mix('#0f172a', shiftHue(bleedSource, 12, 0.95, -0.1), 0.18 + visualRangeMix * 0.36);
+  const shadowAccent = mix(
+    shiftHue(gradientBase, controls.skeuomorphismStyle === 'glow' ? 32 : 18, 1.06, -0.08),
+    '#0f172a',
+    0.46 - visualRangeMix * 0.12,
+  );
+  const shadowHighlight = mix('#ffffff', shiftHue(gradientBase, -22, 0.26, 0.26), 0.22 + glossStrength * 0.42);
+  const shadowRgb = toRgb(shadowColor);
+  const shadowAccentRgb = toRgb(shadowAccent);
+  const shadowTopRgb = toRgb(shadowHighlight);
+  const shadowX = Math.round(lerp(0, controls.skeuomorphismStyle === 'neomorphic' ? 5 : 3, materialBudget));
+  const shadowY = Math.round(4 + shadowStrength * 24);
+  const shadowBlur = Math.round(10 + shadowStrength * 36);
+  const accentY = Math.round(shadowY * lerp(0.75, 1.25, visualRangeMix));
+  const accentBlur = Math.round(shadowBlur * lerp(0.78, 1.18, visualRangeMix));
+  const topYOffset = -Math.round(1 + glossStrength * 7);
+  const topBlur = Math.round(2 + glossStrength * 14);
+  const shadow = [
+    `0 ${shadowY}px ${shadowBlur}px rgba(${shadowRgb.r},${shadowRgb.g},${shadowRgb.b},${(0.08 + shadowStrength * 0.24).toFixed(3)})`,
+    `${shadowX}px ${accentY}px ${accentBlur}px rgba(${shadowAccentRgb.r},${shadowAccentRgb.g},${shadowAccentRgb.b},${(
+      0.05 + shadowStrength * (controls.skeuomorphismStyle === 'glow' ? 0.52 : 0.32)
+    ).toFixed(3)})`,
+    `0 ${topYOffset}px ${topBlur}px rgba(${shadowTopRgb.r},${shadowTopRgb.g},${shadowTopRgb.b},${(0.06 + glossStrength * 0.34).toFixed(3)})`,
+  ].join(', ');
+
+  const neutralItemAnchor = mix(separatorBase, '#94a3b8', 0.56);
+  const applyItemSaturation = (color: string, index: number): string => {
+    const safeColor = normalizeHex(color, primary);
+    if (itemSaturation < 0.2) {
+      return mix(safeColor, neutralItemAnchor, lerp(0.9, 0.62, itemSaturation / 0.2));
+    }
+    if (itemSaturation < 0.55) {
+      const t = (itemSaturation - 0.2) / 0.35;
+      return mix(safeColor, '#ffffff', lerp(0.38, 0.14, t + index * 0.03));
+    }
+    const t = (itemSaturation - 0.55) / 0.45;
+    return mix(safeColor, '#111827', lerp(0.02, 0.18, t));
+  };
+  const itemPalette = varianceScopedPalette.length ? varianceScopedPalette : [primary];
+  const saturatedItems = uniqueColors(itemPalette.map((color, idx) => applyItemSaturation(color, idx)));
+  const primaryItemColor = saturatedItems[0] || applyItemSaturation(primary, 0);
+  const accentItemColors = saturatedItems.slice(1);
+  const itemColors = [primaryItemColor, ...accentItemColors].slice(0, 6);
+
+  const buttonBgBase = primaryItemColor;
   const buttonBg = wireframeMix > 0.75 ? mix(buttonBgBase, surfaceBg, 0.45) : buttonBgBase;
   const buttonText = ensureContrastText(buttonBg, '#ffffff', 4.5);
 
@@ -773,15 +1246,28 @@ export function deriveDesignSystemTokens(spec: VisionDesignSystemV1): VisionDesi
     negativeZoneMode === 'flat'
       ? canvasBg
       : negativeZoneMode === 'subtle-gradient'
-        ? `linear-gradient(160deg, ${canvasBg}, ${mix(panelBg, bleedSource, gradientStrength * 0.28)})`
+        ? `linear-gradient(160deg, ${mix(canvasBg, gradientFrom, gradientStrength * 0.28)}, ${mix(panelBg, gradientTo, gradientStrength * 0.4)})`
         : negativeZoneMode === 'texture'
           ? `radial-gradient(circle at 1px 1px, ${mix(separator, '#ffffff', 0.25)} 1px, transparent 1px), ${canvasBg}`
-          : `linear-gradient(140deg, ${mix(primary, '#0f172a', 0.2)}, ${mix(activeAccents[0] || primary, '#ffffff', 0.16)})`;
+          : `linear-gradient(140deg, ${mix(gradientFrom, '#0f172a', 0.22)}, ${mix(gradientTo, '#ffffff', 0.14)})`;
+
+  const captionOpacity = Number(lerp(0.4, 0.88, typeContrast).toFixed(3));
+  const labelOpacity = Number(lerp(0.56, 0.94, typeContrast).toFixed(3));
+  const bodyOpacity = Number(lerp(0.76, 1, typeContrast).toFixed(3));
+  const subduedOpacity = Number(lerp(0.34, 0.74, typeContrast).toFixed(3));
 
   return {
     typography: {
-      fontFamily: spec.foundations.fontFamily,
+      fontFamily: baseFontFamily,
+      headingFontFamily,
+      decorativeFontFamily,
+      varianceMode: controls.fontVariance,
       scale: Number(scale.toFixed(3)),
+      contrast: Number(typeContrast.toFixed(3)),
+      captionOpacity,
+      labelOpacity,
+      bodyOpacity,
+      subduedOpacity,
       tokens: typographyTokens,
     },
     spacing: {
@@ -817,12 +1303,16 @@ export function deriveDesignSystemTokens(spec: VisionDesignSystemV1): VisionDesi
     color: {
       primary,
       accents: activeAccents,
+      itemColors,
       neutrals: active.palette.neutral,
       semantic: active.palette.semantic,
       textOnPrimary: ensureContrastText(primary, '#ffffff', 4.5),
+      textPrimary,
+      textSecondary,
+      textMuted,
       canvasBg,
       surfaceBg,
-      panelBg,
+      panelBg: wellSurface,
       separator,
       tintAmount,
     },
@@ -852,12 +1342,18 @@ export function deriveDesignSystemTokens(spec: VisionDesignSystemV1): VisionDesi
       leftNavBg,
       leftNavText,
       contentBg: mix(canvasBg, fallbackText, zoneContrast * 0.03),
-      cardBg: mix(surfaceBg, panelBg, zoning * 0.22),
+      cardBg: mix(wellSurface, panelBg, zoning * 0.22),
       cardBorder: separator,
       buttonBg,
       buttonText,
-      focusColor: activeAccents[0] || primary,
+      focusColor: itemColors[1] || activeAccents[0] || primary,
       shadow,
+      shadowColor,
+      shadowAccent,
+      shadowHighlight,
+      gradientFrom,
+      gradientMid,
+      gradientTo,
     },
   };
 }
@@ -995,6 +1491,9 @@ export function buildVisionDesignSystemReadout(spec: VisionDesignSystemV1): stri
   lines.push('');
   lines.push(`Scenario: ${active?.name || 'Base'} (${active?.id || 'base'})`);
   lines.push(`Font family: ${ds.foundations.fontFamily}`);
+  lines.push(`Font variance mode: ${ds.controls.fontVariance}`);
+  lines.push(`Heading font: ${derived.typography.headingFontFamily}`);
+  lines.push(`Decorative font: ${derived.typography.decorativeFontFamily}`);
   lines.push(`Typography scale: ${derived.typography.scale.toFixed(3)} (base ${ds.controls.typography.baseSizePx}px / ${ds.controls.typography.baseWeight})`);
   lines.push(
     `Type tokens: ${derived.typography.tokens
@@ -1013,26 +1512,31 @@ export function buildVisionDesignSystemReadout(spec: VisionDesignSystemV1): stri
   lines.push(`Negative zone mode: ${derived.negativeZone.mode}`);
   lines.push(`Bold zone policy: ${derived.composition.boldZonePolicy} (${(derived.composition.boldZoneCoverage * 100).toFixed(0)}% coverage)`);
   if (uiRatio) {
-    lines.push(
-      `UI ratio: neutral ${uiRatio.neutralPct}% · primary ${uiRatio.primaryPct}% · accent ${uiRatio.accentPct}% · semantic ${uiRatio.semanticPct}%`,
-    );
+    const breakdown = uiRatio.primitiveBreakdown || ratioBreakdownFromLegacy(uiRatio);
+    lines.push(`UI ratio summary: neutral ${uiRatio.neutralPct}% · primary ${uiRatio.primaryPct}% · accent ${uiRatio.accentPct}%`);
+    lines.push(`UI primitive breakdown: ${breakdown.map((b) => `${b.primitiveId}:${b.pct}%`).join(' · ')}`);
   }
   lines.push('');
   lines.push('Control bands:');
   lines.push(`- typography size growth: ${controlBand(ds.controls.typography.sizeGrowth)}`);
   lines.push(`- typography weight growth: ${controlBand(ds.controls.typography.weightGrowth)}`);
+  lines.push(`- typography contrast: ${controlBand(ds.controls.typography.contrast)}`);
+  lines.push(`- font variance: ${ds.controls.fontVariance}`);
   lines.push(`- spacing pattern: ${controlBand(ds.controls.spacing.pattern)}`);
   lines.push(`- spacing density: ${controlBand(ds.controls.spacing.density)}`);
   lines.push(`- flatness: ${controlBand(ds.controls.flatness)}`);
   lines.push(`- zoning: ${controlBand(ds.controls.zoning)}`);
   lines.push(`- softness: ${controlBand(ds.controls.softness)}`);
-  lines.push(`- saturation: ${controlBand(ds.controls.saturation)}`);
+  lines.push(`- surface saturation: ${controlBand(ds.controls.surfaceSaturation)}`);
+  lines.push(`- item saturation: ${controlBand(ds.controls.itemSaturation)}`);
   lines.push(`- color variance: ${controlBand(ds.controls.colorVariance)}`);
   lines.push(`- color bleed: ${controlBand(ds.controls.colorBleed)}`);
   lines.push(`- color bleed tone: ${ds.controls.colorBleedTone}`);
+  lines.push(`- color bleed text: ${controlBand(ds.controls.colorBleedText)}`);
   lines.push(`- wireframe feeling: ${controlBand(ds.controls.wireframeFeeling)}`);
   lines.push(`- visual range: ${controlBand(ds.controls.visualRange)}`);
   lines.push(`- skeuomorphism: ${controlBand(ds.controls.skeuomorphism)}`);
+  lines.push(`- skeuomorphism style: ${ds.controls.skeuomorphismStyle}`);
   lines.push(`- negative zone style: ${controlBand(ds.controls.negativeZoneStyle)}`);
   lines.push(`- boldness: ${controlBand(ds.controls.boldness)}`);
   lines.push('');
