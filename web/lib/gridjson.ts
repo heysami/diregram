@@ -144,6 +144,18 @@ export type GridDatabaseV1 = {
   activeViewId: string | null;
 };
 
+export type GridAiRuleV1 = {
+  id: string;
+  name: string;
+  tableId: string;
+  mode: 'derive' | 'research';
+  prompt: string;
+  sourceColumnIds: string[];
+  targetColumnId: string;
+  defaultScope: 'selection' | 'visible';
+  enabled?: boolean;
+};
+
 export type GridSheetV1 = {
   id: string;
   name: string;
@@ -158,6 +170,9 @@ export type GridSheetV1 = {
   };
   cards: GridCardV1[];
   database: GridDatabaseV1;
+  ai?: {
+    rules: GridAiRuleV1[];
+  };
 };
 
 export type GridDoc = GridDocV1;
@@ -371,7 +386,7 @@ function coerceDoc(raw: unknown): GridDoc | null {
                 if (!linkRaw) return undefined;
                 const modeRaw = typeof linkRaw.mode === 'string' ? linkRaw.mode.trim() : '';
                 const mode: NonNullable<GridTableV1['dataObjectLink']>['mode'] | undefined =
-                  modeRaw === 'kvRows' || modeRaw === 'columns' ? (modeRaw as any) : undefined;
+                  modeRaw === 'kvRows' || modeRaw === 'columns' ? modeRaw : undefined;
                 const diagramFileId = typeof linkRaw.diagramFileId === 'string' ? linkRaw.diagramFileId.trim() : '';
                 const diagramRoomName = typeof linkRaw.diagramRoomName === 'string' ? linkRaw.diagramRoomName.trim() : '';
                 const dataObjectId = typeof linkRaw.dataObjectId === 'string' ? linkRaw.dataObjectId.trim() : '';
@@ -501,6 +516,40 @@ function coerceDoc(raw: unknown): GridDoc | null {
         activeViewId: typeof dbRaw?.activeViewId === 'string' ? (dbRaw!.activeViewId as string) : null,
       };
 
+      const aiRaw = (ss.ai && typeof ss.ai === 'object' ? (ss.ai as Record<string, unknown>) : null) || null;
+      const aiRules: GridAiRuleV1[] = Array.isArray(aiRaw?.rules)
+        ? (aiRaw!.rules as unknown[])
+            .map((rr, idx): GridAiRuleV1 | null => {
+              if (!rr || typeof rr !== 'object') return null;
+              const ro = rr as Record<string, unknown>;
+              const id = typeof ro.id === 'string' && ro.id.trim().length ? (ro.id as string) : `rule-${idx + 1}`;
+              const name = typeof ro.name === 'string' && ro.name.trim().length ? (ro.name as string) : `Rule ${idx + 1}`;
+              const tableId = typeof ro.tableId === 'string' ? String(ro.tableId || '').trim() : '';
+              const mode: GridAiRuleV1['mode'] = ro.mode === 'research' ? 'research' : 'derive';
+              const prompt = typeof ro.prompt === 'string' ? String(ro.prompt || '').trim() : '';
+              const sourceColumnIds = Array.isArray(ro.sourceColumnIds)
+                ? (ro.sourceColumnIds as unknown[]).map((x) => String(x || '').trim()).filter(Boolean)
+                : [];
+              const targetColumnId = typeof ro.targetColumnId === 'string' ? String(ro.targetColumnId || '').trim() : '';
+              const defaultScope: GridAiRuleV1['defaultScope'] = ro.defaultScope === 'visible' ? 'visible' : 'selection';
+              const enabled = typeof ro.enabled === 'boolean' ? ro.enabled : undefined;
+              if (!tableId || !prompt || !targetColumnId) return null;
+              return {
+                id,
+                name,
+                tableId,
+                mode,
+                prompt,
+                sourceColumnIds,
+                targetColumnId,
+                defaultScope,
+                ...(enabled === undefined ? {} : { enabled }),
+              };
+            })
+            .filter((x): x is GridAiRuleV1 => x !== null)
+        : [];
+      const ai = aiRules.length ? { rules: aiRules } : undefined;
+
       // Legacy migration: if a region stored a single value, distribute it to all region cells,
       // then clear the region value. Regions remain visual grouping only.
       const distributedCells = { ...cells };
@@ -590,7 +639,7 @@ function coerceDoc(raw: unknown): GridDoc | null {
           .filter((x): x is GridCardV1 => x !== null);
       })();
 
-      return { id, name, mode, grid, cards, database };
+      return { id, name, mode, grid, cards, database, ...(ai ? { ai } : {}) };
     })
     .filter((x): x is GridSheetV1 => x !== null);
 
@@ -700,4 +749,3 @@ export function saveGridDoc(markdown: string, doc: GridDoc): string {
   const sep = text.trim().length === 0 ? '' : '\n\n';
   return text + (needsLeadingNewline ? '\n' : '') + sep + block + '\n';
 }
-

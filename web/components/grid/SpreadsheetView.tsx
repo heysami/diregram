@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { GripVertical } from 'lucide-react';
-import type { GridCardV1, GridDoc, GridPersonV1, GridRegionV1, GridSheetV1, GridTableV1 } from '@/lib/gridjson';
+import type { GridAiRuleV1, GridCardV1, GridDoc, GridPersonV1, GridRegionV1, GridSheetV1, GridTableV1 } from '@/lib/gridjson';
 import { listRecognizedMacros, replaceMacroOccurrence } from '@/lib/grid-cell-macros';
 import type { NexusDataObject, NexusDataObjectStore } from '@/lib/data-object-storage';
 import { materializeLinkedDataObjectTable, syncLinkedDataObjectTableStructure } from '@/lib/grid/linked-data-object-table';
@@ -54,6 +54,7 @@ import { SaveTemplateModal } from '@/components/templates/SaveTemplateModal';
 import { parseGridTableTemplatePayload, type GridTableTemplateV1 } from '@/lib/template-grid';
 import { useGridClipboard } from '@/components/grid/spreadsheet/hooks/useGridClipboard';
 import { parseCsv } from '@/lib/grid/csv';
+import { ensureOpenAiApiKeyWithPrompt } from '@/lib/openai-key-browser';
 import {
   applyInternalGridRangePaste,
   clearGridRange,
@@ -117,6 +118,7 @@ function computeRegionAnchors(opts: { regions: GridRegionV1[]; rowIndexById: Map
 export function SpreadsheetView({
   doc,
   fileId = null,
+  projectFolderId = null,
   sheet,
   activeTool,
   onOpenComments,
@@ -138,11 +140,14 @@ export function SpreadsheetView({
   onSaveTemplateFile,
   templateSourceLabel,
   globalTemplatesEnabled,
+  onTrackAsyncJob,
+  aiFeaturesEnabled = false,
   showStickyBars = true,
 }: {
   doc: GridDoc;
   /** Current file id; used to prevent internal pastes across different files. */
   fileId?: string | null;
+  projectFolderId?: string | null;
   sheet: GridSheetV1;
   activeTool?: 'select' | 'comment';
   onOpenComments?: (info: { targetKey: string; targetLabel?: string; scrollToThreadId?: string }) => void;
@@ -164,6 +169,8 @@ export function SpreadsheetView({
   onSaveTemplateFile?: (res: { name: string; content: string; scope?: 'project' | 'account' }) => Promise<void> | void;
   templateSourceLabel?: string;
   globalTemplatesEnabled?: boolean;
+  onTrackAsyncJob?: (input: { id: string; kind: string; title?: string }) => void;
+  aiFeaturesEnabled?: boolean;
   showStickyBars?: boolean;
 }) {
   const cols = sheet.grid.columns || [];
@@ -239,6 +246,27 @@ export function SpreadsheetView({
     tableDragRef.current = tableDrag;
   }, [tableDrag]);
   const [tableControlsHover, setTableControlsHover] = useState<null | { tableId: string; showCols: boolean; showRows: boolean }>(null);
+  const [aiRulesOpen, setAiRulesOpen] = useState(false);
+  const [aiRulesBusy, setAiRulesBusy] = useState(false);
+  const [aiRulesError, setAiRulesError] = useState<string | null>(null);
+  const [editingRuleId, setEditingRuleId] = useState<string | null>(null);
+  const [ruleDraft, setRuleDraft] = useState<{
+    name: string;
+    mode: 'derive' | 'research';
+    prompt: string;
+    sourceColumnIds: string[];
+    targetColumnId: string;
+    defaultScope: 'selection' | 'visible';
+    enabled: boolean;
+  }>({
+    name: 'AI Rule',
+    mode: 'derive',
+    prompt: '',
+    sourceColumnIds: [],
+    targetColumnId: '',
+    defaultScope: 'selection',
+    enabled: true,
+  });
 
   const openCsvImportPicker = useCallback(() => {
     csvInputRef.current?.click();
@@ -607,6 +635,189 @@ export function SpreadsheetView({
     if (!activeTableId) return null;
     return tables.find((x) => x.id === activeTableId) || null;
   }, [tables, activeTableId]);
+
+  const aiRules = useMemo(() => (sheet.ai?.rules || []) as GridAiRuleV1[], [sheet.ai?.rules]);
+
+  const activeTableDataCols = useMemo(() => {
+    if (!activeTable) return [] as string[];
+    const hc = Math.max(0, Math.min(activeTable.colIds.length, activeTable.headerCols || 0));
+    return activeTable.colIds.slice(hc);
+  }, [activeTable]);
+
+  const updateSheetAiRules = useCallback(
+    (nextRules: GridAiRuleV1[]) => {
+      mutateSheet((s) => {
+        const cleaned = (nextRules || []).filter((r) => !!r.id && !!r.tableId);
+        if (!cleaned.length) {
+          return { ...s, ai: undefined };
+        }
+        return { ...s, ai: { rules: cleaned } };
+      });
+    },
+    [mutateSheet],
+  );
+
+  const startCreateAiRule = useCallback(() => {
+    if (!activeTable || !activeTableDataCols.length) {
+      topToast.show('Select a table first.');
+      return;
+    }
+    const sourceCols = activeTableDataCols.slice(0, Math.max(1, activeTableDataCols.length - 1));
+    const targetCol = activeTableDataCols[activeTableDataCols.length - 1] || activeTableDataCols[0] || '';
+    setEditingRuleId(null);
+    setRuleDraft({
+      name: `AI rule ${aiRules.length + 1}`,
+      mode: 'derive',
+      prompt: '',
+      sourceColumnIds: sourceCols,
+      targetColumnId: targetCol,
+      defaultScope: 'selection',
+      enabled: true,
+    });
+  }, [activeTable, activeTableDataCols, aiRules.length, topToast]);
+
+  const startEditAiRule = useCallback((rule: GridAiRuleV1) => {
+    setEditingRuleId(rule.id);
+    setRuleDraft({
+      name: rule.name,
+      mode: rule.mode,
+      prompt: rule.prompt,
+      sourceColumnIds: rule.sourceColumnIds || [],
+      targetColumnId: rule.targetColumnId,
+      defaultScope: rule.defaultScope || 'selection',
+      enabled: rule.enabled !== false,
+    });
+  }, []);
+
+  const saveAiRuleDraft = useCallback(() => {
+    if (!activeTable) {
+      topToast.show('Select a table first.');
+      return;
+    }
+    const prompt = String(ruleDraft.prompt || '').trim();
+    const name = String(ruleDraft.name || '').trim();
+    if (!name || !prompt || !ruleDraft.targetColumnId) {
+      topToast.show('Rule needs name, prompt, and target column.');
+      return;
+    }
+    const sourceColumnIds = Array.from(new Set((ruleDraft.sourceColumnIds || []).map((x) => String(x || '').trim()).filter(Boolean)));
+    const nextRule: GridAiRuleV1 = {
+      id: editingRuleId || `airule-${Date.now()}`,
+      name,
+      tableId: activeTable.id,
+      mode: ruleDraft.mode === 'research' ? 'research' : 'derive',
+      prompt,
+      sourceColumnIds,
+      targetColumnId: String(ruleDraft.targetColumnId || '').trim(),
+      defaultScope: ruleDraft.defaultScope === 'visible' ? 'visible' : 'selection',
+      enabled: ruleDraft.enabled,
+    };
+    const nextRules = editingRuleId
+      ? aiRules.map((r) => (r.id === editingRuleId ? nextRule : r))
+      : [...aiRules, nextRule];
+    updateSheetAiRules(nextRules);
+    setEditingRuleId(null);
+    topToast.show('Rule saved');
+  }, [activeTable, ruleDraft, editingRuleId, aiRules, updateSheetAiRules, topToast]);
+
+  const deleteAiRule = useCallback(
+    (ruleId: string) => {
+      const nextRules = aiRules.filter((r) => r.id !== ruleId);
+      updateSheetAiRules(nextRules);
+      if (editingRuleId === ruleId) setEditingRuleId(null);
+      topToast.show('Rule deleted');
+    },
+    [aiRules, updateSheetAiRules, editingRuleId, topToast],
+  );
+
+  const runAiRule = useCallback(
+    async (rule: GridAiRuleV1, scope: 'selection' | 'visible') => {
+      if (!aiFeaturesEnabled) {
+        topToast.show('AI rules are available in Supabase mode only.');
+        return;
+      }
+      if (!fileId || !projectFolderId) {
+        topToast.show('AI rules are only available in synced project mode.');
+        return;
+      }
+      const table = tables.find((t) => t.id === rule.tableId) || null;
+      if (!table) {
+        topToast.show('Rule table not found.');
+        return;
+      }
+      const hr = Math.max(0, Math.min(table.rowIds.length, table.headerRows || 0));
+      const fr = Math.max(0, Math.min(Math.max(0, table.rowIds.length - hr), table.footerRows || 0));
+      const dataRowIds = table.rowIds.slice(hr, Math.max(hr, table.rowIds.length - fr));
+      const fv = tableFilterViewById.get(table.id) || null;
+      const visibleSourceRows = fv ? new Set(Object.values(fv.destToSourceRowId || {})) : null;
+      const visibleRowIds = visibleSourceRows ? dataRowIds.filter((id) => visibleSourceRows.has(id)) : dataRowIds.slice();
+
+      const selectedRows = Array.from(
+        new Set(
+          Array.from(cellSelection)
+            .map((k) => parseCoordKey(k)?.rowId || '')
+            .filter(Boolean),
+        ),
+      ).filter((rowId) => dataRowIds.includes(rowId));
+
+      const targetRows = scope === 'selection' ? selectedRows : visibleRowIds;
+      if (!targetRows.length) {
+        topToast.show(scope === 'selection' ? 'No selected data rows for this table.' : 'No visible rows for this table.');
+        return;
+      }
+      if (targetRows.length > 200) {
+        topToast.show('Maximum 200 rows per run.');
+        return;
+      }
+
+      setAiRulesBusy(true);
+      setAiRulesError(null);
+      try {
+        const openaiApiKey = await ensureOpenAiApiKeyWithPrompt();
+        if (!openaiApiKey) {
+          setAiRulesError('Missing OpenAI API key.');
+          return;
+        }
+        const rowsPayload = targetRows.map((rowId) => ({
+          rowId,
+          sourceValues: Object.fromEntries(
+            (rule.sourceColumnIds || []).map((colId) => [colId, String(sheetRef.current.grid.cells?.[`${rowId}:${colId}`]?.value || '')]),
+          ),
+        }));
+        const res = await fetch('/api/ai/grid-rule/execute', {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-openai-api-key': openaiApiKey,
+          },
+          body: JSON.stringify({
+            projectFolderId,
+            fileId,
+            sheetId: sheet.id,
+            rule,
+            rows: rowsPayload,
+          }),
+        });
+        const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+        if (!res.ok) {
+          setAiRulesError(String(json.error || `Failed (${res.status})`));
+          return;
+        }
+        const jobId = String(json.jobId || '').trim();
+        if (!jobId) {
+          setAiRulesError('Missing async job id');
+          return;
+        }
+        onTrackAsyncJob?.({ id: jobId, kind: 'ai_grid_rule', title: `Grid AI rule: ${rule.name}` });
+        topToast.show('AI rule queued');
+      } catch (e) {
+        setAiRulesError(e instanceof Error ? e.message : 'Failed to queue AI rule');
+      } finally {
+        setAiRulesBusy(false);
+      }
+    },
+    [aiFeaturesEnabled, fileId, projectFolderId, tables, tableFilterViewById, cellSelection, sheet.id, onTrackAsyncJob, topToast],
+  );
 
   const saveCurrentTableSelectionAsTemplate = async () => {
     if (!onSaveTemplateFile) return;
@@ -2106,6 +2317,16 @@ export function SpreadsheetView({
           onUnmergeRegion={unmergeActiveRegion}
           onImportCsv={openCsvImportPicker}
           onOpenMarkdownHelp={() => setShowMarkdownHelp(true)}
+          onOpenAiRules={
+            aiFeaturesEnabled && fileId && projectFolderId && onTrackAsyncJob
+              ? () => {
+                  setAiRulesError(null);
+                  setAiRulesOpen(true);
+                  if (!editingRuleId) startCreateAiRule();
+                }
+              : undefined
+          }
+          aiRulesDisabledReason={!aiFeaturesEnabled ? 'Available in Supabase mode only' : undefined}
           onSaveActiveTableAsTemplate={
             onSaveTemplateFile && (activeTable || selectionRect)
               ? () => {
@@ -2155,7 +2376,7 @@ export function SpreadsheetView({
                     { id: 'account', label: 'Account' },
                     ...(globalTemplatesEnabled ? [{ id: 'global', label: 'Global' }] : []),
                   ],
-                  onChange: (next) => onTemplateScopeChange(next as any),
+                  onChange: (next) => onTemplateScopeChange(next === 'account' || next === 'global' ? next : 'project'),
                 }
               : undefined
           }
@@ -2186,6 +2407,176 @@ export function SpreadsheetView({
       ) : null}
 
       {showStickyBars ? <MarkdownHelpModal isOpen={showMarkdownHelp} onClose={() => setShowMarkdownHelp(false)} /> : null}
+      {showStickyBars && aiRulesOpen ? (
+        <div className="fixed inset-0 z-[1300] flex items-center justify-center p-6">
+          <button type="button" className="absolute inset-0 bg-white/60" aria-label="Close" onClick={() => setAiRulesOpen(false)} />
+          <div className="relative mac-window mac-double-outline w-[920px] max-w-[96vw] max-h-[88vh] overflow-hidden">
+            <div className="mac-titlebar">
+              <div className="mac-title">AI rules</div>
+            </div>
+            <div className="p-4 space-y-3 overflow-auto max-h-[calc(88vh-90px)]">
+              <div className="text-xs opacity-80">Rules are saved on this sheet. Run against selected rows or visible rows.</div>
+              {aiRulesError ? <div className="text-xs mac-double-outline p-2">{aiRulesError}</div> : null}
+
+              <div className="space-y-2">
+                {aiRules.length === 0 ? <div className="text-xs opacity-70">No rules yet.</div> : null}
+                {aiRules.map((rule) => {
+                  const isEditing = editingRuleId === rule.id;
+                  const table = tables.find((t) => t.id === rule.tableId) || null;
+                  const hc = Math.max(0, Math.min(table?.colIds.length || 0, table?.headerCols || 0));
+                  const dataCols = table ? table.colIds.slice(hc) : [];
+                  const colsForEdit = isEditing ? (dataCols.length ? dataCols : activeTableDataCols) : dataCols;
+                  const headerRowId = table && (table.headerRows || 0) > 0 ? table.rowIds[(table.headerRows || 1) - 1] : null;
+                  const describeCol = (colId: string) => {
+                    const idx = colIndexById.get(colId);
+                    const alpha = idx === undefined ? colId : colLabel(idx);
+                    const h = headerRowId ? String(cells?.[`${headerRowId}:${colId}`]?.value || '').trim() : '';
+                    return h ? `${alpha} — ${h}` : alpha;
+                  };
+                  return (
+                    <div key={rule.id} className="mac-double-outline p-3 space-y-2">
+                      {!isEditing ? (
+                        <>
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="text-xs font-semibold">{rule.name}</div>
+                            <div className="text-[11px] opacity-70">{rule.mode === 'research' ? 'Research' : 'Derive'}</div>
+                          </div>
+                          <div className="text-[11px] opacity-80 whitespace-pre-wrap">{rule.prompt}</div>
+                          <div className="text-[11px] opacity-70">
+                            target: {rule.targetColumnId} | sources: {(rule.sourceColumnIds || []).join(', ') || '(none)'}
+                          </div>
+                          <div className="flex items-center gap-1 flex-wrap">
+                            <button type="button" className="mac-btn h-7" onClick={() => startEditAiRule(rule)} disabled={aiRulesBusy}>
+                              Edit
+                            </button>
+                            <button type="button" className="mac-btn h-7" onClick={() => deleteAiRule(rule.id)} disabled={aiRulesBusy}>
+                              Delete
+                            </button>
+                            <button
+                              type="button"
+                              className="mac-btn h-7"
+                              onClick={() => runAiRule(rule, 'selection')}
+                              disabled={aiRulesBusy || rule.enabled === false}
+                            >
+                              Run selected rows
+                            </button>
+                            <button
+                              type="button"
+                              className="mac-btn h-7"
+                              onClick={() => runAiRule(rule, 'visible')}
+                              disabled={aiRulesBusy || rule.enabled === false}
+                            >
+                              Run visible rows
+                            </button>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                            <input
+                              className="mac-field h-8"
+                              value={ruleDraft.name}
+                              onChange={(e) => setRuleDraft((prev) => ({ ...prev, name: e.target.value }))}
+                              placeholder="Rule name"
+                            />
+                            <select
+                              className="mac-field h-8"
+                              value={ruleDraft.mode}
+                              onChange={(e) => setRuleDraft((prev) => ({ ...prev, mode: e.target.value === 'research' ? 'research' : 'derive' }))}
+                            >
+                              <option value="derive">Derive from row data</option>
+                              <option value="research">Research (KB + web)</option>
+                            </select>
+                          </div>
+                          <textarea
+                            className="mac-field w-full min-h-[80px]"
+                            value={ruleDraft.prompt}
+                            onChange={(e) => setRuleDraft((prev) => ({ ...prev, prompt: e.target.value }))}
+                            placeholder="Prompt"
+                          />
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                            <select
+                              className="mac-field h-8"
+                              value={ruleDraft.targetColumnId}
+                              onChange={(e) => setRuleDraft((prev) => ({ ...prev, targetColumnId: e.target.value }))}
+                            >
+                              <option value="">Target column</option>
+                              {colsForEdit.map((colId) => (
+                                <option key={`target-${rule.id}-${colId}`} value={colId}>
+                                  {describeCol(colId)}
+                                </option>
+                              ))}
+                            </select>
+                            <select
+                              className="mac-field h-8"
+                              value={ruleDraft.defaultScope}
+                              onChange={(e) => setRuleDraft((prev) => ({ ...prev, defaultScope: e.target.value === 'visible' ? 'visible' : 'selection' }))}
+                            >
+                              <option value="selection">Default scope: selection</option>
+                              <option value="visible">Default scope: visible rows</option>
+                            </select>
+                          </div>
+                          <div className="mac-double-outline p-2">
+                            <div className="text-[11px] font-semibold mb-1">Source columns</div>
+                            <div className="grid grid-cols-2 md:grid-cols-3 gap-1">
+                              {colsForEdit.map((colId) => {
+                                const checked = ruleDraft.sourceColumnIds.includes(colId);
+                                return (
+                                  <label key={`src-${rule.id}-${colId}`} className="text-[11px] inline-flex items-center gap-1">
+                                    <input
+                                      type="checkbox"
+                                      checked={checked}
+                                      onChange={(e) => {
+                                        setRuleDraft((prev) => {
+                                          const set = new Set(prev.sourceColumnIds);
+                                          if (e.target.checked) set.add(colId);
+                                          else set.delete(colId);
+                                          return { ...prev, sourceColumnIds: Array.from(set) };
+                                        });
+                                      }}
+                                    />
+                                    <span>{describeCol(colId)}</span>
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <label className="text-[11px] inline-flex items-center gap-1">
+                              <input
+                                type="checkbox"
+                                checked={ruleDraft.enabled}
+                                onChange={(e) => setRuleDraft((prev) => ({ ...prev, enabled: e.target.checked }))}
+                              />
+                              <span>Enabled</span>
+                            </label>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <button type="button" className="mac-btn h-7" onClick={saveAiRuleDraft} disabled={aiRulesBusy}>
+                              Save
+                            </button>
+                            <button type="button" className="mac-btn h-7" onClick={() => setEditingRuleId(null)} disabled={aiRulesBusy}>
+                              Cancel
+                            </button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <button type="button" className="mac-btn h-8" onClick={startCreateAiRule} disabled={aiRulesBusy || !activeTable}>
+                  New rule
+                </button>
+                <button type="button" className="mac-btn h-8" onClick={() => setAiRulesOpen(false)} disabled={aiRulesBusy}>
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {showStickyBars && tableVisibilityPopover ? (
         <div
           data-table-visibility-popover="1"
@@ -2220,9 +2611,13 @@ export function SpreadsheetView({
             return (
               <TableVisibilityPopover
                 title={`Table ${t.id}`}
-                kind={(t.kind || 'normal') as any}
+                kind={
+                  t.kind === 'sourceData' || t.kind === 'groupingCellValue' || t.kind === 'groupingHeaderValue' || t.kind === 'normal'
+                    ? t.kind
+                    : 'normal'
+                }
                 onChangeKind={(nextKind) => {
-                  mutateSheet((s) => setTableKindModel(s, t.id, nextKind as any));
+                  mutateSheet((s) => setTableKindModel(s, t.id, nextKind));
                 }}
                 keyCol={(() => {
                   const hc = Math.max(0, Math.min(t.colIds.length, t.headerCols || 0));
@@ -3246,8 +3641,8 @@ export function SpreadsheetView({
                     else toCreate.push(t);
                   });
 
-                  let createdIds: string[] = [];
-                  let createdPeople: GridPersonV1[] = [];
+                  const createdIds: string[] = [];
+                  const createdPeople: GridPersonV1[] = [];
                   if (toCreate.length) {
                     mutateDoc((d) => {
                       const pd = (d.peopleDirectory || []).slice();

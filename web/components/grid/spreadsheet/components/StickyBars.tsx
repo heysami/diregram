@@ -22,6 +22,8 @@ export function StickyBars({
   onOpenTableVisibility,
   onSaveActiveTableAsTemplate,
   onInsertTableFromTemplate,
+  onOpenAiRules,
+  aiRulesDisabledReason,
 }: {
   activeTable: GridTableV1 | null;
   cellSelectionCount: number;
@@ -44,6 +46,8 @@ export function StickyBars({
   onOpenTableVisibility?: (anchorEl: HTMLElement) => void;
   onSaveActiveTableAsTemplate?: () => void;
   onInsertTableFromTemplate?: () => void;
+  onOpenAiRules?: () => void;
+  aiRulesDisabledReason?: string;
 }) {
   return (
     <>
@@ -166,8 +170,18 @@ export function StickyBars({
             Formatting
           </button>
         ) : null}
+        {onOpenAiRules || aiRulesDisabledReason ? (
+          <button
+            type="button"
+            className="mac-btn h-7"
+            onClick={onOpenAiRules}
+            disabled={!onOpenAiRules}
+            title={onOpenAiRules ? 'Create and run AI rules for this table' : aiRulesDisabledReason || 'AI rules unavailable'}
+          >
+            AI rules…
+          </button>
+        ) : null}
       </div>
     </>
   );
 }
-

@@ -6,8 +6,7 @@ import { useAuth } from '@/hooks/use-auth';
 import { normalizeLayoutDirection, type LayoutDirection } from '@/lib/layout-direction';
 import { fetchProfileDefaultLayoutDirection, updateProfileDefaultLayoutDirection } from '@/lib/layout-direction-supabase';
 import { DiregramMark } from '@/components/DiregramMark';
-
-const OPENAI_KEY_STORAGE = 'diregram.openaiApiKey.v1';
+import { loadOpenAiApiKeyFromBrowser, saveOpenAiApiKeyToBrowser } from '@/lib/openai-key-browser';
 
 type McpTargetClient = 'cursor' | 'codex' | 'claude_desktop' | 'claude_web';
 
@@ -19,22 +18,11 @@ const MCP_TARGET_OPTIONS: Array<{ value: McpTargetClient; label: string }> = [
 ];
 
 function loadOpenAiKey(): string {
-  if (typeof window === 'undefined') return '';
-  try {
-    return String(window.localStorage.getItem(OPENAI_KEY_STORAGE) || '');
-  } catch {
-    return '';
-  }
+  return loadOpenAiApiKeyFromBrowser();
 }
 
 function saveOpenAiKey(next: string) {
-  if (typeof window === 'undefined') return;
-  try {
-    if (!next) window.localStorage.removeItem(OPENAI_KEY_STORAGE);
-    else window.localStorage.setItem(OPENAI_KEY_STORAGE, next);
-  } catch {
-    // ignore
-  }
+  saveOpenAiApiKeyToBrowser(next);
 }
 
 function normalizeTargetClient(input: string): McpTargetClient {

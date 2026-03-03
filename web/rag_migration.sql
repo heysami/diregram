@@ -280,7 +280,7 @@ create policy "rag_mcp_ssh_keys_owner_only" on public.rag_mcp_ssh_keys
 -- 6) Durable async jobs for long-running RAG/docling processing.
 create table if not exists public.async_jobs (
   id uuid primary key default uuid_generate_v4(),
-  kind text not null check (kind in ('rag_ingest', 'rag_ingest_jwt', 'docling_convert')),
+  kind text not null check (kind in ('rag_ingest', 'rag_ingest_jwt', 'docling_convert', 'ai_file_generation', 'ai_grid_rule')),
   status text not null check (status in ('queued', 'running', 'succeeded', 'failed', 'cancelled')),
   owner_id uuid references public.profiles(id) on delete cascade not null,
   requester_user_id uuid references public.profiles(id) on delete set null,

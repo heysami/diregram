@@ -13,6 +13,8 @@ import { canEditFromAccess } from '@/lib/access-control';
 import { fetchProfileDefaultLayoutDirection } from '@/lib/layout-direction-supabase';
 import type { LayoutDirection } from '@/lib/layout-direction';
 import { listGlobalTemplates, loadGlobalTemplateContent } from '@/lib/global-templates';
+import { useAsyncJobQueue } from '@/hooks/use-async-job-queue';
+import { AsyncProcessingDrawer } from '@/components/async-jobs/AsyncProcessingDrawer';
 
 type ActiveFileMeta = {
   id: string;
@@ -46,6 +48,7 @@ export function NoteEditorApp() {
   const [templateFiles, setTemplateFiles] = useState<
     Array<{ id: string; name: string; kind: 'note' | 'diagram' | 'grid' | 'vision' | 'template' }>
   >([]);
+  const asyncQueue = useAsyncJobQueue();
 
   const ensureTemplatesFolderId = useCallback(async (scopeOverride?: 'project' | 'account'): Promise<string | null> => {
     const scope = scopeOverride || templateScope;
@@ -353,28 +356,36 @@ export function NoteEditorApp() {
   if (!roomReady || !contentReady) return <div className="mac-desktop dg-screen-loading h-screen w-screen" aria-hidden="true" />;
 
   return (
-    <NoteEditor
-      yDoc={yDoc}
-      provider={provider}
-      fileId={activeFile.id}
-      title={activeFile.name}
-      statusLabel={statusLabel}
-      onBack={() => router.push('/workspace')}
-      onOpenNoteLink={({ fileId, blockId }) => {
-        const fid = String(fileId || '').trim();
-        if (!fid) return;
-        const hash = blockId ? `#${encodeURIComponent(String(blockId))}` : '';
-        router.push(`/editor?file=${encodeURIComponent(fid)}${hash}`);
-      }}
-      commentPanel={commentPanel}
-      onCommentPanelChange={setCommentPanel}
-      templateScope={templateScope}
-      onTemplateScopeChange={setTemplateScope}
-      templateFiles={templateFiles}
-      loadTemplateMarkdown={loadTemplateMarkdown}
-      onSaveTemplateFile={saveTemplateFile}
-      templateSourceLabel={activeFile.name}
-      globalTemplatesEnabled={supabaseMode && !!supabase && !!user?.id}
-    />
+    <>
+      <NoteEditor
+        yDoc={yDoc}
+        provider={provider}
+        fileId={activeFile.id}
+        title={activeFile.name}
+        statusLabel={statusLabel}
+        onBack={() => router.push('/workspace')}
+        onOpenNoteLink={({ fileId, blockId }) => {
+          const fid = String(fileId || '').trim();
+          if (!fid) return;
+          const hash = blockId ? `#${encodeURIComponent(String(blockId))}` : '';
+          router.push(`/editor?file=${encodeURIComponent(fid)}${hash}`);
+        }}
+        commentPanel={commentPanel}
+        onCommentPanelChange={setCommentPanel}
+        templateScope={templateScope}
+        onTemplateScopeChange={setTemplateScope}
+        templateFiles={templateFiles}
+        loadTemplateMarkdown={loadTemplateMarkdown}
+        onSaveTemplateFile={saveTemplateFile}
+        templateSourceLabel={activeFile.name}
+        globalTemplatesEnabled={supabaseMode && !!supabase && !!user?.id}
+      />
+      <AsyncProcessingDrawer
+        jobs={asyncQueue.jobs}
+        onCancelJob={asyncQueue.cancelJob}
+        onRemoveJob={asyncQueue.removeJob}
+        onClearFinished={asyncQueue.clearFinished}
+      />
+    </>
   );
 }

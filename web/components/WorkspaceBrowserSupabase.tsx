@@ -27,6 +27,9 @@ import { DoclingImportPanel } from '@/components/docling/DoclingImportPanel';
 import { ImportMermaidModal } from '@/components/mermaid/ImportMermaidModal';
 import { MarkdownDocModal } from '@/components/grid/MarkdownDocModal';
 import { downloadTextFile } from '@/lib/client-download';
+import { ensureOpenAiApiKeyWithPrompt } from '@/lib/openai-key-browser';
+import { useAsyncJobQueue } from '@/hooks/use-async-job-queue';
+import { AsyncProcessingDrawer } from '@/components/async-jobs/AsyncProcessingDrawer';
 
 type DbFolder = {
   id: string;
@@ -159,26 +162,16 @@ export function WorkspaceBrowserSupabase() {
   const [resources, setResources] = useState<DbProjectResource[]>([]);
   const [resourceModalOpen, setResourceModalOpen] = useState(false);
   const [resourceModal, setResourceModal] = useState<{ id: string; name: string; markdown: string } | null>(null);
-
-  const loadOpenAiKey = () => {
-    try {
-      return String(window.localStorage.getItem('diregram.openaiApiKey.v1') || '');
-    } catch {
-      return '';
-    }
-  };
+  const [aiGenerateOpen, setAiGenerateOpen] = useState(false);
+  const [aiGenerateBusy, setAiGenerateBusy] = useState(false);
+  const [aiGenerateRows, setAiGenerateRows] = useState<Array<{ outputKind: 'note' | 'user_story_grid'; fileName: string; prompt: string }>>([
+    { outputKind: 'note', fileName: 'Generated Note', prompt: '' },
+  ]);
+  const [aiGenerateError, setAiGenerateError] = useState<string | null>(null);
+  const asyncQueue = useAsyncJobQueue();
 
   const ensureOpenAiKey = async (): Promise<string> => {
-    const existing = loadOpenAiKey().trim();
-    if (existing) return existing;
-    const entered = String(window.prompt('Enter your OpenAI API key (starts with sk-). This will be saved in this browser only.', '') || '').trim();
-    if (!entered) return '';
-    try {
-      window.localStorage.setItem('diregram.openaiApiKey.v1', entered);
-    } catch {
-      // ignore
-    }
-    return entered;
+    return await ensureOpenAiApiKeyWithPrompt();
   };
 
   const showToast = (msg: string) => {
@@ -742,6 +735,71 @@ export function WorkspaceBrowserSupabase() {
     openFile(file);
   };
 
+  const resetAiGenerateModal = () => {
+    setAiGenerateRows([{ outputKind: 'note', fileName: 'Generated Note', prompt: '' }]);
+    setAiGenerateError(null);
+    setAiGenerateBusy(false);
+  };
+
+  const runAiGenerateFiles = async () => {
+    if (!activeFolder) return;
+    if (aiGenerateBusy) return;
+    setAiGenerateError(null);
+    const tasks = aiGenerateRows
+      .map((r) => ({
+        outputKind: r.outputKind === 'user_story_grid' ? 'user_story_grid' : 'note',
+        fileName: String(r.fileName || '').trim(),
+        prompt: String(r.prompt || '').trim(),
+      }))
+      .filter((r) => Boolean(r.fileName) && Boolean(r.prompt))
+      .slice(0, 20);
+    if (!tasks.length) {
+      setAiGenerateError('Add at least one valid row (file name + prompt).');
+      return;
+    }
+    if (tasks.length > 20) {
+      setAiGenerateError('Maximum 20 tasks per run.');
+      return;
+    }
+    setAiGenerateBusy(true);
+    try {
+      const openaiApiKey = await ensureOpenAiKey();
+      if (!openaiApiKey) {
+        setAiGenerateError('Missing OpenAI key (set it in Account).');
+        return;
+      }
+      const res = await fetch('/api/ai/file-generation', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-openai-api-key': openaiApiKey,
+        },
+        body: JSON.stringify({
+          projectFolderId: activeFolder.id,
+          tasks,
+        }),
+      });
+      const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+      if (!res.ok) {
+        setAiGenerateError(String(json.error || `Failed (${res.status})`));
+        return;
+      }
+      const jobId = String(json.jobId || '').trim();
+      if (!jobId) {
+        setAiGenerateError('Missing async job id');
+        return;
+      }
+      asyncQueue.trackJob({ id: jobId, kind: 'ai_file_generation', title: `AI file generation (${tasks.length})` });
+      showToast('AI generation queued');
+      setAiGenerateOpen(false);
+      resetAiGenerateModal();
+    } catch (e) {
+      setAiGenerateError(e instanceof Error ? e.message : 'Failed to queue generation');
+    } finally {
+      setAiGenerateBusy(false);
+    }
+  };
+
   const saveProject = async () => {
     if (!editProject || !supabase) return;
     setEditError(null);
@@ -1110,6 +1168,14 @@ export function WorkspaceBrowserSupabase() {
                   if (!origin) return;
                   await copyText(`${origin}/workspace?project=${encodeURIComponent(activeFolder.id)}`);
                 }}
+                onAiGenerateFiles={
+                  effectiveCanEditFolder(activeFolder, userId, userEmail)
+                    ? async () => {
+                        resetAiGenerateModal();
+                        setAiGenerateOpen(true);
+                      }
+                    : undefined
+                }
                 onExportBundle={async () => {
                   if (!supabase) return;
                   const includeKgVectors = confirm('Include KG + embeddings outputs in the bundle?');
@@ -1454,6 +1520,105 @@ export function WorkspaceBrowserSupabase() {
         }}
       />
 
+      {aiGenerateOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
+          <button
+            type="button"
+            className="absolute inset-0 bg-white/60"
+            aria-label="Close"
+            onClick={() => {
+              if (aiGenerateBusy) return;
+              setAiGenerateOpen(false);
+            }}
+          />
+          <div className="relative mac-window mac-double-outline w-[860px] max-w-[96vw] max-h-[88vh] overflow-hidden">
+            <div className="mac-titlebar">
+              <div className="mac-title">AI generate files</div>
+            </div>
+            <div className="p-4 space-y-3 overflow-auto max-h-[calc(88vh-90px)]">
+              <div className="text-xs opacity-80">
+                Queue up to 20 tasks. Output supports Note files and User-story Grid files.
+              </div>
+              {aiGenerateRows.map((row, idx) => (
+                <div key={`ai-task-${idx}`} className="mac-double-outline p-3 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <select
+                      className="mac-field h-8"
+                      value={row.outputKind}
+                      onChange={(e) =>
+                        setAiGenerateRows((prev) =>
+                          prev.map((x, i) => (i === idx ? { ...x, outputKind: e.target.value === 'user_story_grid' ? 'user_story_grid' : 'note' } : x)),
+                        )
+                      }
+                      disabled={aiGenerateBusy}
+                    >
+                      <option value="note">Note file</option>
+                      <option value="user_story_grid">User-story Grid file</option>
+                    </select>
+                    <input
+                      className="mac-field h-8 flex-1 min-w-[200px]"
+                      placeholder="File name"
+                      value={row.fileName}
+                      onChange={(e) =>
+                        setAiGenerateRows((prev) => prev.map((x, i) => (i === idx ? { ...x, fileName: e.target.value } : x)))
+                      }
+                      disabled={aiGenerateBusy}
+                    />
+                    <button
+                      type="button"
+                      className="mac-btn h-8"
+                      disabled={aiGenerateBusy || aiGenerateRows.length <= 1}
+                      onClick={() => setAiGenerateRows((prev) => prev.filter((_, i) => i !== idx))}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                  <textarea
+                    className="mac-field w-full min-h-[80px]"
+                    placeholder="Prompt"
+                    value={row.prompt}
+                    onChange={(e) => setAiGenerateRows((prev) => prev.map((x, i) => (i === idx ? { ...x, prompt: e.target.value } : x)))}
+                    disabled={aiGenerateBusy}
+                  />
+                </div>
+              ))}
+              <div className="flex items-center justify-between gap-2">
+                <button
+                  type="button"
+                  className="mac-btn h-8"
+                  disabled={aiGenerateBusy || aiGenerateRows.length >= 20}
+                  onClick={() =>
+                    setAiGenerateRows((prev) => [...prev, { outputKind: 'note', fileName: `Generated Note ${prev.length + 1}`, prompt: '' }])
+                  }
+                >
+                  Add task
+                </button>
+                <div className="text-[11px] opacity-70">{aiGenerateRows.length}/20</div>
+              </div>
+              {aiGenerateError ? <div className="text-xs mac-double-outline p-2">{aiGenerateError}</div> : null}
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  className="mac-btn"
+                  onClick={() => setAiGenerateOpen(false)}
+                  disabled={aiGenerateBusy}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="mac-btn mac-btn--primary"
+                  onClick={runAiGenerateFiles}
+                  disabled={aiGenerateBusy}
+                >
+                  {aiGenerateBusy ? 'Queueing…' : 'Queue generation'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {editProject ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
           <button type="button" className="absolute inset-0 bg-white/60" aria-label="Close" onClick={() => setEditProject(null)} />
@@ -1569,6 +1734,13 @@ export function WorkspaceBrowserSupabase() {
           </div>
         </div>
       ) : null}
+
+      <AsyncProcessingDrawer
+        jobs={asyncQueue.jobs}
+        onCancelJob={asyncQueue.cancelJob}
+        onRemoveJob={asyncQueue.removeJob}
+        onClearFinished={asyncQueue.clearFinished}
+      />
     </div>
   );
 }

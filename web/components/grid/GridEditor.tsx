@@ -24,6 +24,7 @@ export function GridEditor({
   yDoc,
   onChange,
   fileId,
+  projectFolderId,
   statusLabel,
   diagramFiles,
   linkedDiagramFileId,
@@ -47,12 +48,15 @@ export function GridEditor({
   onSaveTemplateFile,
   templateSourceLabel,
   globalTemplatesEnabled,
+  onTrackAsyncJob,
+  aiFeaturesEnabled,
 }: {
   doc: GridDoc;
   yDoc?: Y.Doc | null;
   onChange: (next: GridDoc) => void;
   /** Current file id; used to prevent internal pastes across different files. */
   fileId: string;
+  projectFolderId?: string | null;
   statusLabel?: string;
   diagramFiles?: Array<{ id: string; name: string; roomName: string; kind: string; canEdit: boolean }>;
   linkedDiagramFileId?: string | null;
@@ -76,6 +80,8 @@ export function GridEditor({
   onSaveTemplateFile?: (res: { name: string; content: string; scope?: 'project' | 'account' }) => Promise<void> | void;
   templateSourceLabel?: string;
   globalTemplatesEnabled?: boolean;
+  onTrackAsyncJob?: (input: { id: string; kind: string; title?: string }) => void;
+  aiFeaturesEnabled?: boolean;
 }) {
   const sheets = doc.sheets || [];
   const activeSheet = useMemo<GridSheetV1 | null>(() => sheets.find((s) => s.id === doc.activeSheetId) || sheets[0] || null, [sheets, doc.activeSheetId]);
@@ -136,6 +142,7 @@ export function GridEditor({
   }, [rawMarkdown, doc, activeSheet]);
 
   type GridSheetTemplateV1 = { version: 1; sheet: Omit<GridSheetV1, 'id'> & { id?: string } };
+  type TemplateScope = 'project' | 'account' | 'global';
 
   const nextSheetId = (existing: GridSheetV1[]): string => {
     let max = 0;
@@ -156,7 +163,12 @@ export function GridEditor({
     if (r.version !== 1) throw new Error('Unsupported sheet template version.');
     const sheet = r.sheet as unknown;
     if (!sheet || typeof sheet !== 'object') throw new Error('Invalid sheet.');
-    return { version: 1, sheet: sheet as any };
+    return { version: 1, sheet: sheet as GridSheetTemplateV1['sheet'] };
+  };
+
+  const normalizeTemplateScope = (next: string): TemplateScope => {
+    if (next === 'account' || next === 'global') return next;
+    return 'project';
   };
 
   if (!activeSheet) {
@@ -307,9 +319,10 @@ export function GridEditor({
                 onClick={async () => {
                   if (!activeSheet) return;
                   if (!onSaveTemplateFile) return;
+                  const sheetWithoutId = Object.fromEntries(Object.entries(activeSheet).filter(([k]) => k !== 'id')) as Omit<GridSheetV1, 'id'>;
                   const payloadObj: GridSheetTemplateV1 = {
                     version: 1,
-                    sheet: { ...(activeSheet as any), id: 'sheet-template' },
+                    sheet: { ...sheetWithoutId, id: 'sheet-template' },
                   };
                   const payload = ['```nexus-grid-sheet', JSON.stringify(payloadObj, null, 2), '```', ''].join('\n');
                   const headerBase: Omit<NexusTemplateHeader, 'name'> = {
@@ -356,7 +369,7 @@ export function GridEditor({
                       { id: 'account', label: 'Account' },
                       ...(globalTemplatesEnabled ? [{ id: 'global', label: 'Global' }] : []),
                     ],
-                    onChange: (next) => onTemplateScopeChange(next as any),
+                    onChange: (next) => onTemplateScopeChange(normalizeTemplateScope(next)),
                   }
                 : undefined
             }
@@ -364,9 +377,9 @@ export function GridEditor({
             onInsert={async ({ content }) => {
               const tpl = parseGridSheetTemplate(content);
               const id = nextSheetId(doc.sheets || []);
-              const base = tpl.sheet as any;
+              const base = tpl.sheet;
               const nextSheet: GridSheetV1 = {
-                ...(base as GridSheetV1),
+                ...(base as unknown as GridSheetV1),
                 id,
                 name: typeof base.name === 'string' && base.name.trim() ? base.name : `Sheet ${String((doc.sheets || []).length + 1)}`,
               };
@@ -389,6 +402,7 @@ export function GridEditor({
               <SpreadsheetView
                 doc={doc}
                 fileId={fileId}
+                projectFolderId={projectFolderId}
                 sheet={activeSheet}
                 activeTool={activeTool}
                 commentTargetKeys={commentTargetKeysForActiveSheet}
@@ -421,6 +435,8 @@ export function GridEditor({
                 onSaveTemplateFile={onSaveTemplateFile}
                 templateSourceLabel={templateSourceLabel}
                 globalTemplatesEnabled={globalTemplatesEnabled}
+                onTrackAsyncJob={onTrackAsyncJob}
+                aiFeaturesEnabled={aiFeaturesEnabled}
               />
             </div>
           )}

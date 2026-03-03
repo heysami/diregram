@@ -98,6 +98,7 @@ export function ProjectActionMenus({
   ragStatusText,
   onCopyMcpAccountUrl,
   onCopyProjectLink,
+  onAiGenerateFiles,
   onExportBundle,
   onExportKg,
   onEditProject,
@@ -116,6 +117,7 @@ export function ProjectActionMenus({
   ragStatusText?: string | null;
   onCopyMcpAccountUrl?: () => void | Promise<void>;
   onCopyProjectLink?: () => void | Promise<void>;
+  onAiGenerateFiles?: () => void | Promise<void>;
   onExportBundle: () => void | Promise<void>;
   onExportKg: () => void | Promise<void>;
   onEditProject: () => void;
@@ -254,6 +256,14 @@ export function ProjectActionMenus({
             disabled: !onCopyProjectLink,
             title: onCopyProjectLink ? 'Copy a link that opens this project in the Workspace' : undefined,
             onClick: onCopyProjectLink || (() => {}),
+          },
+          {
+            id: 'ai-generate-files',
+            label: 'AI generate files…',
+            icon: <FileText size={14} />,
+            disabled: !onAiGenerateFiles,
+            title: onAiGenerateFiles ? 'Generate notes and user-story grids asynchronously' : 'Available in Supabase mode only',
+            onClick: onAiGenerateFiles || (() => {}),
           },
           { id: 'export-bundle', label: 'Export bundle (.zip)', icon: <Package size={14} />, onClick: onExportBundle },
           { id: 'export-kg', label: 'Export semantic KG', icon: <Share2 size={14} />, onClick: onExportKg },

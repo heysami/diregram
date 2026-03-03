@@ -1,4 +1,4 @@
-export type AsyncJobKind = 'rag_ingest' | 'rag_ingest_jwt' | 'docling_convert';
+export type AsyncJobKind = 'rag_ingest' | 'rag_ingest_jwt' | 'docling_convert' | 'ai_file_generation' | 'ai_grid_rule';
 
 export type AsyncJobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
 

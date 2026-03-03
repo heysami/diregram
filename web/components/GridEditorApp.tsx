@@ -14,6 +14,8 @@ import { useLinkedDiagramDataObjects } from '@/hooks/use-linked-diagram-data-obj
 import { canEditFromAccess } from '@/lib/access-control';
 import { fetchProfileDefaultLayoutDirection } from '@/lib/layout-direction-supabase';
 import { listGlobalTemplates, loadGlobalTemplateContent } from '@/lib/global-templates';
+import { useAsyncJobQueue, type AsyncTrackedJob } from '@/hooks/use-async-job-queue';
+import { AsyncProcessingDrawer } from '@/components/async-jobs/AsyncProcessingDrawer';
 
 type ActiveFileMeta = {
   id: string;
@@ -51,6 +53,7 @@ export function GridEditorApp() {
   const [templateFiles, setTemplateFiles] = useState<
     Array<{ id: string; name: string; kind: 'note' | 'diagram' | 'grid' | 'vision' | 'template' }>
   >([]);
+  const asyncQueue = useAsyncJobQueue();
 
   const ensureTemplatesFolderId = useCallback(async (scopeOverride?: 'project' | 'account'): Promise<string | null> => {
     const scope = scopeOverride || (templateScope === 'account' ? 'account' : 'project');
@@ -404,6 +407,58 @@ export function GridEditorApp() {
     };
   }, []);
 
+  const appliedAsyncResultRef = useRef<Set<string>>(new Set());
+
+  const applyGridRuleResultToOpenDoc = useCallback(
+    (job: AsyncTrackedJob) => {
+      if (!gridDoc) return;
+      const result = (job.result || {}) as Record<string, unknown>;
+      const fileId = String(result.fileId || '').trim();
+      const sheetId = String(result.sheetId || '').trim();
+      const updatesRaw = Array.isArray(result.updates) ? (result.updates as unknown[]) : [];
+      if (!fileId || !sheetId || !updatesRaw.length) return;
+      if (fileId !== activeFile?.id) return;
+
+      const updates = updatesRaw
+        .map((u) => (u && typeof u === 'object' ? (u as Record<string, unknown>) : null))
+        .filter((x): x is Record<string, unknown> => x !== null)
+        .map((u) => ({
+          rowId: String(u.rowId || '').trim(),
+          colId: String(u.colId || '').trim(),
+          value: String(u.value || ''),
+          ok: Boolean(u.ok),
+        }))
+        .filter((u) => u.ok && u.rowId && u.colId);
+      if (!updates.length) return;
+
+      const nextDoc = {
+        ...gridDoc,
+        sheets: (gridDoc.sheets || []).map((s) => {
+          if (s.id !== sheetId) return s;
+          const nextCells = { ...(s.grid.cells || {}) };
+          updates.forEach((u) => {
+            const key = `${u.rowId}:${u.colId}`;
+            const v = String(u.value || '').trim();
+            if (!v) delete nextCells[key];
+            else nextCells[key] = { value: u.value };
+          });
+          return { ...s, grid: { ...s.grid, cells: nextCells } };
+        }),
+      };
+      handleGridChange(nextDoc);
+    },
+    [gridDoc, activeFile?.id, handleGridChange],
+  );
+
+  useEffect(() => {
+    const succeeded = asyncQueue.jobs.filter((j) => j.kind === 'ai_grid_rule' && j.status === 'succeeded');
+    succeeded.forEach((job) => {
+      if (appliedAsyncResultRef.current.has(job.id)) return;
+      applyGridRuleResultToOpenDoc(job);
+      appliedAsyncResultRef.current.add(job.id);
+    });
+  }, [asyncQueue.jobs, applyGridRuleResultToOpenDoc]);
+
   const statusLabel = useMemo(() => {
     if (status === 'connected') return 'Online';
     if (status === 'connecting') return 'Connecting…';
@@ -415,33 +470,45 @@ export function GridEditorApp() {
   if (!gridDoc) return <div className="mac-desktop dg-screen-loading h-screen w-screen" aria-hidden="true" />;
 
   return (
-    <GridEditor
-      doc={gridDoc}
-      yDoc={yDoc}
-      onChange={handleGridChange}
-      fileId={activeFile.id}
-      statusLabel={statusLabel}
-      diagramFiles={diagramFiles}
-      linkedDiagramFileId={linkedDiagramFileId}
-      onLinkedDiagramFileIdChange={setLinkedDiagramFileId}
-      linkedDiagramStatusLabel={linkedDiagramStatusLabel || undefined}
-      linkedDataObjectStore={linkedDataObjectStore}
-      canEditLinkedDiagramFile={canEditLinkedDiagramFile}
-      upsertLinkedDataObject={upsertLinkedDataObject}
-      title={activeFile.name}
-      onBack={() => router.push('/workspace')}
-      onUndo={undo}
-      onRedo={redo}
-      canUndo={canUndo}
-      canRedo={canRedo}
-      rawMarkdown={rawMarkdown}
-      templateScope={templateScope}
-      onTemplateScopeChange={setTemplateScope}
-      templateFiles={templateFiles}
-      loadTemplateMarkdown={loadTemplateMarkdown}
-      onSaveTemplateFile={saveTemplateFile}
-      templateSourceLabel={activeFile.name}
-      globalTemplatesEnabled={supabaseMode && !!supabase && !!user?.id}
-    />
+    <>
+      <GridEditor
+        doc={gridDoc}
+        yDoc={yDoc}
+        onChange={handleGridChange}
+        fileId={activeFile.id}
+        statusLabel={statusLabel}
+        projectFolderId={activeFile.folderId}
+        diagramFiles={diagramFiles}
+        linkedDiagramFileId={linkedDiagramFileId}
+        onLinkedDiagramFileIdChange={setLinkedDiagramFileId}
+        linkedDiagramStatusLabel={linkedDiagramStatusLabel || undefined}
+        linkedDataObjectStore={linkedDataObjectStore}
+        canEditLinkedDiagramFile={canEditLinkedDiagramFile}
+        upsertLinkedDataObject={upsertLinkedDataObject}
+        title={activeFile.name}
+        onBack={() => router.push('/workspace')}
+        onUndo={undo}
+        onRedo={redo}
+        canUndo={canUndo}
+        canRedo={canRedo}
+        rawMarkdown={rawMarkdown}
+        templateScope={templateScope}
+        onTemplateScopeChange={setTemplateScope}
+        templateFiles={templateFiles}
+        loadTemplateMarkdown={loadTemplateMarkdown}
+        onSaveTemplateFile={saveTemplateFile}
+        templateSourceLabel={activeFile.name}
+        globalTemplatesEnabled={supabaseMode && !!supabase && !!user?.id}
+        onTrackAsyncJob={asyncQueue.trackJob}
+        aiFeaturesEnabled={supabaseMode}
+      />
+      <AsyncProcessingDrawer
+        jobs={asyncQueue.jobs}
+        onCancelJob={asyncQueue.cancelJob}
+        onRemoveJob={asyncQueue.removeJob}
+        onClearFinished={asyncQueue.clearFinished}
+        onApplyGridRuleResult={applyGridRuleResultToOpenDoc}
+      />
+    </>
   );
 }
