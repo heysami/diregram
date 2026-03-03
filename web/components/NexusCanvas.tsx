@@ -4518,8 +4518,26 @@ export function NexusCanvas({
                 const { pathD, mid } =
                   reverseBranchArrow
                     ? buildStandardConnectorBezier({
-                        start: { x: endX, y: endY },
-                        end: { x: startX, y: startY },
+                        start:
+                          layoutDirection === 'vertical'
+                            ? {
+                                x: childX + (childIsDiamond ? childDiamondSize : childLayout.width) / 2,
+                                y: childY,
+                              }
+                            : {
+                                x: childX,
+                                y: childY + (childIsDiamond ? childDiamondSize : childLayout.height) / 2,
+                              },
+                        end:
+                          layoutDirection === 'vertical'
+                            ? {
+                                x: parentX + (parentIsDiamond ? parentDiamondSize : parentLayout.width) / 2,
+                                y: parentY + (parentIsDiamond ? parentDiamondSize : parentLayout.height),
+                              }
+                            : {
+                                x: parentX + (parentIsDiamond ? parentDiamondSize : parentLayout.width),
+                                y: parentY + (parentIsDiamond ? parentDiamondSize : parentLayout.height) / 2,
+                              },
                         layoutDirection,
                       })
                     : parentType === 'validation'

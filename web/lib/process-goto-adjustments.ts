@@ -48,7 +48,9 @@ export function adjustGotoLayoutAndRouting(opts: {
       const parent = nodeMap.get(cur.parentId);
       if (!parent) return null;
       const parentType = processNodeTypes[parent.id];
-      if (parentType === 'validation' || parentType === 'branch') {
+      const isDecisionTyped = parentType === 'validation' || parentType === 'branch';
+      const isStructuralBranchPoint = parent.isFlowNode && parent.children.length >= 2;
+      if (isDecisionTyped || isStructuralBranchPoint) {
         return parent;
       }
       cur = parent;
@@ -115,15 +117,27 @@ export function adjustGotoLayoutAndRouting(opts: {
     const targetIsBeforeValidation = targetAxis <= validationAxis;
     const targetOrder = renderOrderById.get(targetId);
     const validationOrder = renderOrderById.get(validation.id);
+    const gotoOrder = renderOrderById.get(gotoId);
     const targetAppearsBeforeValidation =
       targetOrder !== undefined &&
       validationOrder !== undefined &&
       targetOrder < validationOrder;
+    const targetAppearsBeforeGoto =
+      targetOrder !== undefined &&
+      gotoOrder !== undefined &&
+      targetOrder < gotoOrder;
+    const targetAxisBeforeGoto = targetAxis <= gotoAxis;
 
     const isCase2 = targetIsDescendantOfValidation && targetIsNearerThanGoto;
     const isCase3 =
       !targetIsDescendantOfValidation &&
-      (targetIsBeforeValidation || targetIsAncestorOfValidation || targetAppearsBeforeValidation);
+      (
+        targetIsBeforeValidation ||
+        targetIsAncestorOfValidation ||
+        targetAppearsBeforeValidation ||
+        targetAppearsBeforeGoto ||
+        targetAxisBeforeGoto
+      );
 
     routeHintsByGotoId[gotoId] = isCase3 ? 'backtrack' : 'default';
     if (isCase3) {
