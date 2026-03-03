@@ -58,22 +58,16 @@ function buildSshArgs(input: {
   ];
   const openAiApiKey = String(input.openAiApiKey || '').trim();
   const useLoginShell = Boolean(input.useLoginShell);
+  const remoteExecParts = [
+    `exec ${shSingle(input.remoteNode)} ${shSingle(input.remoteStdioPath)}`,
+    `--token ${shSingle(input.token)}`,
+    openAiApiKey ? `--openai-api-key ${shSingle(openAiApiKey)}` : '',
+  ].filter(Boolean);
+  const remoteExecCommand = remoteExecParts.join(' ');
   if (useLoginShell) {
-    const parts = [
-      `exec ${shSingle(input.remoteNode)} ${shSingle(input.remoteStdioPath)}`,
-      `--token ${shSingle(input.token)}`,
-      openAiApiKey ? `--openai-api-key ${shSingle(openAiApiKey)}` : '',
-    ].filter(Boolean);
-    return [...sshBaseArgs, 'bash', '-lc', parts.join(' ')];
+    return [...sshBaseArgs, `bash -lc ${shSingle(remoteExecCommand)}`];
   }
-  return [
-    ...sshBaseArgs,
-    input.remoteNode,
-    input.remoteStdioPath,
-    '--token',
-    input.token,
-    ...(openAiApiKey ? ['--openai-api-key', openAiApiKey] : []),
-  ];
+  return [...sshBaseArgs, remoteExecCommand];
 }
 
 export async function POST(request: Request) {
