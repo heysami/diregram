@@ -22,13 +22,14 @@ function buildPlainTextSteps() {
   return [
     'Help on AI usage — recommended sequence',
     '',
-    'Stage 1 — Prepare inputs (guides + resources)',
-    '- Download the AI guideline + checklist bundle(s).',
+    'Stage 1 — Prepare inputs (strict skills + resources)',
+    '- Download strict-plan agent skills: (1) Generation + Checklist and (2) MCP RAG Operator.',
+    '- Keep legacy markdown bundles only as fallback reference.',
     '- Put them in your Cursor project folder along with your source resources.',
     '- Convert resources to markdown (e.g. via Docling) so the AI can cite them cleanly.',
     '',
     'Stage 2 — Generate + Vision assets + verification',
-    '- In Cursor (Agent mode), ask it to create the Diregram project you want, explicitly linking to the markdown resources and following the guideline format.',
+    '- In Cursor/Codex/Claude, run the generation skill and follow its strict step order.',
     '- If there is a design system or you have an online system, generate Vision assets as part of the generation workflow.',
     '- After generation, run the verification sequence: verify Data Relationship, then re-check IA + Expanded, then Swimlanes, then Tech Flow.',
     '',
@@ -41,9 +42,10 @@ function buildPlainTextSteps() {
     'Stage 4 — Build KG for RAG',
     '- Build the Knowledge Base for RAG (embeddings + semantic KG).',
     '',
-    'Stage 5 — MCP + build the app',
-    '- Create/use an MCP server to expose the RAG tools (see the `mcp-server-*` folders in this repo). BYOK: provide your own AI API key in the client (e.g. Cursor) as header x-openai-api-key.',
-    '- Back in Cursor, ask it to build the app using the RAG you set up through MCP.',
+    'Stage 5 — MCP + build the app (Account-managed MCP generation)',
+    '- Open Account MCP setup (/account#mcp-ssh-setup) to generate MCP config. MCP generation stays under Account.',
+    '- Use the MCP RAG Operator skill so tools are called in the correct order with project/key checks.',
+    '- Back in client, ask it to build the app using the RAG you set up through MCP.',
     '',
   ].join('\n');
 }
@@ -58,9 +60,18 @@ export function AiUsageHelpModal({ open, onClose }: { open: boolean; onClose: ()
     () => [
       {
         icon: Folder,
-        title: 'Stage 1 — Prepare inputs (guides + resources)',
+        title: 'Stage 1 — Prepare inputs (strict skills + resources)',
         steps: [
-          { icon: Download, title: 'Download the AI guideline + checklist', detail: <>Download the AI guideline and checklist bundle(s).</> },
+          {
+            icon: Download,
+            title: 'Download strict-plan agent skills',
+            detail: <>Download both strict-plan skills: Generation + Checklist and MCP RAG Operator.</>,
+          },
+          {
+            icon: FileText,
+            title: 'Keep markdown bundles as fallback',
+            detail: <>Legacy markdown guide bundles are still available as fallback references.</>,
+          },
           {
             icon: Folder,
             title: 'Put everything in one project folder',
@@ -87,7 +98,7 @@ export function AiUsageHelpModal({ open, onClose }: { open: boolean; onClose: ()
             title: 'Generate the Diregram project (Cursor Agent mode)',
             detail: (
               <>
-                Ask Cursor in Agent mode to create the project that you want, linking to the resources that are already markdown, and following the format of the guideline.
+                Run the strict generation skill in your client and follow the non-skippable sequence while linking the markdown resources.
               </>
             ),
           },
@@ -148,16 +159,23 @@ export function AiUsageHelpModal({ open, onClose }: { open: boolean; onClose: ()
       },
       {
         icon: AppWindow,
-        title: 'Stage 5 — MCP + build the app',
+        title: 'Stage 5 — MCP + build the app (Account-managed MCP generation)',
         steps: [
           {
             icon: FileText,
-            title: 'MCP setup (sample code + BYOK)',
+            title: 'Generate MCP from Account setup',
             detail: (
               <>
-                Once ready make a mcp (guide on sample code for mcp) for cursor with the url and ai api key. We have BYOK policy. Sample code lives in{' '}
-                the MCP server folders under <code className="font-mono">mcp-server-*/</code>. In Cursor, the key is
-                typically passed as header <code className="font-mono">x-openai-api-key</code>.
+                Open <code className="font-mono">/account#mcp-ssh-setup</code> to generate MCP config. MCP generation stays under Account.
+              </>
+            ),
+          },
+          {
+            icon: FileText,
+            title: 'Use MCP operator skill (strict tool order)',
+            detail: (
+              <>
+                Use the MCP RAG Operator skill so project selection and key checks are done before querying.
               </>
             ),
           },
@@ -194,6 +212,21 @@ export function AiUsageHelpModal({ open, onClose }: { open: boolean; onClose: ()
     mod.downloadVisionGuidesAndChecklistsBundle();
   };
 
+  const downloadGenerationSkill = async () => {
+    const mod = await import('@/lib/ai-guides/download-agent-skills');
+    mod.downloadGenerationChecklistAgentSkillBundle();
+  };
+
+  const downloadMcpSkill = async () => {
+    const mod = await import('@/lib/ai-guides/download-agent-skills');
+    mod.downloadMcpRagOperatorAgentSkillBundle();
+  };
+
+  const openAccountMcpSetup = () => {
+    if (typeof window === 'undefined') return;
+    window.location.assign('/account#mcp-ssh-setup');
+  };
+
   if (!open) return null;
 
   return (
@@ -224,13 +257,35 @@ export function AiUsageHelpModal({ open, onClose }: { open: boolean; onClose: ()
           </div>
 
           <div className="flex flex-wrap gap-2">
-            <button type="button" className="mac-btn h-8 flex items-center gap-2" onClick={() => void downloadDiagram()} title="Downloads a single .md bundle">
+            <button
+              type="button"
+              className="mac-btn h-8 flex items-center gap-2"
+              onClick={() => void downloadGenerationSkill()}
+              title="Downloads strict-plan agent skill ZIP"
+            >
               <Download size={14} />
-              Download diagram guides bundle
+              Download Agent Skill (Strict Plan): Generation + Checklist
             </button>
-            <button type="button" className="mac-btn h-8 flex items-center gap-2" onClick={() => void downloadVision()} title="Downloads a single .md bundle">
+            <button
+              type="button"
+              className="mac-btn h-8 flex items-center gap-2"
+              onClick={() => void downloadMcpSkill()}
+              title="Downloads strict-plan agent skill ZIP"
+            >
               <Download size={14} />
-              Download Vision guides bundle
+              Download Agent Skill (Strict Plan): MCP RAG Operator
+            </button>
+            <button type="button" className="mac-btn h-8 flex items-center gap-2" onClick={openAccountMcpSetup} title="Open Account MCP setup">
+              <AppWindow size={14} />
+              Open Account MCP setup
+            </button>
+            <button type="button" className="mac-btn h-8 flex items-center gap-2" onClick={() => void downloadDiagram()} title="Downloads legacy .md bundle">
+              <Download size={14} />
+              Download diagram guides bundle (legacy .md)
+            </button>
+            <button type="button" className="mac-btn h-8 flex items-center gap-2" onClick={() => void downloadVision()} title="Downloads legacy .md bundle">
+              <Download size={14} />
+              Download Vision guides bundle (legacy .md)
             </button>
             <button type="button" className="mac-btn h-8 flex items-center gap-2" onClick={() => void copy()} title="Copy the sequence for Cursor/AI">
               <Clipboard size={14} />
@@ -270,7 +325,7 @@ export function AiUsageHelpModal({ open, onClose }: { open: boolean; onClose: ()
 
           <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-[11px] text-slate-700">
             Tip: most of the “project-level” actions you’ll need are already under <span className="font-semibold">Project → …</span> in the workspace header (download
-            bundles, export semantic KG, build RAG KB, copy MCP URL).
+            bundles, download strict agent skills, export semantic KG, build RAG KB, copy MCP URL, and jump to Account MCP setup).
           </div>
 
           {copyStatus ? <div className="text-[11px] text-slate-600">{copyStatus}</div> : null}
@@ -279,4 +334,3 @@ export function AiUsageHelpModal({ open, onClose }: { open: boolean; onClose: ()
     </div>
   );
 }
-

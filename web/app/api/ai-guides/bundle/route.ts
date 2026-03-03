@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { FULL_AI_PROMPT } from '@/components/ImportMarkdownModal';
+import { FULL_AI_PROMPT } from '@/lib/ai-guides/diagram-full-prompt';
 import { EXPANDED_NODE_PLANNING_PROMPT } from '@/lib/ai-guides/expanded-node-planning';
 import { SINGLE_SCREEN_STEPS_GUIDE } from '@/lib/ai-guides/single-screen-steps';
 import { VISION_AI_GUIDANCE_PROMPT_FROM_RESOURCES, VISION_AI_GUIDANCE_PROMPT_FROM_WEBSITE } from '@/lib/ai-guides/vision-guidance';

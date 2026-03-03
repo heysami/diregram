@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { ChevronDown, Copy, Eye, FileCode, FileText, FlaskConical, Network, Package, Pencil, Plus, Share2, Table } from 'lucide-react';
+import { AppWindow, ChevronDown, Copy, Download, Eye, FileCode, FileText, FlaskConical, Network, Package, Pencil, Plus, Share2, Table } from 'lucide-react';
 import { AiUsageHelpModal } from '@/components/workspace/AiUsageHelpModal';
 
 type MenuItem = {
@@ -190,8 +190,38 @@ export function ProjectActionMenus({
             onClick: onBuildKnowledgeBase || (() => {}),
           },
           {
+            id: 'download-agent-skill-generation',
+            label: 'Download Agent Skill (Strict Plan): Generation + Checklist',
+            icon: <Download size={14} />,
+            title: 'Downloads strict-plan skill ZIP for generation + verification',
+            onClick: async () => {
+              const mod = await import('@/lib/ai-guides/download-agent-skills');
+              mod.downloadGenerationChecklistAgentSkillBundle();
+            },
+          },
+          {
+            id: 'download-agent-skill-mcp',
+            label: 'Download Agent Skill (Strict Plan): MCP RAG Operator',
+            icon: <Download size={14} />,
+            title: 'Downloads strict-plan skill ZIP for MCP project/key/query flow',
+            onClick: async () => {
+              const mod = await import('@/lib/ai-guides/download-agent-skills');
+              mod.downloadMcpRagOperatorAgentSkillBundle();
+            },
+          },
+          {
+            id: 'open-account-mcp-setup',
+            label: 'Open Account MCP setup',
+            icon: <AppWindow size={14} />,
+            title: 'Open /account#mcp-ssh-setup (MCP generation stays in Account)',
+            onClick: async () => {
+              if (typeof window === 'undefined') return;
+              window.location.assign('/account#mcp-ssh-setup');
+            },
+          },
+          {
             id: 'download-guides-diagram',
-            label: 'Download diagram guides + checklists',
+            label: 'Download diagram guides + checklists (legacy .md)',
             icon: <FileText size={14} />,
             title: 'Downloads a single .md bundle (AI prompt + checklists)',
             onClick: async () => {
@@ -201,7 +231,7 @@ export function ProjectActionMenus({
           },
           {
             id: 'download-guides-vision',
-            label: 'Download Vision guides + checklists',
+            label: 'Download Vision guides + checklists (legacy .md)',
             icon: <Eye size={14} />,
             title: 'Downloads a single .md bundle (AI prompts + checklists)',
             onClick: async () => {

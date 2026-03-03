@@ -4,7 +4,7 @@ import { EXPANDED_NODE_PLANNING_PROMPT } from '@/lib/ai-guides/expanded-node-pla
 import { VISION_AI_GUIDANCE_PROMPT_FROM_RESOURCES, VISION_AI_GUIDANCE_PROMPT_FROM_WEBSITE } from '@/lib/ai-guides/vision-guidance';
 import { POST_GEN_CHECKLIST_VISION_IMPORT } from '@/lib/ai-checklists/post-generation-vision';
 import { POST_GEN_CHECKLIST_VISION_COMPONENT_LIBRARY } from '@/lib/ai-checklists/post-generation-vision-component-library';
-import { FULL_AI_PROMPT } from '@/components/ImportMarkdownModal';
+import { FULL_AI_PROMPT } from '@/lib/ai-guides/diagram-full-prompt';
 
 export function downloadDiagramGuidesAndChecklistsBundle() {
   const bundle = [
@@ -44,4 +44,3 @@ export function downloadVisionGuidesAndChecklistsBundle() {
 
   downloadTextFile('vision-guides-and-checklists-bundle.md', bundle);
 }
-

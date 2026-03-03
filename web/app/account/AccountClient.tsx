@@ -350,7 +350,7 @@ export default function AccountClient() {
                   </div>
                 </div>
 
-                <div className="mac-double-outline p-3 space-y-2">
+                <div id="mcp-ssh-setup" className="mac-double-outline p-3 space-y-2">
                   <div className="font-semibold">MCP SSH Setup (Claude / Cursor / Codex)</div>
                   <div className="text-[11px] opacity-70">
                     Select the client first, then generate only that client’s setup.
