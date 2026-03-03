@@ -339,18 +339,69 @@ function normalizeStyleRatios(ratios: unknown): VisionColorRatioV1[] | null {
   return out.length ? out : null;
 }
 
+function mergeControlsWithDefaults(
+  base: VisionDesignSystemV1['controls'],
+  incoming: unknown,
+): VisionDesignSystemV1['controls'] {
+  const src = incoming && typeof incoming === 'object' ? (incoming as Record<string, unknown>) : {};
+  const typography = src.typography && typeof src.typography === 'object' ? (src.typography as Record<string, unknown>) : {};
+  const spacing = src.spacing && typeof src.spacing === 'object' ? (src.spacing as Record<string, unknown>) : {};
+  const darkMode = src.darkMode && typeof src.darkMode === 'object' ? (src.darkMode as Record<string, unknown>) : {};
+  return {
+    ...base,
+    ...(src as Partial<VisionDesignSystemV1['controls']>),
+    typography: {
+      ...base.typography,
+      ...(typography as Partial<VisionDesignSystemV1['controls']['typography']>),
+    },
+    spacing: {
+      ...base.spacing,
+      ...(spacing as Partial<VisionDesignSystemV1['controls']['spacing']>),
+    },
+    darkMode: {
+      ...base.darkMode,
+      ...(darkMode as Partial<VisionDesignSystemV1['controls']['darkMode']>),
+    },
+  };
+}
+
+function mergeFoundationsWithDefaults(
+  base: VisionDesignSystemV1['foundations'],
+  incoming: unknown,
+): VisionDesignSystemV1['foundations'] {
+  const src = incoming && typeof incoming === 'object' ? (incoming as Record<string, unknown>) : {};
+  const merged = {
+    ...base,
+    ...(src as Partial<VisionDesignSystemV1['foundations']>),
+  } as VisionDesignSystemV1['foundations'];
+  if (!Array.isArray((src as { imageProfiles?: unknown }).imageProfiles)) {
+    merged.imageProfiles = base.imageProfiles;
+  }
+  return merged;
+}
+
 function extractVisionDesignSystemCandidate(parsed: Record<string, unknown> | null): VisionDesignSystemV1 | null {
   if (!parsed) return null;
-  const direct = coerceVisionDesignSystem(parsed);
-  if (direct) return direct;
-  if (parsed.designSystem && typeof parsed.designSystem === 'object') {
-    const nested = coerceVisionDesignSystem(parsed.designSystem);
-    if (nested) return nested;
-  }
+  const src =
+    parsed.designSystem && typeof parsed.designSystem === 'object'
+      ? (parsed.designSystem as Record<string, unknown>)
+      : parsed;
 
   const base = defaultVisionDesignSystem();
+  const mergedCandidate: Record<string, unknown> = {
+    ...src,
+    version: 1,
+    foundations: mergeFoundationsWithDefaults(base.foundations, src.foundations),
+    controls: mergeControlsWithDefaults(base.controls, src.controls),
+  };
+  if (!Array.isArray(src.scenarios) && src.scenario && typeof src.scenario === 'object') {
+    mergedCandidate.scenarios = [src.scenario];
+    if (!normalizeText(src.activeScenarioId)) mergedCandidate.activeScenarioId = 'base';
+  }
+  const direct = coerceVisionDesignSystem(mergedCandidate);
+  if (direct) return normalizeVisionDesignSystem(direct);
+
   const draft = JSON.parse(JSON.stringify(base)) as VisionDesignSystemV1;
-  const src = parsed;
   const foundations = src.foundations && typeof src.foundations === 'object' ? (src.foundations as Record<string, unknown>) : {};
   if (foundations.fontFamily) draft.foundations.fontFamily = normalizeText(foundations.fontFamily);
   if (foundations.headingFontFamily) draft.foundations.headingFontFamily = normalizeText(foundations.headingFontFamily);
@@ -420,11 +471,42 @@ function extractVisionDesignSystemCandidate(parsed: Record<string, unknown> | nu
   }
 
   if (src.controls && typeof src.controls === 'object') {
-    draft.controls = { ...draft.controls, ...(src.controls as Partial<VisionDesignSystemV1['controls']>) };
+    draft.controls = mergeControlsWithDefaults(draft.controls, src.controls);
   }
 
   const merged = coerceVisionDesignSystem({ ...draft, version: 1 });
   return merged ? normalizeVisionDesignSystem(merged) : null;
+}
+
+function isBarebonesDesignSystem(spec: VisionDesignSystemV1): boolean {
+  const ds = normalizeVisionDesignSystem(spec);
+  const c = ds.controls;
+  const numericSignals = [
+    c.typography.sizeGrowth,
+    c.typography.weightGrowth,
+    c.typography.contrast,
+    c.spacing.pattern,
+    c.spacing.density,
+    c.spacing.aroundVsInside,
+    c.flatness,
+    c.zoning,
+    c.softness,
+    c.surfaceSaturation,
+    c.itemSaturation,
+    c.colorVariance,
+    c.colorBleed,
+    c.wireframeFeeling,
+    c.visualRange,
+    c.skeuomorphism,
+    c.negativeZoneStyle,
+    c.boldness,
+    c.colorBleedText,
+  ];
+  const zeroCount = numericSignals.filter((v) => Number.isFinite(v) && Math.round(Number(v)) === 0).length;
+  const active = ds.scenarios.find((s) => s.id === ds.activeScenarioId) || ds.scenarios[0];
+  const pairings = active?.palette?.pairings;
+  const hasPairings = Boolean(pairings?.primaryPrimitive || (pairings?.accentPrimitives || []).length || (pairings?.neutralPrimitives || []).length);
+  return zeroCount >= 12 || (zeroCount >= 9 && !hasPairings);
 }
 
 async function generateVisionDesignSystem(input: {
@@ -436,6 +518,34 @@ async function generateVisionDesignSystem(input: {
   chatModel?: string;
 }): Promise<VisionDesignSystemV1> {
   const primitiveIds = primitiveIdAllowlistText();
+  const systemLines = [
+    'Return ONLY JSON. No markdown fences.',
+    'Task: Generate a Diregram Vision design system object (version:1) that copies style from provided artifacts.',
+    'Required top-level shape: {"version":1,"activeScenarioId":"base","scenarios":[...],"foundations":{...},"controls":{...}}',
+    'Use palette.pairings to specify primitive mapping and overrides.',
+    'Allowed primitive ids:',
+    primitiveIds,
+    'INTERNAL RENDER CONTRACT (not user-visible):',
+    '- Your JSON is inserted into markdown as visionjson.designSystem and mirrored in a vision-design-system block.',
+    '- Diregram then normalizes your object and derives final visual tokens from controls/scenarios/foundations.',
+    '- Therefore, choose property values for visual fidelity, not placeholder defaults.',
+    'VISUAL MAPPING GUIDE:',
+    '- Typography likeness: foundations.fontFamily, headingFontFamily, decorativeFontFamily, controls.typography.* and controls.fontVariance.',
+    '- Spacing rhythm: controls.spacing.pattern, controls.spacing.density, controls.spacing.aroundVsInside.',
+    '- Shape softness: controls.softness and controls.flatness (affects corner feel and material flatness).',
+    '- Zoning/composition: controls.zoning and controls.negativeZoneStyle.',
+    '- Color behavior: scenario.palette.pairings.*, scenario.ratios.*, controls.surfaceSaturation, itemSaturation, colorVariance, colorBleed, colorBleedTone.',
+    '- Material style: controls.skeuomorphism and controls.skeuomorphismStyle.',
+    '- Bold emphasis: controls.boldness, controls.boldTypographyStyle, controls.boldGradient*.',
+    '- Image look: foundations.imageProfiles[].style/lighting/lineWeight/notes should mirror artifact visual language.',
+    'QUALITY CHECKLIST BEFORE RETURN:',
+    '- Use primitives that match the artifact hue families and contrast.',
+    '- Keep UI ratio totals coherent (neutral vs primary vs accent) and non-random.',
+    '- Avoid contradictory combinations (e.g., high wireframeFeeling with heavy skeuomorphic gloss unless artifacts justify it).',
+    '- Prefer one coherent scenario ("base") over multiple weak scenarios.',
+    'Controls are integers 0..100 where applicable.',
+    'If unsure, keep values conservative and coherent.',
+  ];
   const imageNotes = input.artifactImages.map((img, idx) => `${idx + 1}. ${img.name}`).join('\n');
   const userContent: Array<{ type: 'input_text'; text: string } | { type: 'input_image'; image_url: string; detail?: 'low' | 'high' | 'auto' }> = [
     {
@@ -453,50 +563,39 @@ async function generateVisionDesignSystem(input: {
       detail: 'low' as const,
     })),
   ];
-  const text = await runOpenAIResponsesText(
-    [
-      {
-        role: 'system',
-        content: [
-          'Return ONLY JSON. No markdown fences.',
-          'Task: Generate a Diregram Vision design system object (version:1) that copies style from provided artifacts.',
-          'Required top-level shape: {"version":1,"activeScenarioId":"base","scenarios":[...],"foundations":{...},"controls":{...}}',
-          'Use palette.pairings to specify primitive mapping and overrides.',
-          'Allowed primitive ids:',
-          primitiveIds,
-          'INTERNAL RENDER CONTRACT (not user-visible):',
-          '- Your JSON is inserted into markdown as visionjson.designSystem and mirrored in a vision-design-system block.',
-          '- Diregram then normalizes your object and derives final visual tokens from controls/scenarios/foundations.',
-          '- Therefore, choose property values for visual fidelity, not placeholder defaults.',
-          'VISUAL MAPPING GUIDE:',
-          '- Typography likeness: foundations.fontFamily, headingFontFamily, decorativeFontFamily, controls.typography.* and controls.fontVariance.',
-          '- Spacing rhythm: controls.spacing.pattern, controls.spacing.density, controls.spacing.aroundVsInside.',
-          '- Shape softness: controls.softness and controls.flatness (affects corner feel and material flatness).',
-          '- Zoning/composition: controls.zoning and controls.negativeZoneStyle.',
-          '- Color behavior: scenario.palette.pairings.*, scenario.ratios.*, controls.surfaceSaturation, itemSaturation, colorVariance, colorBleed, colorBleedTone.',
-          '- Material style: controls.skeuomorphism and controls.skeuomorphismStyle.',
-          '- Bold emphasis: controls.boldness, controls.boldTypographyStyle, controls.boldGradient*.',
-          '- Image look: foundations.imageProfiles[].style/lighting/lineWeight/notes should mirror artifact visual language.',
-          'QUALITY CHECKLIST BEFORE RETURN:',
-          '- Use primitives that match the artifact hue families and contrast.',
-          '- Keep UI ratio totals coherent (neutral vs primary vs accent) and non-random.',
-          '- Avoid contradictory combinations (e.g., high wireframeFeeling with heavy skeuomorphic gloss unless artifacts justify it).',
-          '- Prefer one coherent scenario ("base") over multiple weak scenarios.',
-          'Controls are integers 0..100 where applicable.',
-          'If unsure, keep values conservative and coherent.',
-        ].join('\n'),
-      },
-      {
-        role: 'user',
-        content: userContent,
-      },
-    ],
-    { apiKey: input.apiKey, model: input.chatModel, withWebSearch: false },
-  );
+  const runAttempt = async (extraSystem?: string, previousAttempt?: string) => {
+    const retryUserContent = previousAttempt
+      ? [
+          ...userContent,
+          {
+            type: 'input_text' as const,
+            text: `Previous attempt looked generic/barebones. Improve fidelity and avoid zeroed sliders unless explicitly supported.\n\nPrevious JSON:\n${clipText(previousAttempt, 8000)}`,
+          },
+        ]
+      : userContent;
+    const messages: Array<{ role: 'system' | 'user'; content: string | typeof userContent }> = [
+      { role: 'system', content: systemLines.join('\n') },
+      ...(extraSystem ? [{ role: 'system' as const, content: extraSystem }] : []),
+      { role: 'user', content: retryUserContent },
+    ];
+    const output = await runOpenAIResponsesText(messages, { apiKey: input.apiKey, model: input.chatModel, withWebSearch: false });
+    const parsed = parseJsonObject(output);
+    const extracted = extractVisionDesignSystemCandidate(parsed);
+    return { output, extracted };
+  };
 
-  const parsed = parseJsonObject(text);
-  const extracted = extractVisionDesignSystemCandidate(parsed);
-  if (extracted) return normalizeVisionDesignSystem(extracted);
+  const first = await runAttempt();
+  if (first.extracted && !isBarebonesDesignSystem(first.extracted)) return normalizeVisionDesignSystem(first.extracted);
+  if (first.extracted && !normalizeText(input.artifactContext) && input.artifactImages.length === 0) {
+    return normalizeVisionDesignSystem(first.extracted);
+  }
+
+  const second = await runAttempt(
+    'REVISION MODE: prioritize matching artifact style over conservative defaults. Fill missing controls with coherent, non-zero values when style evidence exists.',
+    first.output,
+  );
+  if (second.extracted) return normalizeVisionDesignSystem(second.extracted);
+  if (first.extracted) return normalizeVisionDesignSystem(first.extracted);
   throw new Error('AI did not return a valid Vision design system JSON payload.');
 }
 
