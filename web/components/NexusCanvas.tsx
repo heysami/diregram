@@ -4346,39 +4346,6 @@ export function NexusCanvas({
               >
                 <polygon points="0 0, 8 4, 0 8" fill="#000000" stroke="#000000" strokeWidth="1" />
               </marker>
-              <marker
-                id="arrowhead-light-start-reverse"
-                markerWidth="8"
-                markerHeight="8"
-                refX="7"
-                refY="4"
-                orient="auto-start-reverse"
-                markerUnits="userSpaceOnUse"
-              >
-                <polygon points="0 0, 8 4, 0 8" fill="#000000" stroke="#000000" strokeWidth="1" />
-              </marker>
-              <marker
-                id="arrowhead-orange-start-reverse"
-                markerWidth="8"
-                markerHeight="8"
-                refX="7"
-                refY="4"
-                orient="auto-start-reverse"
-                markerUnits="userSpaceOnUse"
-              >
-                <polygon points="0 0, 8 4, 0 8" fill="#e11d48" stroke="#e11d48" strokeWidth="1" />
-              </marker>
-              <marker
-                id="arrowhead-gray-start-reverse"
-                markerWidth="8"
-                markerHeight="8"
-                refX="7"
-                refY="4"
-                orient="auto-start-reverse"
-                markerUnits="userSpaceOnUse"
-              >
-                <polygon points="0 0, 8 4, 0 8" fill="#000000" stroke="#000000" strokeWidth="1" />
-              </marker>
             </defs>
             {/* eslint-disable-next-line react-hooks/refs */}
             {flattenedNodes.map(node => {
@@ -4544,27 +4511,34 @@ export function NexusCanvas({
                   startX = reattached.x;
                   startY = reattached.y;
                 }
+
+                const reverseBranchArrow =
+                  isProcessConnector && isProcessFlowModeEnabled && !!gotoReversedBranchEdges[connectorKey];
                 
                 const { pathD, mid } =
-                  parentType === 'validation'
-                    ? buildValidationConnectorBezier({
-                        start: { x: startX, y: startY },
-                        end: { x: endX, y: endY },
-                        childIndex,
+                  reverseBranchArrow
+                    ? buildStandardConnectorBezier({
+                        start: { x: endX, y: endY },
+                        end: { x: startX, y: startY },
                         layoutDirection,
                       })
-                    : buildStandardConnectorBezier({
-                        start: { x: startX, y: startY },
-                        end: { x: endX, y: endY },
-                        layoutDirection,
-                      });
+                    : parentType === 'validation'
+                      ? buildValidationConnectorBezier({
+                          start: { x: startX, y: startY },
+                          end: { x: endX, y: endY },
+                          childIndex,
+                          layoutDirection,
+                        })
+                      : buildStandardConnectorBezier({
+                          start: { x: startX, y: startY },
+                          end: { x: endX, y: endY },
+                          layoutDirection,
+                        });
                 const midX = mid.x;
                 const midY = mid.y;
 
                 // Special visual behavior: when a process-flow "goto" node is collapsed into a fake line,
                 // the incoming connector should NOT render an arrowhead.
-                const reverseBranchArrow =
-                  isProcessConnector && isProcessFlowModeEnabled && !!gotoReversedBranchEdges[connectorKey];
                 const hideArrowForCollapsedGoto =
                   isProcessConnector &&
                   isProcessFlowModeEnabled &&
@@ -4590,15 +4564,8 @@ export function NexusCanvas({
                               isConnectorHighlighted || selectedNodeId === node.id || dropTargetId === node.id ? '2.5' : '1.5'
                             }
                             fill="none"
-                            markerStart={
-                              isProcessConnector && !hideArrowForCollapsedGoto && reverseBranchArrow
-                                ? (isConnectorHighlighted
-                                  ? "url(#arrowhead-orange-start-reverse)"
-                                  : "url(#arrowhead-light-start-reverse)")
-                                : undefined
-                            }
                             markerEnd={
-                              isProcessConnector && !hideArrowForCollapsedGoto && !reverseBranchArrow
+                              isProcessConnector && !hideArrowForCollapsedGoto
                                 ? (isConnectorHighlighted ? "url(#arrowhead-orange)" : "url(#arrowhead-light)")
                                 : undefined
                             }
@@ -4670,7 +4637,6 @@ export function NexusCanvas({
               const targetLayout = animatedLayout[targetId];
               if (!sourceLayout || !targetLayout) return null;
               const routeMode = gotoRouteHints[node.id] || 'default';
-              const reverseArrow = routeMode === 'backtrack';
 
               const isCollapsedGoto = selectedNodeId !== node.id;
               const isGotoSelected = selectedNodeId === node.id;
@@ -4713,8 +4679,7 @@ export function NexusCanvas({
                       stroke="#000000"
                       strokeWidth={isGotoSelected ? 3 : 2}
                       fill="none"
-                      markerStart={reverseArrow ? 'url(#arrowhead-light-start-reverse)' : undefined}
-                      markerEnd={reverseArrow ? undefined : 'url(#arrowhead-light)'}
+                      markerEnd="url(#arrowhead-light)"
                       opacity={dim ? 0.25 : 0.9}
                     />
                     {/* Click target (fatter, transparent) */}
@@ -4758,8 +4723,7 @@ export function NexusCanvas({
                     strokeWidth="1.5"
                     fill="none"
                     strokeDasharray="4 4"
-                    markerStart={reverseArrow ? 'url(#arrowhead-gray-start-reverse)' : undefined}
-                    markerEnd={reverseArrow ? undefined : 'url(#arrowhead-gray)'}
+                    markerEnd="url(#arrowhead-gray)"
                     opacity={dim ? 0.3 : 0.6}
                   />
                 </g>

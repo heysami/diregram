@@ -104,12 +104,15 @@ export function adjustGotoLayoutAndRouting(opts: {
     }
 
     const targetIsDescendantOfValidation = isDescendantOf(validation.id, targetId);
+    const targetIsAncestorOfValidation = isDescendantOf(targetId, validation.id);
     const targetIsNearerThanGoto =
       Math.abs(targetAxis - validationAxis) < Math.abs(gotoAxis - validationAxis);
-    const targetIsBeforeValidation = targetAxis < validationAxis;
+    const targetIsBeforeValidation = targetAxis <= validationAxis;
 
     const isCase2 = targetIsDescendantOfValidation && targetIsNearerThanGoto;
-    const isCase3 = !targetIsDescendantOfValidation && targetIsBeforeValidation;
+    const isCase3 =
+      !targetIsDescendantOfValidation &&
+      (targetIsBeforeValidation || targetIsAncestorOfValidation);
 
     routeHintsByGotoId[gotoId] = isCase3 ? 'backtrack' : 'default';
     if (isCase3) {
