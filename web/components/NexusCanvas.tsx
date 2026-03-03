@@ -1113,6 +1113,62 @@ export function NexusCanvas({
   const typeMenuButtonRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
   const pendingConnectorLabelsRef = useRef<Record<string, { label: string; color: string }> | null>(null);
 
+  // Runtime fallback for case-3 reverse rendering:
+  // if the target sits before/same-axis as goto in the rendered layout,
+  // force backtrack mode + reverse the branch chain up to nearest decision ancestor.
+  const runtimeBacktrackBranchEdges = useMemo(() => {
+    const edges: Record<string, true> = {};
+    const primaryAxis: 'x' | 'y' = layoutDirection === 'vertical' ? 'y' : 'x';
+
+    const findNearestDecisionAncestor = (nodeId: string): NexusNode | null => {
+      let cur = nodeMap.get(nodeId);
+      while (cur?.parentId) {
+        const parent = nodeMap.get(cur.parentId);
+        if (!parent) return null;
+        const pType = processNodeTypes[parent.id];
+        const isDecisionTyped = pType === 'validation' || pType === 'branch';
+        const isStructuralBranchPoint = parent.isFlowNode && parent.children.length >= 2;
+        if (isDecisionTyped || isStructuralBranchPoint) return parent;
+        cur = parent;
+      }
+      return null;
+    };
+
+    Object.entries(gotoTargets).forEach(([gotoId, targetId]) => {
+      if (processNodeTypes[gotoId] !== 'goto') return;
+      if (!isShowFlowOnForNode(gotoId) || !isShowFlowOnForNode(targetId)) return;
+      const from = animatedLayout[gotoId];
+      const to = animatedLayout[targetId];
+      if (!from || !to) return;
+
+      const hinted = gotoRouteHints[gotoId] === 'backtrack';
+      const axisBacktrack =
+        primaryAxis === 'x' ? to.x <= from.x : to.y <= from.y;
+      if (!hinted && !axisBacktrack) return;
+
+      const decision = findNearestDecisionAncestor(gotoId);
+      if (!decision) return;
+
+      let cur = nodeMap.get(gotoId);
+      while (cur?.parentId) {
+        const parentId = cur.parentId;
+        edges[`${parentId}__${cur.id}`] = true;
+        if (parentId === decision.id) break;
+        cur = nodeMap.get(parentId);
+      }
+    });
+
+    return edges;
+  }, [
+    animatedLayout,
+    gotoRouteHints,
+    gotoTargets,
+    isShowFlowOnForNode,
+    layoutDirection,
+    nodeMap,
+    processNodeTypes,
+  ]);
+
   // Close process type menu when clicking outside
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -4513,7 +4569,9 @@ export function NexusCanvas({
                 }
 
                 const reverseBranchArrow =
-                  isProcessConnector && isProcessFlowModeEnabled && !!gotoReversedBranchEdges[connectorKey];
+                  isProcessConnector &&
+                  isProcessFlowModeEnabled &&
+                  (!!gotoReversedBranchEdges[connectorKey] || !!runtimeBacktrackBranchEdges[connectorKey]);
                 
                 const { pathD, mid } =
                   reverseBranchArrow
@@ -4654,7 +4712,13 @@ export function NexusCanvas({
               const sourceLayout = animatedLayout[node.id];
               const targetLayout = animatedLayout[targetId];
               if (!sourceLayout || !targetLayout) return null;
-              const routeMode = gotoRouteHints[node.id] || 'default';
+              const hintedRouteMode = gotoRouteHints[node.id] || 'default';
+              const axisBacktrack =
+                layoutDirection === 'vertical'
+                  ? targetLayout.y <= sourceLayout.y
+                  : targetLayout.x <= sourceLayout.x;
+              const routeMode: GotoRouteMode =
+                hintedRouteMode === 'backtrack' || axisBacktrack ? 'backtrack' : 'default';
 
               const isCollapsedGoto = selectedNodeId !== node.id;
               const isGotoSelected = selectedNodeId === node.id;
