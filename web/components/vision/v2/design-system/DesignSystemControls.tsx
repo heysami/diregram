@@ -305,7 +305,10 @@ export function DesignSystemControls({ value, onChange }: Props) {
   })();
 
   return (
-    <div className="vds-controls" style={{ '--vds-editor-input-radius': `${editorInputRadiusPx}px` } as CSSProperties}>
+    <div
+      className="vds-controls"
+      style={{ '--vds-editor-input-radius': `${editorInputRadiusPx}px`, '--dg-control-radius': `${editorInputRadiusPx}px` } as CSSProperties}
+    >
       <details className="vds-controls__section vds-collapsible" open>
         <summary>Foundations</summary>
         <div className="vds-section-body">

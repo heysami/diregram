@@ -61,7 +61,7 @@ export function DesignSystemPreview({ value }: Props) {
   const pillTargets = new Set(value.controls.pillTargets || []);
   const previewInputRadiusPx = pillTargets.has('inputs') ? 999 : Math.max(0, Math.round(derived.shape.inputRadius));
   const previewInputStyle = {
-    borderRadius: `${previewInputRadiusPx}px`,
+    '--dg-control-radius': `${previewInputRadiusPx}px`,
   } as CSSProperties;
 
   const vars = {
@@ -157,6 +157,7 @@ export function DesignSystemPreview({ value }: Props) {
     '--vds-item-text-4': colorAt(itemTextColors, 3, derived.color.textOnPrimary),
     '--vds-item-text-5': colorAt(itemTextColors, 4, derived.color.textOnPrimary),
     '--vds-item-text-6': colorAt(itemTextColors, 5, derived.color.textOnPrimary),
+    '--dg-control-radius': `${previewInputRadiusPx}px`,
   } as CSSProperties;
 
   return (
