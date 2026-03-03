@@ -73,6 +73,8 @@ type TableDragState = {
   startScrollTop: number;
 };
 
+const NEW_AI_RULE_DRAFT_ID = '__new_ai_rule_draft__';
+
 function colLabel(idx0: number): string {
   let n = idx0 + 1;
   let out = '';
@@ -665,7 +667,7 @@ export function SpreadsheetView({
     }
     const sourceCols = activeTableDataCols.slice(0, Math.max(1, activeTableDataCols.length - 1));
     const targetCol = activeTableDataCols[activeTableDataCols.length - 1] || activeTableDataCols[0] || '';
-    setEditingRuleId(null);
+    setEditingRuleId(NEW_AI_RULE_DRAFT_ID);
     setRuleDraftTableId(activeTable.id);
     setRuleDraft({
       name: `AI rule ${aiRules.length + 1}`,
@@ -705,8 +707,9 @@ export function SpreadsheetView({
       return;
     }
     const sourceColumnIds = Array.from(new Set((ruleDraft.sourceColumnIds || []).map((x) => String(x || '').trim()).filter(Boolean)));
+    const isNewDraft = !editingRuleId || editingRuleId === NEW_AI_RULE_DRAFT_ID;
     const nextRule: GridAiRuleV1 = {
-      id: editingRuleId || `airule-${Date.now()}`,
+      id: isNewDraft ? `airule-${Date.now()}` : editingRuleId,
       name,
       tableId,
       mode: ruleDraft.mode === 'research' ? 'research' : 'derive',
@@ -716,7 +719,7 @@ export function SpreadsheetView({
       defaultScope: ruleDraft.defaultScope === 'visible' ? 'visible' : 'selection',
       enabled: ruleDraft.enabled,
     };
-    const nextRules = editingRuleId
+    const nextRules = !isNewDraft
       ? aiRules.map((r) => (r.id === editingRuleId ? nextRule : r))
       : [...aiRules, nextRule];
     updateSheetAiRules(nextRules);
@@ -733,6 +736,22 @@ export function SpreadsheetView({
     },
     [aiRules, updateSheetAiRules, editingRuleId, topToast],
   );
+
+  const aiRulesForRender = useMemo(() => {
+    if (editingRuleId !== NEW_AI_RULE_DRAFT_ID) return aiRules;
+    const draftRule: GridAiRuleV1 = {
+      id: NEW_AI_RULE_DRAFT_ID,
+      name: String(ruleDraft.name || '').trim() || 'New AI rule',
+      tableId: String(ruleDraftTableId || activeTable?.id || '').trim(),
+      mode: ruleDraft.mode === 'research' ? 'research' : 'derive',
+      prompt: String(ruleDraft.prompt || ''),
+      sourceColumnIds: ruleDraft.sourceColumnIds || [],
+      targetColumnId: String(ruleDraft.targetColumnId || ''),
+      defaultScope: ruleDraft.defaultScope === 'visible' ? 'visible' : 'selection',
+      enabled: ruleDraft.enabled,
+    };
+    return [draftRule, ...aiRules];
+  }, [editingRuleId, aiRules, ruleDraft, ruleDraftTableId, activeTable?.id]);
 
   const runAiRule = useCallback(
     async (rule: GridAiRuleV1, scope: 'selection' | 'visible') => {
@@ -2425,7 +2444,7 @@ export function SpreadsheetView({
 
               <div className="space-y-2">
                 {aiRules.length === 0 ? <div className="text-xs opacity-70">No rules yet.</div> : null}
-                {aiRules.map((rule) => {
+                {aiRulesForRender.map((rule) => {
                   const isEditing = editingRuleId === rule.id;
                   const table = tables.find((t) => t.id === rule.tableId) || null;
                   const hc = Math.max(0, Math.min(table?.colIds.length || 0, table?.headerCols || 0));
@@ -2571,7 +2590,7 @@ export function SpreadsheetView({
                 })}
               </div>
               <div className="flex items-center justify-between gap-2">
-                <button type="button" className="mac-btn h-8" onClick={startCreateAiRule} disabled={aiRulesBusy || !activeTable}>
+                <button type="button" className="mac-btn h-8" onClick={startCreateAiRule} disabled={aiRulesBusy}>
                   New rule
                 </button>
                 <button type="button" className="mac-btn h-8" onClick={() => setAiRulesOpen(false)} disabled={aiRulesBusy}>
