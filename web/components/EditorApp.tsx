@@ -9,6 +9,7 @@ import { NexusEditor } from '@/components/NexusEditor';
 import { NexusCanvas } from '@/components/NexusCanvas';
 import { Toolbar, ToolType } from '@/components/Toolbar';
 import { LogicPanel } from '@/components/LogicPanel';
+import { SingleScreenStepsGroupPanel } from '@/components/SingleScreenStepsGroupPanel';
 import { ExpandedGridNodePanel, type SelectedExpandedGridNode } from '@/components/ExpandedGridNodePanel';
 import { ExpandedGridMultiSelectPanel, type SelectedExpandedGridNodes } from '@/components/ExpandedGridMultiSelectPanel';
 import { MainNodeMultiSelectPanel } from '@/components/MainNodeMultiSelectPanel';
@@ -32,6 +33,7 @@ import { matchNodeToExpandedState } from '@/lib/expanded-state-matcher';
 import { syncExpandedState } from '@/lib/expanded-state-sync';
 import { loadDimensionDescriptions, saveDimensionDescriptions, type DimensionDescriptionEntry } from '@/lib/dimension-description-storage';
 import { loadFlowNodeStates, saveFlowNodeStates, type FlowNodeEntry, buildFlowNodeParentPath } from '@/lib/flow-node-storage';
+import { loadSingleScreenLastSteps } from '@/lib/process-single-screen-storage';
 import { buildProcessRunningNumberMap } from '@/lib/process-running-number-map';
 import { matchNodeToDimensionDescription } from '@/lib/dimension-description-matcher';
 import { buildExpandedNodeIdToRunningNumberLookup } from '@/lib/expanded-running-number-lookup';
@@ -383,6 +385,10 @@ export function EditorApp() {
   const [roots, setRoots] = useState<NexusNode[]>([]);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
+  const [selectedSingleScreenGroupStartId, setSelectedSingleScreenGroupStartId] = useState<string | null>(null);
+  const [collapsedSingleScreenGroupStartIds, setCollapsedSingleScreenGroupStartIds] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [selectedExpandedGridNode, setSelectedExpandedGridNode] = useState<
     SelectedExpandedGridNode | SelectedExpandedGridNodes | null
   >(null);
@@ -487,6 +493,20 @@ export function EditorApp() {
     (nodeId: string) => processRunningNumberMapRef.current.get(nodeId),
     [],
   );
+
+  const singleScreenLastStepsByStartId = useMemo(() => {
+    if (!doc) return {} as Record<string, string>;
+    return loadSingleScreenLastSteps(doc, Array.from(nodeMap.values()), getProcessRunningNumber);
+  }, [doc, nodeMap, getProcessRunningNumber]);
+
+  const toggleSingleScreenGroupCollapsed = useCallback((startId: string) => {
+    setCollapsedSingleScreenGroupStartIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(startId)) next.delete(startId);
+      else next.add(startId);
+      return next;
+    });
+  }, []);
   const canvasRootFilter = useCallback((root: NexusNode) => !(root.metadata as any)?.flowTab && !(root.metadata as any)?.systemFlow, []);
   const canvasPruneSubtree = useCallback((n: NexusNode) => !!(n.metadata as any)?.flowTab || !!(n.metadata as any)?.systemFlow, []);
 
@@ -1595,13 +1615,26 @@ export function EditorApp() {
               selectedNodeId={selectedNodeId}
               onSelectNode={(id) => {
                 setSelectedNodeId(id);
+                setSelectedSingleScreenGroupStartId(null);
                 if (id === null) setSelectedExpandedGridNode(null);
               }}
               selectedNodeIds={selectedNodeIds}
               onSelectNodeIds={(ids) => {
                 setSelectedNodeIds(ids);
+                setSelectedSingleScreenGroupStartId(null);
                 if (ids.length > 0) setSelectedExpandedGridNode(null);
               }}
+              selectedSingleScreenGroupStartId={selectedSingleScreenGroupStartId}
+              onSelectSingleScreenGroupStartId={(id) => {
+                setSelectedSingleScreenGroupStartId(id);
+                if (id) {
+                  setSelectedNodeId(id);
+                  setSelectedNodeIds([id]);
+                  setSelectedExpandedGridNode(null);
+                }
+              }}
+              collapsedSingleScreenGroupStartIds={collapsedSingleScreenGroupStartIds}
+              onToggleSingleScreenGroupCollapsed={toggleSingleScreenGroupCollapsed}
               tagView={tagView}
               pinnedTagIds={pinnedTagIds}
               activeVariantState={activeVariantState}
@@ -1624,6 +1657,7 @@ export function EditorApp() {
               }
               onSelectExpandedGridNode={(sel) => {
                 setSelectedNodeIds([]);
+                setSelectedSingleScreenGroupStartId(null);
                 const keys = sel?.gridNodeKeys || [];
                 setSelectedExpandedGridNode(
                   sel
@@ -1714,6 +1748,18 @@ export function EditorApp() {
                 selection={selectedExpandedGridNode}
                 nodeMap={nodeMap}
                 onClose={() => setSelectedExpandedGridNode(null)}
+              />
+            ) : selectedSingleScreenGroupStartId ? (
+              <SingleScreenStepsGroupPanel
+                startNodeId={selectedSingleScreenGroupStartId}
+                startLabel={nodeMap.get(selectedSingleScreenGroupStartId)?.content || selectedSingleScreenGroupStartId}
+                lastLabel={(() => {
+                  const lastId = singleScreenLastStepsByStartId[selectedSingleScreenGroupStartId] || '';
+                  return (lastId && (nodeMap.get(lastId)?.content || lastId)) || '';
+                })()}
+                isCollapsed={collapsedSingleScreenGroupStartIds.has(selectedSingleScreenGroupStartId)}
+                onToggleCollapsed={toggleSingleScreenGroupCollapsed}
+                onClose={() => setSelectedSingleScreenGroupStartId(null)}
               />
             ) : selectedNode ? (
               <LogicPanel

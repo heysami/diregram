@@ -5,7 +5,16 @@ import { DIAMOND_SIZE } from '@/lib/process-flow-diamond';
 import { getBranchInsertIndexForFork } from '@/lib/flow-branch-ordering';
 import { buildCollapsedGotoPaths } from '@/lib/collapsed-goto-paths';
 
-export type FlowNodeType = 'step' | 'time' | 'loop' | 'action' | 'validation' | 'branch' | 'end' | 'goto';
+export type FlowNodeType =
+  | 'step'
+  | 'time'
+  | 'loop'
+  | 'action'
+  | 'validation'
+  | 'branch'
+  | 'end'
+  | 'goto'
+  | 'single_screen_steps';
 
 export interface FlowNode {
   id: string;
@@ -2009,4 +2018,3 @@ export function DimensionFlowEditor({
     </div>
   );
 }
-

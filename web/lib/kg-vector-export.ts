@@ -13,7 +13,7 @@ import { loadDataObjects } from '@/lib/data-object-storage';
 import { loadSystemFlowStateFromMarkdown } from '@/lib/system-flow-storage';
 import { loadDataObjectAttributes } from '@/lib/data-object-attributes';
 import { loadExpandedGridNodesFromDoc } from '@/lib/expanded-grid-storage';
-import { loadFlowNodeData } from '@/lib/flow-node-storage';
+import { loadFlowNodeData, loadFlowNodeStates } from '@/lib/flow-node-storage';
 
 export type KgEntityRecord = {
   type: 'entity';
@@ -715,6 +715,135 @@ function exportDiagramSemanticKg(opts: {
   // Helper: map running number -> node entity id (best-effort).
   const runningToNodeEntityId = new Map<number, string>();
 
+  // --- Process-flow KG semantics: tasks vs screens ---
+  const nodeById = new Map<string, any>();
+  const collectNodes = (node: any) => {
+    if (!node || typeof node !== 'object') return;
+    const id = String((node as any).id || '').trim();
+    if (id) nodeById.set(id, node);
+    (node.children || []).forEach(collectNodes);
+    if (node.isHub && Array.isArray(node.variants)) (node.variants || []).forEach(collectNodes);
+  };
+  roots.forEach(collectNodes);
+
+  const entityIdByNodeId = new Map<string, string>();
+  const getEntityIdForNodeId = (nodeId: string): string | null => {
+    if (!nodeId) return null;
+    const cached = entityIdByNodeId.get(nodeId);
+    if (cached) return cached;
+    const n = nodeById.get(nodeId);
+    if (!n || typeof n.lineIndex !== 'number') return null;
+    const expid = expids.get(n.lineIndex) ?? null;
+    const eid = diagramNodeEntityId(f.id, n.lineIndex, expid);
+    entityIdByNodeId.set(nodeId, eid);
+    return eid;
+  };
+
+  const flowRootByTaskId = new Map<string, string>();
+  const getFlowRootNodeId = (nodeId: string): string | null => {
+    if (!nodeId) return null;
+    const cached = flowRootByTaskId.get(nodeId);
+    if (cached) return cached;
+    const n = nodeById.get(nodeId);
+    if (!n || !n.isFlowNode) return null;
+    let root = n;
+    const guard = new Set<string>([String(root.id)]);
+    while (root?.parentId) {
+      const pid = String(root.parentId);
+      if (!pid || guard.has(pid)) break;
+      guard.add(pid);
+      const p = nodeById.get(pid);
+      if (!p || !p.isFlowNode) break;
+      root = p;
+    }
+    const rid = String(root?.id || '').trim();
+    if (!rid) return null;
+    flowRootByTaskId.set(nodeId, rid);
+    return rid;
+  };
+
+  // Parse flow-nodes registry (runningNumber -> lineIndex) for mapping process-node-type blocks to nodes.
+  const flowNodesState = loadFlowNodeStates(ydoc);
+  const lineIndexByFlowRunningNumber = new Map<number, number>();
+  for (const e of flowNodesState.entries || []) {
+    const rn = typeof (e as any)?.runningNumber === 'number' ? (e as any).runningNumber : null;
+    const li = typeof (e as any)?.lineIndex === 'number' ? (e as any).lineIndex : null;
+    if (typeof rn === 'number' && Number.isFinite(rn) && typeof li === 'number' && Number.isFinite(li)) {
+      lineIndexByFlowRunningNumber.set(rn, li);
+    }
+  }
+
+  // Parse process-node-type-* and process-single-screen-* blocks from markdown metadata.
+  const metadataSection = (() => {
+    const sep = md.indexOf('\n---\n');
+    return sep !== -1 ? md.slice(sep) : md;
+  })();
+
+  const processNodeTypeByRn = new Map<number, string>();
+  const ptypeRe = /```process-node-type-(\d+)\n([\s\S]*?)\n```/g;
+  for (const m of metadataSection.matchAll(ptypeRe)) {
+    const rn = Number.parseInt(String(m[1] || ''), 10);
+    if (!Number.isFinite(rn)) continue;
+    try {
+      const parsed = JSON.parse(String(m[2] || '{}'));
+      const t = typeof parsed?.type === 'string' ? String(parsed.type).trim() : '';
+      if (t) processNodeTypeByRn.set(rn, t);
+    } catch {
+      // ignore malformed blocks
+    }
+  }
+
+  const singleScreenLastByRn = new Map<number, string>();
+  const ssRe = /```process-single-screen-(\d+)\n([\s\S]*?)\n```/g;
+  for (const m of metadataSection.matchAll(ssRe)) {
+    const rn = Number.parseInt(String(m[1] || ''), 10);
+    if (!Number.isFinite(rn)) continue;
+    try {
+      const parsed = JSON.parse(String(m[2] || '{}'));
+      const lastStepId = typeof parsed?.lastStepId === 'string' ? String(parsed.lastStepId).trim() : '';
+      if (lastStepId) singleScreenLastByRn.set(rn, lastStepId);
+    } catch {
+      // ignore malformed blocks
+    }
+  }
+
+  // Screen identity mapping for tasks (flow nodes).
+  const screenOfTaskByNodeId = new Map<string, string>();
+  singleScreenLastByRn.forEach((lastStepId, rn) => {
+    if (processNodeTypeByRn.get(rn) !== 'single_screen_steps') return;
+    const li = lineIndexByFlowRunningNumber.get(rn);
+    if (typeof li !== 'number') return;
+    const startNodeId = `node-${li}`;
+    const startNode = nodeById.get(startNodeId);
+    const lastNode = nodeById.get(lastStepId);
+    if (!startNode || !startNode.isFlowNode) return;
+    if (!lastNode) return;
+
+    // Compute unique ancestor->descendant path via parent pointers.
+    const pathIds: string[] = [];
+    let cur: any = lastNode;
+    const guard = new Set<string>();
+    while (cur && typeof cur === 'object') {
+      const cid = String(cur.id || '').trim();
+      if (!cid) break;
+      pathIds.push(cid);
+      if (cid === startNodeId) break;
+      const pid = String(cur.parentId || '').trim();
+      if (!pid || guard.has(pid)) break;
+      guard.add(pid);
+      cur = nodeById.get(pid);
+    }
+    if (pathIds[pathIds.length - 1] !== startNodeId) return;
+    pathIds.reverse();
+
+    for (const id of pathIds) {
+      const n = nodeById.get(id);
+      if (n && n.isFlowNode) screenOfTaskByNodeId.set(id, startNodeId);
+    }
+  });
+
+  const screenTransitionEdgeIds = new Set<string>();
+
   const walk = (n: any) => {
     const expid = expids.get(n.lineIndex) ?? null;
     const nid = diagramNodeEntityId(f.id, n.lineIndex, expid);
@@ -748,6 +877,21 @@ function exportDiagramSemanticKg(opts: {
     };
     entities.push(nodeRec);
     edges.push({ type: 'edge', id: edgeId('file_has_node', fid, nid), edgeType: 'file_has_node', src: fid, dst: nid });
+
+    // Process-flow task -> screen mapping (tasks are #flow# nodes; a group start node acts as the screen).
+    if (n.isFlowNode) {
+      const screenNodeId = screenOfTaskByNodeId.get(String(n.id)) || String(n.id);
+      const screenEnt = getEntityIdForNodeId(screenNodeId);
+      if (screenEnt) {
+        edges.push({
+          type: 'edge',
+          id: edgeId('flow_task_in_screen', nid, screenEnt),
+          edgeType: 'flow_task_in_screen',
+          src: nid,
+          dst: screenEnt,
+        });
+      }
+    }
 
     // Expanded UI (expanded-grid-N): export inner "grid nodes" as first-class entities.
     // This is where "tabs/wizard/content/etc" UI types live.
@@ -945,12 +1089,42 @@ function exportDiagramSemanticKg(opts: {
       }
     }
 
-    (n.children || []).forEach((c: any) => {
+    for (const c of n.children || []) {
       const cExpid = expids.get(c.lineIndex) ?? null;
       const cid = diagramNodeEntityId(f.id, c.lineIndex, cExpid);
       edges.push({ type: 'edge', id: edgeId('node_parent', nid, cid), edgeType: 'node_parent', src: nid, dst: cid });
+
+      // Process-flow task adjacency edges (tasks are #flow# nodes).
+      // This is NOT the same as flow_step_next/prev (which is child order under a flow root).
+      if (n.isFlowNode && c?.isFlowNode) {
+        const rootA = getFlowRootNodeId(String(n.id || ''));
+        const rootB = getFlowRootNodeId(String(c.id || ''));
+        if (rootA && rootB && rootA === rootB) {
+          edges.push({ type: 'edge', id: edgeId('flow_task_next', nid, cid), edgeType: 'flow_task_next', src: nid, dst: cid });
+          edges.push({ type: 'edge', id: edgeId('flow_task_prev', cid, nid), edgeType: 'flow_task_prev', src: cid, dst: nid });
+
+          // Screen transitions: only emit when the "screen of task" changes across a task->task edge.
+          const screenNodeIdA = screenOfTaskByNodeId.get(String(n.id)) || String(n.id);
+          const screenNodeIdB = screenOfTaskByNodeId.get(String(c.id)) || String(c.id);
+          if (screenNodeIdA && screenNodeIdB && screenNodeIdA !== screenNodeIdB) {
+            const screenEntA = getEntityIdForNodeId(screenNodeIdA);
+            const screenEntB = getEntityIdForNodeId(screenNodeIdB);
+            if (screenEntA && screenEntB) {
+              const nextEdge = edgeId('flow_screen_next', screenEntA, screenEntB);
+              const prevEdge = edgeId('flow_screen_prev', screenEntB, screenEntA);
+              if (!screenTransitionEdgeIds.has(nextEdge)) {
+                screenTransitionEdgeIds.add(nextEdge);
+                screenTransitionEdgeIds.add(prevEdge);
+                edges.push({ type: 'edge', id: nextEdge, edgeType: 'flow_screen_next', src: screenEntA, dst: screenEntB });
+                edges.push({ type: 'edge', id: prevEdge, edgeType: 'flow_screen_prev', src: screenEntB, dst: screenEntA });
+              }
+            }
+          }
+        }
+      }
+
       walk(c);
-    });
+    }
 
     // Sequencing edges:
     // - Always preserve sibling order (generic)

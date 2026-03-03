@@ -37,8 +37,10 @@ import { buildCollapsedGotoPaths } from '@/lib/collapsed-goto-paths';
 import { loadConnectorLabels, saveConnectorLabels, ConnectorLabel } from '@/lib/process-connector-labels';
 import { loadGotoTargets, saveGotoTarget } from '@/lib/process-goto-storage';
 import { loadLoopTargets, saveLoopTarget } from '@/lib/process-loop-storage';
+import { loadSingleScreenLastSteps, saveSingleScreenLastStep } from '@/lib/process-single-screen-storage';
 import { getRenderedRectForMainCanvasNode } from '@/lib/process-node-render-rect';
 import { computePaddedSpanBounds, getLoopTargetOptions, isDescendantOf } from '@/lib/process-loop-logic';
+import { computeSingleScreenPathIds, getSingleScreenLastStepOptions } from '@/lib/process-single-screen-logic';
 import { NodeInlineControls } from '@/components/NodeInlineControls';
 import { buildPreservedNodeLineCommentSuffix } from '@/lib/node-line-comments';
 import { clientToWorldPoint } from '@/lib/canvas-coordinates';
@@ -180,6 +182,12 @@ interface Props {
   /** Optional: show a reference indicator on nodes in this set (used by Flow tab). */
   referencedNodeIds?: Set<string>;
 
+  // Single Screen Steps group (process flows only)
+  selectedSingleScreenGroupStartId?: string | null;
+  onSelectSingleScreenGroupStartId?: (id: string | null) => void;
+  collapsedSingleScreenGroupStartIds?: Set<string>;
+  onToggleSingleScreenGroupCollapsed?: (startId: string) => void;
+
   /**
    * Optional focus request tick.
    * When this number changes, the canvas container will be focused so keyboard shortcuts (Enter/Tab) work.
@@ -215,6 +223,8 @@ interface PendingAction {
     selectAll?: boolean;
 }
 
+const EMPTY_STRING_SET: ReadonlySet<string> = new Set();
+
 export function NexusCanvas({ 
     doc, fileId = null, activeTool, onToolUse, mainLevel = 1,
     layoutDirection = 'horizontal',
@@ -243,6 +253,10 @@ export function NexusCanvas({
     selectedNodeIds = [],
     onSelectNodeIds,
     referencedNodeIds,
+    selectedSingleScreenGroupStartId,
+    onSelectSingleScreenGroupStartId,
+    collapsedSingleScreenGroupStartIds,
+    onToggleSingleScreenGroupCollapsed,
     focusTick,
     viewportResetTick,
     onOpenComments,
@@ -462,10 +476,13 @@ export function NexusCanvas({
       setAnnotationDraft('');
     }
   }, [activeTool, annotationEditorForId]);
+
+  const collapsedSingleScreenGroupStartIdsSet = collapsedSingleScreenGroupStartIds ?? EMPTY_STRING_SET;
+  const [singleScreenLastSteps, setSingleScreenLastSteps] = useState<Record<string, string>>({});
   
   // --- Derived Trees & Maps ---
   
-  const visualTree = useMemo(() => {
+  const fullVisualTree = useMemo(() => {
       const transformNode = (node: NexusNode, forcedParentId?: string): NexusNode | null => {
           if (pruneSubtree?.(node)) return null;
           let childrenToUse = node.children;
@@ -505,6 +522,58 @@ export function NexusCanvas({
       };
       return roots.map((root) => transformNode(root)).filter(Boolean) as NexusNode[];
   }, [roots, activeVariantState, pruneSubtree]);
+
+  const fullFlattenedNodes = useMemo(() => {
+    const flat: NexusNode[] = [];
+    const traverse = (nodes: NexusNode[]) => {
+      nodes.forEach((node) => {
+        flat.push(node);
+        traverse(node.children);
+      });
+    };
+    traverse(fullVisualTree);
+    return flat;
+  }, [fullVisualTree]);
+
+  const fullNodeMap = useMemo(() => {
+    const map = new Map<string, NexusNode>();
+    fullFlattenedNodes.forEach((n) => map.set(n.id, n));
+    return map;
+  }, [fullFlattenedNodes]);
+
+  const visualTree = useMemo(() => {
+    if (!collapsedSingleScreenGroupStartIdsSet || collapsedSingleScreenGroupStartIdsSet.size === 0) return fullVisualTree;
+
+    const collapsedChildrenByStartId = new Map<string, NexusNode[]>();
+
+    // Pre-compute which start nodes are eligible for collapse (must have a valid lastStepId path).
+    collapsedSingleScreenGroupStartIdsSet.forEach((startId) => {
+      const lastId = singleScreenLastSteps[startId];
+      if (!lastId) return;
+      const path = computeSingleScreenPathIds({ startNodeId: startId, lastNodeId: lastId, nodeMap: fullNodeMap });
+      if (!path || path.length < 2) return;
+      const lastNode = fullNodeMap.get(lastId);
+      if (!lastNode) return;
+      collapsedChildrenByStartId.set(startId, lastNode.children || []);
+    });
+
+    if (collapsedChildrenByStartId.size === 0) return fullVisualTree;
+
+    const clone = (node: NexusNode, forcedParentId?: string): NexusNode => {
+      const childrenToUse = collapsedChildrenByStartId.get(node.id) ?? node.children;
+      const transformedChildren = (childrenToUse || [])
+        .map((child) => clone(child, node.id))
+        .filter(Boolean) as NexusNode[];
+
+      return {
+        ...node,
+        parentId: forcedParentId !== undefined ? forcedParentId : node.parentId,
+        children: transformedChildren,
+      };
+    };
+
+    return fullVisualTree.map((root) => clone(root)).filter(Boolean) as NexusNode[];
+  }, [collapsedSingleScreenGroupStartIdsSet, fullNodeMap, fullVisualTree, singleScreenLastSteps]);
 
   useEffect(() => {
     if (!initialFitToContent) return;
@@ -1090,6 +1159,10 @@ export function NexusCanvas({
     // Load loop targets
     const loopMap = loadLoopTargets(doc, flattenedNodes, resolveProcessNumber);
     setLoopTargets(loopMap);
+
+    // Load Single Screen Steps last-step selections
+    const singleScreenMap = loadSingleScreenLastSteps(doc, flattenedNodes, resolveProcessNumber);
+    setSingleScreenLastSteps(singleScreenMap);
   }, [doc, flattenedNodes, resolveProcessNumber]);
 
   // Save connector labels
@@ -1169,6 +1242,19 @@ export function NexusCanvas({
           handleSaveLoopTarget(nodeId, '');
         }
       }
+
+      // If changing away from Single Screen Steps, clear stored last-step selection.
+      if (prevType === 'single_screen_steps' && type !== 'single_screen_steps') {
+        const currentLastStepId = singleScreenLastSteps[nodeId];
+        if (currentLastStepId) {
+          saveSingleScreenLastStep(doc, runningNumber, '');
+          setSingleScreenLastSteps((prev) => {
+            const next = { ...prev };
+            delete next[nodeId];
+            return next;
+          });
+        }
+      }
     }
   };
   
@@ -1209,6 +1295,81 @@ export function NexusCanvas({
       }
     });
   };
+
+  // Save Single Screen Steps last-step selection
+  const handleSaveSingleScreenLastStep = (startNodeId: string, lastStepId: string) => {
+    if (!doc) return;
+    const runningNumber = resolveProcessNumber(startNodeId);
+    if (runningNumber === undefined) return;
+
+    saveSingleScreenLastStep(doc, runningNumber, lastStepId);
+
+    setSingleScreenLastSteps((prev) => {
+      if (lastStepId) return { ...prev, [startNodeId]: lastStepId };
+      const next = { ...prev };
+      delete next[startNodeId];
+      return next;
+    });
+  };
+
+  const singleScreenGroups = useMemo(() => {
+    const groups: Array<{
+      startId: string;
+      lastId: string;
+      memberIds: string[];
+      bounds: { x: number; y: number; width: number; height: number };
+    }> = [];
+
+    const PADDING = 18;
+
+    Object.entries(singleScreenLastSteps).forEach(([startId, lastId]) => {
+      if (!startId || !lastId) return;
+      if ((processNodeTypes[startId] || 'step') !== 'single_screen_steps') return;
+      if (!isShowFlowOnForNode(startId)) return;
+
+      const pathIds = computeSingleScreenPathIds({ startNodeId: startId, lastNodeId: lastId, nodeMap: fullNodeMap });
+      if (!pathIds || pathIds.length < 2) return;
+
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+
+      pathIds.forEach((id) => {
+        const n = nodeMap.get(id);
+        const l = animatedLayout[id];
+        if (!n || !l) return;
+        if (!isNodeRendered(n)) return;
+
+        const rect = getRenderedRectForMainCanvasNode({
+          node: n,
+          layout: l,
+          processNodeType: processNodeTypes[id] || 'step',
+          showFlowOn: isShowFlowOnForNode(id),
+        });
+        minX = Math.min(minX, rect.x);
+        minY = Math.min(minY, rect.y);
+        maxX = Math.max(maxX, rect.x + rect.w);
+        maxY = Math.max(maxY, rect.y + rect.h);
+      });
+
+      if (minX === Infinity || minY === Infinity) return;
+
+      groups.push({
+        startId,
+        lastId,
+        memberIds: pathIds,
+        bounds: {
+          x: minX - PADDING,
+          y: minY - PADDING,
+          width: maxX - minX + PADDING * 2,
+          height: maxY - minY + PADDING * 2,
+        },
+      });
+    });
+
+    return groups;
+  }, [animatedLayout, fullNodeMap, isNodeRendered, isShowFlowOnForNode, nodeMap, processNodeTypes, singleScreenLastSteps]);
   
   // Close connector label editor when clicking outside
   useEffect(() => {
@@ -3996,6 +4157,44 @@ export function NexusCanvas({
             );
           })}
 
+        {/* Single Screen Steps groups (optional) */}
+        {!swimlaneLayout &&
+          singleScreenGroups.map(({ startId, lastId, bounds }) => {
+            const isSelectedGroup = !!selectedSingleScreenGroupStartId && selectedSingleScreenGroupStartId === startId;
+            return (
+              <div
+                key={`single-screen-group-${startId}-${lastId}`}
+                data-single-screen-group={startId}
+                className={`absolute rounded-md mac-double-outline ${isSelectedGroup ? 'opacity-80' : 'opacity-60'}`}
+                style={{
+                  left: bounds.x,
+                  top: bounds.y,
+                  width: bounds.width,
+                  height: bounds.height,
+                  pointerEvents: 'none',
+                  background: 'transparent',
+                }}
+              >
+                <div
+                  className="absolute inset-0 cursor-pointer"
+                  style={{ pointerEvents: 'auto' }}
+                  onClick={(e) => {
+                    // If we just did a marquee selection, don't treat this as a click-to-select-group.
+                    if (suppressNextClickRef.current) return;
+                    // Don't handle clicks if clicking on an expanded node or its children
+                    const target = e.target as HTMLElement;
+                    if (target.closest('[data-expanded-node]')) {
+                      return;
+                    }
+                    e.stopPropagation();
+                    onSelectNode(startId);
+                    onSelectSingleScreenGroupStartId?.(startId);
+                  }}
+                />
+              </div>
+            );
+          })}
+
         <svg className="absolute top-0 left-0 w-[5000px] h-[5000px] overflow-visible">
             <defs>
               <marker
@@ -4588,6 +4787,7 @@ export function NexusCanvas({
                     processNodeShadowClass = '';
                     break;
                   case 'step':
+                  case 'single_screen_steps':
                   case 'time':
                   case 'loop':
                     // White background for step and time nodes
@@ -5466,6 +5666,39 @@ export function NexusCanvas({
                                 </div>
                               );
                             })()}
+                            {isProcessNode && isInProcessFlowMode && processNodeType === 'single_screen_steps' && isSelected && (() => {
+                              const startNode = fullNodeMap.get(node.id) || node;
+                              const options = startNode ? getSingleScreenLastStepOptions({ startNode }) : [];
+                              const selected = singleScreenLastSteps[node.id] || '';
+                              const selectedIsValid = !selected || options.some((o) => o.id === selected);
+                              const value = selectedIsValid ? selected : '';
+
+                              return (
+                                <div className={`mt-1 flex w-full min-w-0 flex-col items-start gap-0.5 px-2 text-xs ${inlineControlTextClass}`}>
+                                  <span className={`leading-none ${inlineControlLabelClass}`}>Last step</span>
+                                  <select
+                                    value={value}
+                                    onChange={(e) => {
+                                      e.stopPropagation();
+                                      handleSaveSingleScreenLastStep(node.id, e.target.value);
+                                    }}
+                                    className={`dg-node-inline-select w-full min-w-0 appearance-none rounded border px-1.5 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-slate-400 ${
+                                      isActiveNodeCard ? 'bg-white/10 border-white/25' : 'bg-transparent border-transparent'
+                                    } ${inlineControlTextClass}`}
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    <option value="">
+                                      {options.length ? 'Select…' : 'No linear children'}
+                                    </option>
+                                    {options.map((n) => (
+                                      <option key={n.id} value={n.id}>
+                                        {n.content || n.id}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
+                              );
+                            })()}
                             {isProcessNode && isInProcessFlowMode && processNodeType === 'goto' && isSelected && (() => {
                               const options = flattenedNodes.filter((n) => n.id !== node.id && n.isFlowNode);
                               const selected = gotoTargets[node.id] || '';
@@ -5499,7 +5732,7 @@ export function NexusCanvas({
                               );
                             })()}
                             {!isDiamond &&
-                            !(isProcessNode && isInProcessFlowMode && (processNodeType === 'goto' || (processNodeType === 'loop' && isSelected))) ? (
+                            !(isProcessNode && isInProcessFlowMode && (processNodeType === 'goto' || (processNodeType === 'loop' && isSelected) || (processNodeType === 'single_screen_steps' && isSelected))) ? (
                               <div className="dg-node-card__placeholder" />
                             ) : null}
                         </div>
@@ -5833,26 +6066,37 @@ export function NexusCanvas({
             onClick={(e) => e.stopPropagation()}
             onMouseDown={(e) => e.stopPropagation()}
           >
-            {(['step', 'time', 'loop', 'validation', 'branch', 'end', 'goto'] as FlowNodeType[]).map((type) => (
+            {(
+              [
+                { value: 'step', label: 'Step' },
+                { value: 'single_screen_steps', label: 'Single Screen Steps' },
+                { value: 'time', label: 'Timer' },
+                { value: 'loop', label: 'Loop' },
+                { value: 'validation', label: 'Validation' },
+                { value: 'branch', label: 'Branch' },
+                { value: 'end', label: 'End' },
+                { value: 'goto', label: 'Go To' },
+              ] as Array<{ value: FlowNodeType; label: string }>
+            ).map((opt) => (
               <button
-                key={type}
+                key={opt.value}
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
                   e.preventDefault();
                   const nodeId = processTypeMenuForId;
                   if (nodeId) {
-                    console.log('Selecting type:', type, 'for node:', nodeId);
-                    saveProcessNodeType(nodeId, type);
+                    console.log('Selecting type:', opt.value, 'for node:', nodeId);
+                    saveProcessNodeType(nodeId, opt.value);
                     setProcessTypeMenuForId(null);
                     setProcessTypeMenuPosition(null);
                   }
                 }}
                 className={`w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50 ${
-                  processNodeType === type ? 'mac-fill--hatch' : ''
+                  processNodeType === opt.value ? 'mac-fill--hatch' : ''
                 }`}
               >
-                {type.charAt(0).toUpperCase() + type.slice(1)}
+                {opt.label}
               </button>
             ))}
           </div>,

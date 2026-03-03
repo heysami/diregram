@@ -10,7 +10,16 @@ export type NexusTemplateVarV1 = {
   required?: boolean;
 };
 
-export type NexusProcessNodeType = 'step' | 'time' | 'loop' | 'action' | 'validation' | 'branch' | 'end' | 'goto';
+export type NexusProcessNodeType =
+  | 'step'
+  | 'time'
+  | 'loop'
+  | 'action'
+  | 'validation'
+  | 'branch'
+  | 'end'
+  | 'goto'
+  | 'single_screen_steps';
 
 export type NexusTemplateFlowNodeEntryV1 = {
   runningNumber: number;
@@ -88,7 +97,17 @@ function coerceVar(x: unknown): NexusTemplateVarV1 | null {
 }
 
 function isProcessNodeType(x: unknown): x is NexusProcessNodeType {
-  return x === 'step' || x === 'time' || x === 'loop' || x === 'action' || x === 'validation' || x === 'branch' || x === 'end' || x === 'goto';
+  return (
+    x === 'step' ||
+    x === 'time' ||
+    x === 'loop' ||
+    x === 'action' ||
+    x === 'validation' ||
+    x === 'branch' ||
+    x === 'end' ||
+    x === 'goto' ||
+    x === 'single_screen_steps'
+  );
 }
 
 function coerceFlowMeta(x: unknown): NexusTemplateFlowMetaV1 | null {
@@ -307,4 +326,3 @@ export function renderTemplatePayload(payload: string, vars: Record<string, stri
     return Object.prototype.hasOwnProperty.call(vars, name) ? String(vars[name] ?? '') : '';
   });
 }
-

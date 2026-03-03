@@ -3,6 +3,7 @@ export const POST_GEN_CHECKLIST_PROCESS_FLOWS = `Post-Generation Checklist — M
 Goal:
   - Ensure process-node-type and flow-graph metadata is LINKED correctly so the UI renders diamonds/time/goto/end as intended.
   - Prevent the common failure mode: “it says validation in markdown but it renders as step”.
+  - Allowed \`\`\`process-node-type-N\`\`\` values include: step, single_screen_steps, time, loop, action, validation, branch, goto, end.
 
 MUST:
   - Treat main-canvas #flow# trees as session-scoped process specifications (wizard/work-session), not multi-week cross-timeframe journeys.
@@ -37,6 +38,12 @@ MUST:
       - MUST have \`\`\`process-loop-N\`\`\` with a valid targetId (node-<lineIndex>)
       - targetId SHOULD be a descendant of the loop node (in-tree)
 
+☐ Single Screen Steps (tree-level grouping; optional):
+  → If you group multiple tasks under ONE screen:
+    - MUST have \`\`\`process-node-type-N\`\`\` type "single_screen_steps" for the START node’s runningNumber (from flow-nodes)
+    - Once “Last step” is configured in the UI, MUST have \`\`\`process-single-screen-N\`\`\` with a valid lastStepId (node-<lineIndex>)
+  → Then run: “Post-Generation Checklist — Single Screen Steps”
+
 ☐ Flow graph payload (optional but recommended for complex flows):
   → \`\`\`flow-nodes\`\`\` entries[] define which nodes have a flow graph runningNumber
   → For each entry runningNumber N, \`\`\`flow-node-N\`\`\` should exist when you expect a detailed graph editor view
@@ -50,4 +57,3 @@ MUST:
     - loop nodes show the loop styling and (when selected) offer a Loop to dropdown
     - goto nodes show hatch styling and jump target behaves as expected
 `;
-

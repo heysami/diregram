@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { FULL_AI_PROMPT } from '@/components/ImportMarkdownModal';
 import { EXPANDED_NODE_PLANNING_PROMPT } from '@/lib/ai-guides/expanded-node-planning';
+import { SINGLE_SCREEN_STEPS_GUIDE } from '@/lib/ai-guides/single-screen-steps';
 import { VISION_AI_GUIDANCE_PROMPT_FROM_RESOURCES, VISION_AI_GUIDANCE_PROMPT_FROM_WEBSITE } from '@/lib/ai-guides/vision-guidance';
 import {
   POST_GEN_CHECKLIST_ALL,
@@ -10,6 +11,7 @@ import {
   POST_GEN_CHECKLIST_EXPANDED_NODES,
   POST_GEN_CHECKLIST_IA,
   POST_GEN_CHECKLIST_PROCESS_FLOWS,
+  POST_GEN_CHECKLIST_SINGLE_SCREEN_STEPS,
   POST_GEN_CHECKLIST_SWIMLANE,
   POST_GEN_CHECKLIST_SYSTEM_FLOW,
   POST_GEN_CHECKLIST_TAGS,
@@ -63,6 +65,8 @@ export async function GET() {
     { relativePath: `${folder}/13 - Checklist - Expanded Nodes.md`, content: POST_GEN_CHECKLIST_EXPANDED_NODES },
     { relativePath: `${folder}/14 - Checklist - Tags.md`, content: POST_GEN_CHECKLIST_TAGS },
     { relativePath: `${folder}/15 - Checklist - Process Flows.md`, content: POST_GEN_CHECKLIST_PROCESS_FLOWS },
+    { relativePath: `${folder}/15a - Guide - Single Screen Steps.md`, content: SINGLE_SCREEN_STEPS_GUIDE },
+    { relativePath: `${folder}/15b - Checklist - Single Screen Steps.md`, content: POST_GEN_CHECKLIST_SINGLE_SCREEN_STEPS },
     { relativePath: `${folder}/16 - Checklist - Tech Flow.md`, content: POST_GEN_CHECKLIST_SYSTEM_FLOW },
     { relativePath: `${folder}/17 - Checklist - Conditional.md`, content: POST_GEN_CHECKLIST_CONDITIONAL },
     { relativePath: `${folder}/18 - Checklist - Data Relationship.md`, content: POST_GEN_CHECKLIST_DATA_OBJECTS },
@@ -76,4 +80,3 @@ export async function GET() {
 
   return withCors(NextResponse.json({ ok: true, files }));
 }
-

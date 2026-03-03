@@ -1006,7 +1006,12 @@ export function validateNexusMarkdownImport(markdown: string): ImportValidationR
     const type = typeof parsed.value?.type === 'string' ? parsed.value.type : '';
     const nodeId = typeof parsed.value?.nodeId === 'string' ? parsed.value.nodeId : '';
     if (!type) {
-      add(errors, 'error', 'BAD_PROCESS_NODE_TYPE', `\`\`\`${b.type}\`\`\` must contain JSON like { "type": "validation|branch|goto|end|step|time|loop|action" } (nodeId is optional).`);
+      add(
+        errors,
+        'error',
+        'BAD_PROCESS_NODE_TYPE',
+        `\`\`\`${b.type}\`\`\` must contain JSON like { "type": "validation|branch|goto|end|step|time|loop|action|single_screen_steps" } (nodeId is optional).`,
+      );
       return;
     }
     if (nodeId) {
@@ -1147,6 +1152,85 @@ export function validateNexusMarkdownImport(markdown: string): ImportValidationR
           'warning',
           'PROCESS_LOOP_TARGET_NOT_DESCENDANT',
           `\`\`\`${blockType}\`\`\` targetId "${targetId}" is not a descendant of the loop node resolved via flow-nodes rn=${rn}.`,
+        );
+      }
+    });
+  }
+
+  // Process single-screen blocks (Single Screen Steps):
+  // - keyed by runningNumber N (same runningNumber as process-node-type-N)
+  // - body JSON: { "lastStepId": "node-<lineIndex>" }
+  const processSingleScreenLastByRn = new Map<number, { lastStepId: string; blockType: string }>();
+  fenced.blocks.forEach((b) => {
+    const m = b.type.match(/^process-single-screen-(\d+)$/);
+    if (!m) return;
+    const rn = Number.parseInt(m[1], 10);
+    const parsed = tryParseJson(b.body);
+    if (!parsed) {
+      add(errors, 'error', 'INVALID_PROCESS_SINGLE_SCREEN_JSON', `\`\`\`${b.type}\`\`\` is not valid JSON.`);
+      return;
+    }
+    const lastStepId = typeof parsed.value?.lastStepId === 'string' ? parsed.value.lastStepId : '';
+    if (!lastStepId) {
+      add(errors, 'error', 'BAD_PROCESS_SINGLE_SCREEN', `\`\`\`${b.type}\`\`\` must contain JSON like { "lastStepId": "node-<lineIndex>" }.`);
+      return;
+    }
+    processSingleScreenLastByRn.set(rn, { lastStepId, blockType: b.type });
+
+    const lastNode = nodeById.get(lastStepId);
+    if (!lastNode) {
+      add(
+        errors,
+        'error',
+        'PROCESS_SINGLE_SCREEN_LAST_STEP_MISSING_NODE',
+        `\`\`\`${b.type}\`\`\` lastStepId "${lastStepId}" does not exist in this markdown.`,
+      );
+    }
+  });
+
+  // Cross-check Single Screen Steps blocks against process-node-type and tree structure (best-effort).
+  if (processSingleScreenLastByRn.size) {
+    processSingleScreenLastByRn.forEach(({ lastStepId, blockType }, rn) => {
+      const t = processNodeTypeByRn.get(rn);
+      if (!t) {
+        add(
+          warnings,
+          'warning',
+          'ORPHAN_PROCESS_SINGLE_SCREEN',
+          `\`\`\`${blockType}\`\`\` exists but no \`\`\`process-node-type-${rn}\`\`\` block exists. Single Screen Steps is only meaningful when the node type is "single_screen_steps".`,
+        );
+      } else if (t.type !== 'single_screen_steps') {
+        add(
+          warnings,
+          'warning',
+          'PROCESS_SINGLE_SCREEN_TYPE_MISMATCH',
+          `\`\`\`${blockType}\`\`\` exists but \`\`\`${t.blockType}\`\`\` sets type "${t.type}". Expected type "single_screen_steps".`,
+        );
+      }
+
+      // Validate lastStepId is a descendant of the group start node using flow-nodes linkage if possible.
+      const entry = flowEntryByRn.get(rn);
+      const li = typeof entry?.lineIndex === 'number' ? entry.lineIndex : null;
+      if (li === null) return;
+      const startNode = lineIndexToNode.get(li);
+      const lastNode = nodeById.get(lastStepId);
+      if (!startNode || !lastNode) return;
+
+      let cur: NexusNode | undefined = lastNode;
+      let isDesc = false;
+      while (cur?.parentId) {
+        if (cur.parentId === startNode.id) {
+          isDesc = true;
+          break;
+        }
+        cur = nodeById.get(cur.parentId);
+      }
+      if (!isDesc) {
+        add(
+          warnings,
+          'warning',
+          'PROCESS_SINGLE_SCREEN_LAST_STEP_NOT_DESCENDANT',
+          `\`\`\`${blockType}\`\`\` lastStepId "${lastStepId}" is not a descendant of the group start node resolved via flow-nodes rn=${rn}.`,
         );
       }
     });
@@ -1306,4 +1390,3 @@ export function validateNexusMarkdownImport(markdown: string): ImportValidationR
     aiFriendlyReport: summarizeIssues(outErrors, outWarnings),
   };
 }
-

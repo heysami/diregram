@@ -169,7 +169,7 @@ How to mark a process node in the TREE:
 
 What #flow# does:
 - Enables “process-flow mode” features:
-  - process node types (step/time/action/validation/branch/end/goto)
+  - process node types (step/single_screen_steps/time/loop/action/validation/branch/end/goto)
   - connector labels
   - goto shortcuts
   - and a detailed flow graph editor (stored in metadata blocks)
@@ -183,6 +183,17 @@ What to focus on (WIZARD / multi-step UX):
 - Non-swimlane flow realism (MUST):
   - Each step should correspond to a SCREEN or an explicit system action that a user/admin can observe.
   - If a step cannot be tied to UI or an observable system event, it is probably too conceptual — move it to a Flow tab swimlane stage/label instead.
+
+Single Screen Steps (group tasks under ONE screen; process flows only):
+- Use when multiple steps are realistically completed on the SAME underlying screen context before moving on.
+- Heuristics:
+  - Repeatable tasks before moving to the next step (e.g. add/edit multiple items, review multiple sections).
+  - Pattern: main screen → open overlay → back → open another overlay → back (same base screen).
+  - High review density: lots of content the user must review in one place before proceeding.
+- Workflow:
+  1) Generate the process flow first.
+  2) Run the post-generation “Single Screen Steps” checklist.
+  3) In Diregram UI: set the start node’s \`\`\`process-node-type-N\`\`\` to "single_screen_steps", then pick its “Last step” (writes \`\`\`process-single-screen-N\`\`\`).
 
 IMPORTANT LIMITATION:
 - There is currently NO supported line-text syntax to set the process node type (like "#validation#").
@@ -700,7 +711,21 @@ Links to:
 Fragility:
 - If you include nodeId, it can break after reformatting; prefer relying on the runningNumber linkage.
 Schema:
-{ "type": "validation|branch|goto|end|step|time|action", "nodeId"?: "node-12" }
+{ "type": "validation|branch|goto|end|step|single_screen_steps|time|loop|action", "nodeId"?: "node-12" }
+
+8.8a process-single-screen-N (Single Screen Steps endpoint)
+Type: \`\`\`process-single-screen-1\`\`\`
+Purpose:
+- Stores the end of the grouped range for a start node typed "single_screen_steps".
+Used by:
+- Canvas process-flow UI (Single Screen Steps grouping).
+Links to:
+- N is the process running number for the START node (from \`\`\`flow-nodes\`\`\`).
+- lastStepId is a parsed node id (currently "node-<lineIndex>") and MUST exist.
+Fragility:
+- lastStepId can change if markdown lines shift.
+Schema:
+{ "lastStepId": "node-34" }
 
 8.9 process-goto-N (canvas-level shortcut target)
 Type: \`\`\`process-goto-1\`\`\`
@@ -2342,4 +2367,3 @@ export function ImportMarkdownModal({ doc, isOpen, onClose, onDidReplace }: Prop
     </div>
   );
 }
-
