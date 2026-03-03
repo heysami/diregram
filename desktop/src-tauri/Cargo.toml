@@ -1,6 +1,6 @@
 [package]
 name = "diregram_sync"
-version = "0.2.5"
+version = "0.2.6"
 description = "Diregram desktop sync app"
 authors = ["Diregram"]
 edition = "2021"

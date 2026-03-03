@@ -1,18 +1,14 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { exportKgAndVectorsForProject } from '@/lib/kg-vector-export';
 import { getAdminSupabaseClient } from '@/lib/server/supabase-admin';
-import { parseJsonl } from '@/lib/server/jsonl';
-import { embedTextsOpenAI } from '@/lib/server/openai-embeddings';
-import { randomBytes } from 'node:crypto';
+import { createAsyncJob } from '@/lib/server/async-jobs/repo';
+import { encryptOpenAiApiKey } from '@/lib/server/async-jobs/crypto';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-// RAG ingest can be heavy (export + embeddings). Ask Vercel for a longer timeout.
-// Note: Actual limit depends on your Vercel plan.
-export const maxDuration = 300;
 
 type AccessPerson = { email?: string; role?: string };
+type FolderRow = { id: string; owner_id: string; access: unknown; parent_id: string | null };
 
 function withCors(res: NextResponse) {
   res.headers.set('access-control-allow-origin', '*');
@@ -25,28 +21,23 @@ export async function OPTIONS() {
   return withCors(new NextResponse(null, { status: 204 }));
 }
 
-function canEditFolder(folder: { owner_id: string; access: any }, user: { id: string; email: string | null }) {
+function canEditFolder(folder: { owner_id: string; access: unknown }, user: { id: string; email: string | null }) {
   if (folder.owner_id === user.id) return true;
-  const people = (folder.access?.people || []) as AccessPerson[];
+  const people = ((folder.access as { people?: AccessPerson[] } | null)?.people || []) as AccessPerson[];
   if (!user.email) return false;
   const e = user.email.trim().toLowerCase();
   return people.some((p) => String(p?.email || '').trim().toLowerCase() === e && String(p?.role || '') === 'edit');
-}
-
-function chunkArray<T>(arr: T[], size: number): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
-  return out;
-}
-
-function randomPublicId() {
-  return `rag_${randomBytes(10).toString('base64url')}`;
 }
 
 function getBearerToken(request: Request): string | null {
   const h = String(request.headers.get('authorization') || '');
   const m = h.match(/^Bearer\s+(.+)$/i);
   return m?.[1]?.trim() ? m[1].trim() : null;
+}
+
+function pollUrl(request: Request, jobId: string) {
+  const base = new URL(request.url);
+  return `${base.origin}/api/async-jobs/${encodeURIComponent(jobId)}`;
 }
 
 export async function POST(request: Request) {
@@ -60,10 +51,6 @@ export async function POST(request: Request) {
     };
     const projectFolderId = String(body?.projectFolderId || '').trim();
     if (!projectFolderId) return withCors(NextResponse.json({ error: 'Missing projectFolderId' }, { status: 400 }));
-    const cursorRaw = Number((body as any)?.cursor ?? 0);
-    const cursor = Number.isFinite(cursorRaw) && cursorRaw > 0 ? Math.floor(cursorRaw) : 0;
-    const limitRaw = Number((body as any)?.chunkLimit ?? process.env.RAG_EMBED_BATCH_SIZE ?? 48);
-    const chunkLimit = Math.max(8, Math.min(96, Number.isFinite(limitRaw) ? Math.floor(limitRaw) : 48));
 
     const jwt = getBearerToken(request);
     if (!jwt) return withCors(NextResponse.json({ error: 'Missing Authorization Bearer token' }, { status: 401 }));
@@ -83,7 +70,8 @@ export async function POST(request: Request) {
     if (!requester) return withCors(NextResponse.json({ error: 'Unauthorized' }, { status: 401 }));
 
     const openaiApiKey = String(request.headers.get('x-openai-api-key') || body?.openaiApiKey || '').trim() || null;
-    const embeddingModel = String(body?.embeddingModel || '').trim() || undefined;
+    const embeddingModel = String(body?.embeddingModel || '').trim() || null;
+    const chunkLimit = Number(body?.chunkLimit ?? process.env.RAG_EMBED_BATCH_SIZE ?? 48);
 
     const admin = getAdminSupabaseClient();
 
@@ -95,130 +83,48 @@ export async function POST(request: Request) {
     if (folderErr) return withCors(NextResponse.json({ error: folderErr.message }, { status: 500 }));
     if (!folder) return withCors(NextResponse.json({ error: 'Project not found' }, { status: 404 }));
 
-    if (!canEditFolder(folder as any, requester)) {
+    const folderRow = folder as FolderRow;
+
+    if (!canEditFolder(folderRow, requester)) {
       return withCors(NextResponse.json({ error: 'Forbidden' }, { status: 403 }));
     }
 
-    const ownerId = String((folder as any).owner_id || '').trim();
+    const ownerId = String(folderRow.owner_id || '').trim();
     if (!ownerId) return withCors(NextResponse.json({ error: 'Project owner not found' }, { status: 500 }));
 
-    const exp = await exportKgAndVectorsForProject({
-      supabaseMode: true,
-      supabase: admin,
+    const secretPayload = encryptOpenAiApiKey(openaiApiKey);
+    const { job, deduped } = await createAsyncJob({
+      kind: 'rag_ingest_jwt',
+      ownerId,
+      requesterUserId: requester.id,
       projectFolderId,
-    });
-
-    const chunkRecords = parseJsonl<any>(exp.embeddingsJsonl).filter(
-      (r) => r && r.type === 'chunk' && typeof r.id === 'string' && typeof r.text === 'string',
-    );
-    const graphRecords = parseJsonl<any>(exp.graphJsonl);
-    const entityRecords = graphRecords.filter((r) => r && r.type === 'entity' && typeof r.id === 'string' && typeof r.entityType === 'string');
-    const edgeRecords = graphRecords.filter((r) => r && r.type === 'edge' && typeof r.id === 'string' && typeof r.edgeType === 'string');
-
-    const existingProject = await admin
-      .from('rag_projects')
-      .select('public_id')
-      .eq('owner_id', ownerId)
-      .eq('project_folder_id', projectFolderId)
-      .maybeSingle();
-    const existingPublicId = (existingProject.data as any)?.public_id ? String((existingProject.data as any).public_id) : '';
-    const publicId = existingPublicId || randomPublicId();
-    if (cursor === 0) {
-      // First slice: reset + upsert graph. Subsequent slices only do embeddings.
-      await admin.from('rag_chunks').delete().eq('owner_id', ownerId).eq('project_folder_id', projectFolderId);
-      await admin.from('kg_entities').delete().eq('owner_id', ownerId).eq('project_folder_id', projectFolderId);
-      await admin.from('kg_edges').delete().eq('owner_id', ownerId).eq('project_folder_id', projectFolderId);
-
-      await admin.from('rag_projects').upsert(
-        {
-          owner_id: ownerId,
-          project_folder_id: projectFolderId,
-          public_id: publicId,
-          updated_at: new Date().toISOString(),
-        } as any,
-        { onConflict: 'owner_id,project_folder_id' },
-      );
-
-      for (const batch of chunkArray(entityRecords, 500)) {
-        const rows = batch.map((r) => ({
-          owner_id: ownerId,
-          id: String(r.id),
-          project_folder_id: projectFolderId,
-          entity_type: String(r.entityType),
-          file_id: typeof r.fileId === 'string' ? r.fileId : null,
-          data: r,
-        }));
-        const { error } = await admin.from('kg_entities').upsert(rows, { onConflict: 'owner_id,id' });
-        if (error) return withCors(NextResponse.json({ error: error.message }, { status: 500 }));
-      }
-
-      for (const batch of chunkArray(edgeRecords, 500)) {
-        const rows = batch.map((r) => ({
-          owner_id: ownerId,
-          id: String(r.id),
-          project_folder_id: projectFolderId,
-          edge_type: String(r.edgeType),
-          src: String(r.src),
-          dst: String(r.dst),
-          data: r,
-        }));
-        const { error } = await admin.from('kg_edges').upsert(rows, { onConflict: 'owner_id,id' });
-        if (error) return withCors(NextResponse.json({ error: error.message }, { status: 500 }));
-      }
-    }
-
-    const totalChunks = chunkRecords.length;
-    const start = Math.min(cursor, totalChunks);
-    const end = Math.min(start + chunkLimit, totalChunks);
-    const slice = chunkRecords.slice(start, end);
-    const texts = slice.map((c: any) => String(c.text || '').slice(0, 50_000));
-    const embeddings = texts.length ? await embedTextsOpenAI(texts, { apiKey: openaiApiKey || undefined, model: embeddingModel }) : [];
-
-    if (slice.length) {
-      const rows = slice.map((c: any, j: number) => ({
-        owner_id: ownerId,
-        id: String(c.id),
-        project_folder_id: projectFolderId,
-        file_id: typeof c.fileId === 'string' ? c.fileId : null,
-        resource_id: typeof c.resourceId === 'string' ? c.resourceId : null,
-        file_kind: typeof c.fileKind === 'string' ? c.fileKind : null,
-        anchor: typeof c.anchor === 'string' ? c.anchor : null,
-        text: String(c.text || ''),
-        embedding: embeddings[j],
-        metadata: {
-          fileId: c.fileId,
-          fileKind: c.fileKind,
-          anchor: c.anchor,
-          resourceId: c.resourceId,
-          resourceName: c.resourceName,
-          resourceKind: c.resourceKind,
-          projectFolderId: c.projectFolderId,
-        } as any,
-      }));
-      const { error } = await admin.from('rag_chunks').upsert(rows, { onConflict: 'owner_id,id' });
-      if (error) return withCors(NextResponse.json({ error: error.message }, { status: 500 }));
-    }
-
-    const nextCursor = end;
-    const done = nextCursor >= totalChunks;
+      dedupeKey: `rag_ingest:${ownerId}:${projectFolderId}`,
+      secretPayload,
+      input: {
+        authMode: 'jwt_bearer',
+        ownerId,
+        projectFolderId,
+        embeddingModel,
+        chunkLimit,
+        requestedBy: requester.id,
+      },
+    }, admin);
 
     return withCors(
-      NextResponse.json({
-        ok: true,
-        projectFolderId,
-        ownerId,
-        publicProjectId: publicId,
-        ingest: { cursor, nextCursor, done, chunkLimit, totalChunks },
-        stats: {
-          files: exp.stats.files,
-          entities: entityRecords.length,
-          edges: edgeRecords.length,
-          chunks: chunkRecords.length,
+      NextResponse.json(
+        {
+          ok: true,
+          async: true,
+          deduped,
+          jobId: job.id,
+          status: job.status,
+          pollUrl: pollUrl(request, job.id),
         },
-      }),
+        { status: 202 },
+      ),
     );
-  } catch (e: any) {
-    return withCors(NextResponse.json({ error: e?.message ?? String(e) }, { status: 500 }));
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return withCors(NextResponse.json({ error: msg }, { status: 500 }));
   }
 }
-

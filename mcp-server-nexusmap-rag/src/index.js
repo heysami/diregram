@@ -23,6 +23,39 @@ async function postJson(url, body, headers = {}) {
   return json;
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function getJson(url, headers = {}) {
+  const res = await fetch(url, {
+    method: 'GET',
+    headers: { ...headers },
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const msg = json?.error ? String(json.error) : `HTTP ${res.status}`;
+    throw new Error(msg);
+  }
+  return json;
+}
+
+async function waitForAsyncJob({ baseUrl, jobId, pollUrl, headers = {}, timeoutMs = 15 * 60 * 1000, pollMs = 2000 }) {
+  const started = Date.now();
+  const url = String(pollUrl || '').trim() || `${baseUrl}/api/async-jobs/${encodeURIComponent(String(jobId || '').trim())}`;
+  for (;;) {
+    if (Date.now() - started > timeoutMs) throw new Error('Async job timed out');
+    const out = await getJson(url, headers);
+    const job = out?.job || {};
+    const status = String(job.status || '');
+    if (status === 'succeeded') return out?.result || out;
+    if (status === 'failed' || status === 'cancelled') {
+      throw new Error(String(job.error || `Async job ${status}`));
+    }
+    await sleep(pollMs);
+  }
+}
+
 const server = new Server(
   {
     name: 'diregram-rag',
@@ -92,6 +125,10 @@ server.setRequestHandler('tools/call', async (req) => {
     if (openaiApiKey) headers['x-openai-api-key'] = openaiApiKey;
 
     const out = await postJson(`${baseUrl}/api/rag/ingest`, { projectFolderId }, headers);
+    if (out?.async && out?.jobId) {
+      const final = await waitForAsyncJob({ baseUrl, jobId: out.jobId, pollUrl: out.pollUrl, headers });
+      return { content: [{ type: 'text', text: JSON.stringify(final, null, 2) }] };
+    }
     return { content: [{ type: 'text', text: JSON.stringify(out, null, 2) }] };
   }
 
@@ -123,4 +160,3 @@ server.setRequestHandler('tools/call', async (req) => {
 
 const transport = new StdioServerTransport();
 await server.connect(transport);
-

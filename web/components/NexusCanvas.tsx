@@ -2599,6 +2599,8 @@ export function NexusCanvas({
       const navTarget = navigation.navigate(e.key, isCmd);
       if (navTarget) {
           e.preventDefault();
+          // Keyboard navigation is single-select: clear any multi-selection state.
+          onSelectNodeIds?.([navTarget]);
           onSelectNode(navTarget);
           // Follow keyboard selection changes.
           followKeyboardNavigation(navTarget);

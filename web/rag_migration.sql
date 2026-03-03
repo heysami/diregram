@@ -276,3 +276,104 @@ create policy "rag_mcp_ssh_keys_owner_only" on public.rag_mcp_ssh_keys
   for all
   using (auth.uid() = owner_id)
   with check (auth.uid() = owner_id);
+
+-- 6) Durable async jobs for long-running RAG/docling processing.
+create table if not exists public.async_jobs (
+  id uuid primary key default uuid_generate_v4(),
+  kind text not null check (kind in ('rag_ingest', 'rag_ingest_jwt', 'docling_convert')),
+  status text not null check (status in ('queued', 'running', 'succeeded', 'failed', 'cancelled')),
+  owner_id uuid references public.profiles(id) on delete cascade not null,
+  requester_user_id uuid references public.profiles(id) on delete set null,
+  project_folder_id uuid references public.folders(id) on delete set null,
+  input jsonb not null default '{}'::jsonb,
+  state jsonb not null default '{}'::jsonb,
+  result jsonb not null default '{}'::jsonb,
+  progress_pct int not null default 0,
+  step text not null default 'queued',
+  attempts int not null default 0,
+  max_attempts int not null default 3,
+  run_after timestamptz not null default now(),
+  lease_until timestamptz,
+  worker_id text,
+  dedupe_key text,
+  error text,
+  secret_payload text,
+  cancel_requested boolean not null default false,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  started_at timestamptz,
+  finished_at timestamptz,
+  heartbeat_at timestamptz
+);
+
+create index if not exists async_jobs_status_run_idx
+  on public.async_jobs (status, run_after, created_at);
+
+create index if not exists async_jobs_owner_created_idx
+  on public.async_jobs (owner_id, created_at desc);
+
+create index if not exists async_jobs_project_created_idx
+  on public.async_jobs (project_folder_id, created_at desc);
+
+create unique index if not exists async_jobs_dedupe_active_idx
+  on public.async_jobs (dedupe_key)
+  where dedupe_key is not null and status in ('queued', 'running');
+
+alter table public.async_jobs enable row level security;
+drop policy if exists "async_jobs_select_owner_or_requester" on public.async_jobs;
+drop policy if exists "async_jobs_insert_owner_only" on public.async_jobs;
+drop policy if exists "async_jobs_update_owner_or_requester" on public.async_jobs;
+
+create policy "async_jobs_select_owner_or_requester" on public.async_jobs
+  for select
+  using (auth.uid() = owner_id or auth.uid() = requester_user_id);
+
+create or replace function public.claim_async_jobs(
+  p_worker_id text,
+  p_limit int default 1,
+  p_lease_seconds int default 120
+)
+returns setof public.async_jobs
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_now timestamptz := now();
+  v_limit int := greatest(1, coalesce(p_limit, 1));
+  v_lease int := greatest(30, coalesce(p_lease_seconds, 120));
+begin
+  return query
+  with candidates as (
+    select j.id
+    from public.async_jobs j
+    where
+      (
+        (j.status = 'queued' and j.run_after <= v_now)
+        or (j.status = 'running' and (j.lease_until is null or j.lease_until < v_now))
+      )
+    order by j.created_at
+    for update skip locked
+    limit v_limit
+  ),
+  claimed as (
+    update public.async_jobs j
+    set
+      status = 'running',
+      worker_id = p_worker_id,
+      lease_until = v_now + make_interval(secs => v_lease),
+      heartbeat_at = v_now,
+      started_at = coalesce(j.started_at, v_now),
+      attempts = j.attempts + 1,
+      updated_at = v_now,
+      step = case when j.step = 'queued' then 'running' else j.step end
+    from candidates c
+    where j.id = c.id
+    returning j.*
+  )
+  select * from claimed;
+end;
+$$;
+
+revoke all on function public.claim_async_jobs(text, int, int) from public;
+grant execute on function public.claim_async_jobs(text, int, int) to service_role;

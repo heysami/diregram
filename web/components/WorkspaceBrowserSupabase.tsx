@@ -133,6 +133,8 @@ export function WorkspaceBrowserSupabase() {
   const [folders, setFolders] = useState<DbFolder[]>([]);
   const [files, setFiles] = useState<DbFile[]>([]);
   const [ragReady, setRagReady] = useState<boolean | null>(null);
+  const [ragBuilding, setRagBuilding] = useState(false);
+  const [ragBuildStatusText, setRagBuildStatusText] = useState<string | null>(null);
 
   const [activeFolderId, setActiveFolderId] = useState<string | null>(null);
   const [editProject, setEditProject] = useState<EditProjectState | null>(null);
@@ -141,6 +143,7 @@ export function WorkspaceBrowserSupabase() {
 
   const [toast, setToast] = useState<string | null>(null);
   const toastTimerRef = useRef<number | null>(null);
+  const ragPollRef = useRef<string | null>(null);
   const [newFromTemplateOpen, setNewFromTemplateOpen] = useState(false);
   const [importMermaidOpen, setImportMermaidOpen] = useState(false);
   const [projectTab, setProjectTab] = useState<'files' | 'templates' | 'import'>('files');
@@ -193,6 +196,78 @@ export function WorkspaceBrowserSupabase() {
       showToast('Copied');
     } catch {
       showToast('Copy failed');
+    }
+  };
+
+  const ragJobStorageKey = (projectFolderId: string) => `diregram.ragJob.v1.${projectFolderId}`;
+
+  const setRagJobInStorage = (projectFolderId: string, jobId: string | null) => {
+    try {
+      const key = ragJobStorageKey(projectFolderId);
+      if (jobId) window.localStorage.setItem(key, jobId);
+      else window.localStorage.removeItem(key);
+    } catch {
+      // ignore
+    }
+  };
+
+  const getRagJobFromStorage = (projectFolderId: string): string => {
+    try {
+      return String(window.localStorage.getItem(ragJobStorageKey(projectFolderId)) || '').trim();
+    } catch {
+      return '';
+    }
+  };
+
+  const pollAsyncJob = async (jobId: string, opts?: { onUpdate?: (status: string, step: string, pct: number) => void }) => {
+    for (let i = 0; i < 1800; i += 1) {
+      const res = await fetch(`/api/async-jobs/${encodeURIComponent(jobId)}`, { method: 'GET' });
+      const json = await res.json().catch(() => ({} as any));
+      if (!res.ok) {
+        const msg = String((json as any)?.error || `Failed to fetch job (${res.status})`);
+        throw new Error(msg);
+      }
+      const j = (json as any)?.job || {};
+      const status = String(j.status || '');
+      const step = String(j.step || '');
+      const pct = Number(j.progressPct || 0);
+      opts?.onUpdate?.(status, step, pct);
+      if (status === 'succeeded') return json as any;
+      if (status === 'failed' || status === 'cancelled') {
+        const err = String(j.error || `Job ${status}`);
+        throw new Error(err);
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 2000));
+    }
+    throw new Error('Async job timed out');
+  };
+
+  const trackRagBuildJob = async (projectFolderId: string, jobId: string) => {
+    if (!projectFolderId || !jobId) return;
+    ragPollRef.current = jobId;
+    setRagBuilding(true);
+    setRagBuildStatusText('Building knowledge base…');
+    setRagJobInStorage(projectFolderId, jobId);
+    try {
+      const out = await pollAsyncJob(jobId, {
+        onUpdate: (_status, step, pct) => {
+          const stepLabel = step ? ` (${step})` : '';
+          const pctSafe = Number.isFinite(pct) ? Math.max(0, Math.min(100, Math.floor(pct))) : 0;
+          setRagBuildStatusText(`Building knowledge base ${pctSafe}%${stepLabel}`);
+        },
+      });
+      const stats = (out as any)?.result?.stats;
+      if (stats?.chunks != null) showToast(`KB built (${stats.chunks} chunks)`);
+      else showToast('KB built');
+      setRagReady(true);
+      setRagBuildStatusText('Knowledge base is ready');
+    } catch (e) {
+      setRagBuildStatusText(null);
+      showToast(e instanceof Error ? e.message : 'Build failed');
+    } finally {
+      if (ragPollRef.current === jobId) ragPollRef.current = null;
+      setRagBuilding(false);
+      setRagJobInStorage(projectFolderId, null);
     }
   };
 
@@ -333,6 +408,15 @@ export function WorkspaceBrowserSupabase() {
       cancelled = true;
     };
   }, [supabase, activeFolder?.id, activeFolder?.owner_id]);
+
+  useEffect(() => {
+    if (!activeFolder?.id) return;
+    if (ragBuilding) return;
+    const pending = getRagJobFromStorage(activeFolder.id);
+    if (!pending) return;
+    void trackRagBuildJob(activeFolder.id, pending);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeFolder?.id, ragBuilding]);
 
   // If user opens the special "Account Templates" folder, force it into template-library mode
   // so account templates don't show up under the normal Files tab.
@@ -952,13 +1036,14 @@ export function WorkspaceBrowserSupabase() {
                 onNewTest={() => createTestFile(activeFolder.id)}
                 onBuildKnowledgeBase={async () => {
                   if (!supabase) return;
+                  if (ragBuilding) return;
                   try {
                     const openaiApiKey = await ensureOpenAiKey();
                     if (!openaiApiKey) {
                       showToast('Missing OpenAI key (set it in Account)');
                       return;
                     }
-                    showToast('Building knowledge base…');
+                    showToast('Queueing knowledge base build…');
                     const res = await fetch('/api/rag/ingest', {
                       method: 'POST',
                       headers: { 'content-type': 'application/json', 'x-openai-api-key': openaiApiKey },
@@ -970,15 +1055,18 @@ export function WorkspaceBrowserSupabase() {
                       showToast(msg);
                       return;
                     }
-                    const stats = (json as any)?.stats;
-                    if (stats?.chunks != null) showToast(`KB built (${stats.chunks} chunks)`);
-                    else showToast('KB built');
-                    setRagReady(true);
+                    const jobId = String((json as any)?.jobId || '').trim();
+                    if (!jobId) {
+                      showToast('Build started but no job id returned');
+                      return;
+                    }
+                    void trackRagBuildJob(activeFolder.id, jobId);
                   } catch (e) {
                     showToast(e instanceof Error ? e.message : 'Build failed');
                   }
                 }}
-                ragStatus={ragReady == null ? 'loading' : ragReady ? 'ready' : 'not_built'}
+                ragStatus={ragBuilding ? 'building' : ragReady == null ? 'loading' : ragReady ? 'ready' : 'not_built'}
+                ragStatusText={ragBuildStatusText}
                 onCopyMcpAccountUrl={async () => {
                   try {
                     showToast('Creating MCP account link…');

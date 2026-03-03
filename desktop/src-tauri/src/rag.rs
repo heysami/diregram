@@ -12,8 +12,6 @@ pub struct RagIngestRequest {
 struct RagIngestBody {
   #[serde(rename = "projectFolderId")]
   project_folder_id: String,
-  #[serde(rename = "cursor")]
-  cursor: u32,
   #[serde(rename = "chunkLimit")]
   chunk_limit: u32,
 }
@@ -33,9 +31,7 @@ pub async fn rag_ingest_jwt(req: RagIngestRequest) -> Result<serde_json::Value, 
 
   let url = format!("{}/api/rag/ingest-jwt", base);
   let client = reqwest::Client::new();
-  let mut cursor: u32 = 0;
   let chunk_limit: u32 = 48;
-  let mut last_json: serde_json::Value = serde_json::json!({});
   let openai_key = req
     .openai_api_key
     .clone()
@@ -43,83 +39,124 @@ pub async fn rag_ingest_jwt(req: RagIngestRequest) -> Result<serde_json::Value, 
     .trim()
     .to_string();
   let has_openai_key = !openai_key.is_empty();
-  for _ in 0..10_000u32 {
-    let mut reqb = client
-      .post(url.clone())
-      .header("content-type", "application/json")
-      .header("authorization", format!("Bearer {}", req.access_token.trim()))
-      ;
-    if has_openai_key {
-      reqb = reqb.header("x-openai-api-key", openai_key.clone());
+  let mut reqb = client
+    .post(url.clone())
+    .header("content-type", "application/json")
+    .header("authorization", format!("Bearer {}", req.access_token.trim()));
+  if has_openai_key {
+    reqb = reqb.header("x-openai-api-key", openai_key.clone());
+  }
+  let res = reqb
+    .json(&RagIngestBody {
+      project_folder_id: req.project_folder_id.trim().to_string(),
+      chunk_limit,
+    })
+    .send()
+    .await
+    .map_err(|e| format!("request failed: {}", e))?;
+
+  let status = res.status();
+  let vercel_id = res
+    .headers()
+    .get("x-vercel-id")
+    .and_then(|v| v.to_str().ok())
+    .map(|s| s.to_string());
+  let text = res.text().await.map_err(|e| e.to_string())?;
+  if !status.is_success() {
+    if text.trim().is_empty() {
+      return Err(format!(
+        "HTTP {}: (empty response body){}",
+        status.as_u16(),
+        vercel_id.map(|id| format!(" [x-vercel-id: {}]", id)).unwrap_or_default()
+      ));
     }
-    let res = reqb
-      .json(&RagIngestBody {
-        project_folder_id: req.project_folder_id.trim().to_string(),
-        cursor,
-        chunk_limit,
-      })
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+      let msg = v
+        .get("error")
+        .and_then(|x| x.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| v.to_string());
+      return Err(format!(
+        "HTTP {}: {}{}",
+        status.as_u16(),
+        msg,
+        vercel_id.map(|id| format!(" [x-vercel-id: {}]", id)).unwrap_or_default()
+      ));
+    }
+    return Err(format!(
+      "HTTP {}: {}{}",
+      status.as_u16(),
+      text,
+      vercel_id.map(|id| format!(" [x-vercel-id: {}]", id)).unwrap_or_default()
+    ));
+  }
+
+  let json = serde_json::from_str::<serde_json::Value>(&text).map_err(|e| format!("bad JSON: {}: {}", e, text))?;
+  let async_enabled = json.get("async").and_then(|v| v.as_bool()).unwrap_or(false);
+  let job_id = json
+    .get("jobId")
+    .and_then(|v| v.as_str())
+    .unwrap_or("")
+    .trim()
+    .to_string();
+  if !async_enabled || job_id.is_empty() {
+    return Ok(json);
+  }
+
+  let poll_url = json
+    .get("pollUrl")
+    .and_then(|v| v.as_str())
+    .map(|s| s.to_string())
+    .unwrap_or_else(|| format!("{}/api/async-jobs/{}", base, job_id));
+
+  for _ in 0..10_000u32 {
+    let poll_res = client
+      .get(&poll_url)
+      .header("authorization", format!("Bearer {}", req.access_token.trim()))
       .send()
       .await
-      .map_err(|e| format!("request failed: {}", e))?;
-
-    let status = res.status();
-    let vercel_id = res
-      .headers()
-      .get("x-vercel-id")
-      .and_then(|v| v.to_str().ok())
-      .map(|s| s.to_string());
-    let text = res.text().await.map_err(|e| e.to_string())?;
-    if !status.is_success() {
-      if text.trim().is_empty() {
-        return Err(format!(
-          "HTTP {}: (empty response body){}",
-          status.as_u16(),
-          vercel_id.map(|id| format!(" [x-vercel-id: {}]", id)).unwrap_or_default()
-        ));
-      }
-      // Try parse JSON error body
-      if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+      .map_err(|e| format!("poll request failed: {}", e))?;
+    let poll_status = poll_res.status();
+    let poll_text = poll_res.text().await.map_err(|e| e.to_string())?;
+    if !poll_status.is_success() {
+      if let Ok(v) = serde_json::from_str::<serde_json::Value>(&poll_text) {
         let msg = v
           .get("error")
           .and_then(|x| x.as_str())
           .map(|s| s.to_string())
           .unwrap_or_else(|| v.to_string());
-        return Err(format!(
-          "HTTP {}: {}{}",
-          status.as_u16(),
-          msg,
-          vercel_id.map(|id| format!(" [x-vercel-id: {}]", id)).unwrap_or_default()
-        ));
+        return Err(format!("Poll HTTP {}: {}", poll_status.as_u16(), msg));
       }
-      return Err(format!(
-        "HTTP {}: {}{}",
-        status.as_u16(),
-        text,
-        vercel_id.map(|id| format!(" [x-vercel-id: {}]", id)).unwrap_or_default()
-      ));
+      return Err(format!("Poll HTTP {}: {}", poll_status.as_u16(), poll_text));
     }
 
-    let json = serde_json::from_str::<serde_json::Value>(&text).map_err(|e| format!("bad JSON: {}: {}", e, text))?;
-    last_json = json.clone();
-    let done = json
-      .get("ingest")
-      .and_then(|v| v.get("done"))
-      .and_then(|v| v.as_bool())
-      .unwrap_or(true);
-    let next = json
-      .get("ingest")
-      .and_then(|v| v.get("nextCursor"))
-      .and_then(|v| v.as_u64())
-      .unwrap_or(0) as u32;
-    if done {
-      return Ok(last_json);
+    let poll_json = serde_json::from_str::<serde_json::Value>(&poll_text)
+      .map_err(|e| format!("bad poll JSON: {}: {}", e, poll_text))?;
+    let state = poll_json
+      .get("job")
+      .and_then(|j| j.get("status"))
+      .and_then(|v| v.as_str())
+      .unwrap_or("");
+
+    if state == "succeeded" {
+      return Ok(
+        poll_json
+          .get("result")
+          .cloned()
+          .unwrap_or_else(|| serde_json::json!({ "ok": true, "jobId": job_id })),
+      );
     }
-    // Prevent infinite loops if server doesn't advance cursor
-    if next <= cursor {
-      return Err(format!("RAG ingest stalled at cursor {}", cursor));
+    if state == "failed" || state == "cancelled" {
+      let msg = poll_json
+        .get("job")
+        .and_then(|j| j.get("error"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("Async ingest failed");
+      return Err(msg.to_string());
     }
-    cursor = next;
+
+    tokio::time::sleep(std::time::Duration::from_millis(2000)).await;
   }
-  Ok(last_json)
-}
 
+  Err("Async ingest timed out".to_string())
+}

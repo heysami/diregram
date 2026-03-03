@@ -95,6 +95,7 @@ export function ProjectActionMenus({
   onNewTest,
   onBuildKnowledgeBase,
   ragStatus,
+  ragStatusText,
   onCopyMcpAccountUrl,
   onCopyProjectLink,
   onExportBundle,
@@ -111,7 +112,8 @@ export function ProjectActionMenus({
   onNewVision: () => void;
   onNewTest: () => void;
   onBuildKnowledgeBase?: () => void | Promise<void>;
-  ragStatus?: 'ready' | 'not_built' | 'loading' | null;
+  ragStatus?: 'ready' | 'not_built' | 'loading' | 'building' | null;
+  ragStatusText?: string | null;
   onCopyMcpAccountUrl?: () => void | Promise<void>;
   onCopyProjectLink?: () => void | Promise<void>;
   onExportBundle: () => void | Promise<void>;
@@ -134,6 +136,10 @@ export function ProjectActionMenus({
     ) : ragStatus === 'loading' ? (
       <span className="shrink-0 rounded border border-gray-200 bg-white px-1.5 py-0.5 text-[10px] font-semibold text-gray-500">
         Checking…
+      </span>
+    ) : ragStatus === 'building' ? (
+      <span className="shrink-0 rounded border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[10px] font-semibold text-blue-700" title={ragStatusText || 'Knowledge base is building in background'}>
+        Building…
       </span>
     ) : null;
 

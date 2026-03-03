@@ -47,12 +47,23 @@ This repo already exports a **semantic KG + “chunks to embed”** from a proje
 - **1) Run the database migration**: in your Supabase project SQL editor, run `web/rag_migration.sql`.
 - **2) Set server env vars** (see `web/env.example`):
   - `SUPABASE_SERVICE_ROLE_KEY`
+  - `ASYNC_JOB_ENCRYPTION_KEY` (base64 32-byte key)
 - **3) Add an OpenAI key**:
   - Recommended: in the app, go to **Account** and paste your OpenAI API key (stored only in your browser).
   - Optional fallback: set `OPENAI_API_KEY` in env so the server can run without per-user keys.
-- **3) In the app**: open a project → **Project → Build knowledge base (RAG)**.
-- **4) Query API**:
+- **4) Run the async worker** on Render using:
+  - Build command: `npm install`
+  - Start command: `npm run worker:async`
+- **5) In the app**: open a project → **Project → Build knowledge base (RAG)**.
+- **6) Query API**:
   - `POST /api/rag/query` with JSON `{ "query": "..." , "projectFolderId": "<uuid>" }`
+
+Async endpoints (enqueue + poll):
+
+- `POST /api/rag/ingest` → `{ ok, async: true, jobId, status, pollUrl }`
+- `POST /api/rag/ingest-jwt` → `{ ok, async: true, jobId, status, pollUrl }`
+- `POST /api/docling/convert` → `{ ok, async: true, jobId, status, pollUrl }`
+- `GET /api/async-jobs/:jobId` for status/result
 
 ### Hosted MCP (so users don’t run anything locally)
 

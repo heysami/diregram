@@ -861,7 +861,8 @@ async fn sync_push_once_internal(vault_path: &str, project_folder_id: &str, auth
       continue;
     }
 
-    if !is_markdown_path(p) {
+    let is_mapped_file = mapping.files.contains_key(&rel);
+    if !is_markdown_path(p) && !is_mapped_file {
       continue;
     }
     local_files.insert(rel.clone());
@@ -947,13 +948,14 @@ async fn sync_push_once_internal(vault_path: &str, project_folder_id: &str, auth
       if entry.file_type().is_dir() {
         continue;
       }
-      if !is_markdown_path(p) {
-        continue;
-      }
       let rel = match to_rel_posix(root, p) {
         Some(r) => r,
         None => continue,
       };
+      let is_mapped_resource = mapping.resources.contains_key(&rel);
+      if !is_markdown_path(p) && !is_mapped_resource {
+        continue;
+      }
       let bytes = fs::read(p).map_err(|e| e.to_string())?;
       let markdown = String::from_utf8_lossy(&bytes).to_string();
       let local_hash = sha256_hex(&bytes);
@@ -1251,6 +1253,14 @@ struct RemoteFileRow {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+struct RemoteFileMetaRow {
+  id: String,
+  name: String,
+  folder_id: Option<String>,
+  updated_at: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
 struct RemoteIdRow {
   id: String,
 }
@@ -1260,6 +1270,14 @@ struct RemoteResourceRow {
   id: String,
   name: String,
   markdown: String,
+  updated_at: Option<String>,
+  source: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct RemoteResourceMetaRow {
+  id: String,
+  name: String,
   updated_at: Option<String>,
   source: Option<serde_json::Value>,
 }
@@ -1425,12 +1443,12 @@ async fn fetch_files_updated_since(
   Ok(out)
 }
 
-async fn fetch_file_ids_in_folders(
+async fn fetch_file_meta_in_folders(
   client: &reqwest::Client,
   auth: &mut SupabaseAuth,
   folder_ids: &[String],
-) -> Result<HashSet<String>, String> {
-  let mut out: HashSet<String> = HashSet::new();
+) -> Result<Vec<RemoteFileMetaRow>, String> {
+  let mut out: Vec<RemoteFileMetaRow> = Vec::new();
   let chunk_size = 40usize;
   let base = rest_base(auth);
 
@@ -1442,21 +1460,21 @@ async fn fetch_file_ids_in_folders(
       let mut url = reqwest::Url::parse(&format!("{}/files", base)).map_err(|e| e.to_string())?;
       {
         let mut q = url.query_pairs_mut();
-        q.append_pair("select", "id");
+        q.append_pair("select", "id,name,folder_id,updated_at");
         q.append_pair("folder_id", &format!("in.({})", list));
         q.append_pair("limit", &page_limit.to_string());
         q.append_pair("offset", &offset.to_string());
       }
-      let rows = send_with_refresh(
+      let mut rows = send_with_refresh(
         client,
         auth,
         || client.get(url.clone()),
         |res| {
           Box::pin(async move {
             if !res.status().is_success() {
-              return Err(format!("files list fetch failed: HTTP {}", res.status()));
+              return Err(format!("files meta fetch failed: HTTP {}", res.status()));
             }
-            let rows: Vec<RemoteIdRow> = res.json().await.map_err(|e| e.to_string())?;
+            let rows: Vec<RemoteFileMetaRow> = res.json().await.map_err(|e| e.to_string())?;
             Ok(rows)
           })
         },
@@ -1464,9 +1482,7 @@ async fn fetch_file_ids_in_folders(
       .await?;
 
       let got = rows.len();
-      for r in rows {
-        out.insert(r.id);
-      }
+      out.append(&mut rows);
       if got < page_limit {
         break;
       }
@@ -1510,34 +1526,34 @@ async fn fetch_resources_updated_since(
   .await
 }
 
-async fn fetch_resource_ids_for_project(
+async fn fetch_resource_meta_for_project(
   client: &reqwest::Client,
   auth: &mut SupabaseAuth,
   project_folder_id: &str,
-) -> Result<HashSet<String>, String> {
+) -> Result<Vec<RemoteResourceMetaRow>, String> {
   let base = rest_base(auth);
-  let mut out: HashSet<String> = HashSet::new();
+  let mut out: Vec<RemoteResourceMetaRow> = Vec::new();
   let page_limit = 1000usize;
   let mut offset = 0usize;
   for _ in 0..1000 {
     let mut url = reqwest::Url::parse(&format!("{}/project_resources", base)).map_err(|e| e.to_string())?;
     {
       let mut q = url.query_pairs_mut();
-      q.append_pair("select", "id");
+      q.append_pair("select", "id,name,updated_at,source");
       q.append_pair("project_folder_id", &format!("eq.{}", project_folder_id));
       q.append_pair("limit", &page_limit.to_string());
       q.append_pair("offset", &offset.to_string());
     }
-    let rows = send_with_refresh(
+    let mut rows = send_with_refresh(
       client,
       auth,
       || client.get(url.clone()),
       |res| {
         Box::pin(async move {
           if !res.status().is_success() {
-            return Err(format!("project_resources list fetch failed: HTTP {}", res.status()));
+            return Err(format!("project_resources meta fetch failed: HTTP {}", res.status()));
           }
-          let rows: Vec<RemoteIdRow> = res.json().await.map_err(|e| e.to_string())?;
+          let rows: Vec<RemoteResourceMetaRow> = res.json().await.map_err(|e| e.to_string())?;
           Ok(rows)
         })
       },
@@ -1545,9 +1561,7 @@ async fn fetch_resource_ids_for_project(
     .await?;
 
     let got = rows.len();
-    for r in rows {
-      out.insert(r.id);
-    }
+    out.append(&mut rows);
     if got < page_limit {
       break;
     }
@@ -1738,19 +1752,158 @@ pub async fn sync_pull_once(vault_path: String, project_folder_id: String, auth:
   let folders_by_id: HashMap<String, FolderNode> = folders.into_iter().map(|f| (f.id.clone(), f)).collect();
   let folder_vec: Vec<FolderNode> = folders_by_id.values().cloned().collect();
   let folder_ids = compute_subtree_folder_ids(&project_folder_id, &folder_vec);
-  let remote_file_ids = fetch_file_ids_in_folders(&client, &mut auth, &folder_ids).await?;
+  let remote_file_meta = fetch_file_meta_in_folders(&client, &mut auth, &folder_ids).await?;
+  let remote_file_ids: HashSet<String> = remote_file_meta.iter().map(|r| r.id.clone()).collect();
   let remote_files = fetch_files_updated_since(&client, &mut auth, &folder_ids, &since).await?;
-  let remote_resource_ids = fetch_resource_ids_for_project(&client, &mut auth, &project_folder_id).await?;
+  let remote_resource_meta = fetch_resource_meta_for_project(&client, &mut auth, &project_folder_id).await?;
+  let remote_resource_ids: HashSet<String> = remote_resource_meta.iter().map(|r| r.id.clone()).collect();
   let remote_resources = fetch_resources_updated_since(&client, &mut auth, &project_folder_id, &since).await?;
 
   let mut summary = SyncSummary::default();
+  let mut conflicts: u32 = 0;
+
+  // Reconcile remote file renames/moves by ID, even if `updated_at` did not change.
+  let file_meta_by_id: HashMap<String, RemoteFileMetaRow> = remote_file_meta
+    .iter()
+    .map(|r| (r.id.clone(), r.clone()))
+    .collect();
+  let mapped_files_snapshot: Vec<(String, FileMappingV1)> = mapping
+    .files
+    .iter()
+    .map(|(rel, fm)| (rel.clone(), fm.clone()))
+    .collect();
+  for (old_rel_path, fm) in mapped_files_snapshot {
+    let Some(meta) = file_meta_by_id.get(&fm.file_id) else { continue };
+    let folder_id = meta.folder_id.clone().unwrap_or(project_folder_id.clone());
+    let folder_rel = mapping
+      .folders
+      .iter()
+      .find_map(|(rel, id)| if id == &folder_id { Some(rel.clone()) } else { None })
+      .or_else(|| folder_rel_from_tree(&project_folder_id, &folder_id, &folders_by_id))
+      .unwrap_or_default();
+    let desired_rel_path = if folder_rel.is_empty() {
+      meta.name.clone()
+    } else {
+      format!("{}/{}", folder_rel, meta.name)
+    };
+    if desired_rel_path == old_rel_path {
+      if let Some(cur) = mapping.files.get_mut(&old_rel_path) {
+        cur.folder_id = folder_id;
+        if let Some(u) = meta.updated_at.clone() {
+          cur.remote_updated_at = u;
+        }
+      }
+      continue;
+    }
+    if let Some(existing) = mapping.files.get(&desired_rel_path) {
+      if existing.file_id != fm.file_id {
+        summary.errors.push(format!(
+          "Cannot remap file {} to {} (path already mapped to a different file id).",
+          old_rel_path, desired_rel_path
+        ));
+        continue;
+      }
+    }
+    let old_abs = root.join(&old_rel_path);
+    let new_abs = root.join(&desired_rel_path);
+    if old_abs.exists() && old_abs != new_abs {
+      if new_abs.exists() {
+        let _ = archive_file_to_trash(&vault_path, &old_rel_path);
+      } else if let Err(e) = move_file_with_fallback(&old_abs, &new_abs) {
+        summary.errors.push(format!(
+          "Failed to move renamed file {} -> {}: {}",
+          old_rel_path, desired_rel_path, e
+        ));
+      }
+    }
+    if let Some(mut moved) = mapping.files.remove(&old_rel_path) {
+      moved.folder_id = folder_id;
+      if let Some(u) = meta.updated_at.clone() {
+        moved.remote_updated_at = u;
+      }
+      mapping.files.insert(desired_rel_path.clone(), moved);
+      let _ = append_event(
+        &vault_path,
+        &SyncEvent {
+          ts: now_iso(),
+          kind: "pull_rename".to_string(),
+          path: desired_rel_path.clone(),
+          detail: format!("Renamed from {} by remote metadata sync.", old_rel_path),
+        },
+      );
+    }
+  }
+
+  // Reconcile remote resource renames by ID, even if `updated_at` did not change.
+  let resource_meta_by_id: HashMap<String, RemoteResourceMetaRow> = remote_resource_meta
+    .iter()
+    .map(|r| (r.id.clone(), r.clone()))
+    .collect();
+  let mapped_resources_snapshot: Vec<(String, ResourceMappingV1)> = mapping
+    .resources
+    .iter()
+    .map(|(rel, rm)| (rel.clone(), rm.clone()))
+    .collect();
+  for (old_rel_path, rm) in mapped_resources_snapshot {
+    let Some(meta) = resource_meta_by_id.get(&rm.resource_id) else { continue };
+    let mut desired_rel_path = format!("resources/{}", meta.name);
+    if let Some(src) = meta.source.as_ref() {
+      if src.get("type").and_then(|v| v.as_str()) == Some("docling") {
+        desired_rel_path = format!("resources/docling/{}", meta.name);
+      }
+    }
+    if desired_rel_path == old_rel_path {
+      if let Some(cur) = mapping.resources.get_mut(&old_rel_path) {
+        if let Some(u) = meta.updated_at.clone() {
+          cur.remote_updated_at = u;
+        }
+      }
+      continue;
+    }
+    if let Some(existing) = mapping.resources.get(&desired_rel_path) {
+      if existing.resource_id != rm.resource_id {
+        summary.errors.push(format!(
+          "Cannot remap resource {} to {} (path already mapped to a different resource id).",
+          old_rel_path, desired_rel_path
+        ));
+        continue;
+      }
+    }
+    let old_abs = root.join(&old_rel_path);
+    let new_abs = root.join(&desired_rel_path);
+    if old_abs.exists() && old_abs != new_abs {
+      if new_abs.exists() {
+        let _ = archive_file_to_trash(&vault_path, &old_rel_path);
+      } else if let Err(e) = move_file_with_fallback(&old_abs, &new_abs) {
+        summary.errors.push(format!(
+          "Failed to move renamed resource {} -> {}: {}",
+          old_rel_path, desired_rel_path, e
+        ));
+      }
+    }
+    if let Some(mut moved) = mapping.resources.remove(&old_rel_path) {
+      if let Some(u) = meta.updated_at.clone() {
+        moved.remote_updated_at = u;
+      }
+      mapping.resources.insert(desired_rel_path.clone(), moved);
+      let _ = append_event(
+        &vault_path,
+        &SyncEvent {
+          ts: now_iso(),
+          kind: "pull_rename".to_string(),
+          path: desired_rel_path.clone(),
+          detail: format!("Resource renamed from {} by remote metadata sync.", old_rel_path),
+        },
+      );
+    }
+  }
+
   let mut by_file_id = reverse_file_map(&mapping);
   let mut by_resource_id: HashMap<String, String> = mapping
     .resources
     .iter()
     .map(|(rel, rm)| (rm.resource_id.clone(), rel.clone()))
     .collect();
-  let mut conflicts: u32 = 0;
 
   for rf in remote_files {
     let remote_updated_at = rf.updated_at.clone().unwrap_or_else(|| now_iso());

@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { Download, Upload, Wand2 } from 'lucide-react';
 import { createSignedDoclingFileUrl, uploadDoclingInput } from '@/lib/docling-files-supabase';
@@ -8,7 +8,6 @@ import { createSignedDoclingFileUrl, uploadDoclingInput } from '@/lib/docling-fi
 type ConvertState =
   | { status: 'idle' }
   | { status: 'uploading' }
-  | { status: 'uploaded'; inputObjectPath: string; jobId: string; filename: string }
   | { status: 'processing'; inputObjectPath: string; jobId: string; filename: string }
   | { status: 'saving'; inputObjectPath: string; outputObjectPath: string; outputFormat: 'markdown' | 'json'; filename: string }
   | {
@@ -21,6 +20,17 @@ type ConvertState =
       savedResourceId?: string;
     }
   | { status: 'error'; message: string };
+
+type AsyncJobStatusResponse = {
+  ok?: boolean;
+  job?: { status?: string; step?: string; progressPct?: number; error?: string | null };
+  result?: {
+    outputObjectPath?: string;
+    bucketId?: string;
+    outputFormat?: 'markdown' | 'json';
+    savedResourceId?: string | null;
+  };
+};
 
 export function DoclingImportPanel({
   supabase,
@@ -43,23 +53,103 @@ export function DoclingImportPanel({
     [file, state.status],
   );
 
-  const safeName = (name: string) => {
-    const raw = String(name || '').trim() || 'document';
-    return raw
-      .replace(/\0/g, '')
-      .replace(/[^\w.\- ()\[\]]+/g, '_')
-      .replace(/\s+/g, ' ')
-      .slice(0, 160);
+  const storageKey = `diregram.doclingJob.v1.${projectFolderId || userId}`;
+
+  const readStoredJob = () => {
+    try {
+      const raw = String(window.localStorage.getItem(storageKey) || '').trim();
+      if (!raw) return null as null | { jobId: string; inputObjectPath: string; filename: string; outputFormat: 'markdown' | 'json' };
+      const parsed = JSON.parse(raw);
+      const jobId = String(parsed?.jobId || '').trim();
+      const inputObjectPath = String(parsed?.inputObjectPath || '').trim();
+      const filename = String(parsed?.filename || '').trim() || 'document';
+      const outputFormat = String(parsed?.outputFormat || 'markdown') === 'json' ? 'json' : 'markdown';
+      if (!jobId || !inputObjectPath) return null;
+      return { jobId, inputObjectPath, filename, outputFormat };
+    } catch {
+      return null;
+    }
   };
 
-  const toMarkdownFilename = (original: string) => {
-    const base = safeName(original).replace(/\.[^/.]+$/, '') || 'document';
-    return `${base}.md`;
+  const writeStoredJob = (payload: { jobId: string; inputObjectPath: string; filename: string; outputFormat: 'markdown' | 'json' } | null) => {
+    try {
+      if (!payload) window.localStorage.removeItem(storageKey);
+      else window.localStorage.setItem(storageKey, JSON.stringify(payload));
+    } catch {
+      // ignore
+    }
+  };
+
+  const pollDoclingJob = async (jobId: string): Promise<AsyncJobStatusResponse> => {
+    for (let i = 0; i < 1800; i += 1) {
+      const res = await fetch(`/api/async-jobs/${encodeURIComponent(jobId)}`, { method: 'GET' });
+      const json = (await res.json().catch(() => ({}))) as AsyncJobStatusResponse;
+      if (!res.ok) {
+        const fallback = `Failed to fetch conversion job (${res.status})`;
+        const msg = typeof (json as Record<string, unknown>)?.error === 'string' ? String((json as Record<string, unknown>).error) : fallback;
+        throw new Error(msg);
+      }
+      const status = String(json.job?.status || '');
+      if (status === 'succeeded') return json;
+      if (status === 'failed' || status === 'cancelled') {
+        throw new Error(String(json.job?.error || `Conversion ${status}`));
+      }
+      const step = String(json.job?.step || '');
+      if (step === 'saving_resource') {
+        setState((prev) =>
+          prev.status === 'processing' || prev.status === 'saving'
+            ? { status: 'saving', inputObjectPath: prev.inputObjectPath, outputObjectPath: '', outputFormat, filename: prev.filename }
+            : prev,
+        );
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 2000));
+    }
+    throw new Error('Conversion timed out');
+  };
+
+  const finalizeDoneState = async (params: {
+    inputObjectPath: string;
+    filename: string;
+    outputFormat: 'markdown' | 'json';
+    outputObjectPath: string;
+    bucketId: string;
+    savedResourceId?: string | null;
+  }) => {
+    const savedResourceId = String(params.savedResourceId || '').trim();
+    if (savedResourceId) {
+      setState({
+        status: 'done',
+        inputObjectPath: params.inputObjectPath,
+        outputObjectPath: params.outputObjectPath,
+        outputFormat: params.outputFormat,
+        filename: params.filename,
+        downloadUrl: null,
+        savedResourceId,
+      });
+      onSavedResource?.(savedResourceId);
+      return;
+    }
+
+    const downloadUrl = params.bucketId === 'docling-files'
+      ? await createSignedDoclingFileUrl({ supabase, objectPath: params.outputObjectPath, expiresInSeconds: 60 * 30 })
+      : (
+          await supabase.storage.from(params.bucketId).createSignedUrl(params.outputObjectPath, 60 * 30).then((r) => (r.error ? null : r.data?.signedUrl || null)).catch(() => null)
+        );
+
+    setState({
+      status: 'done',
+      inputObjectPath: params.inputObjectPath,
+      outputObjectPath: params.outputObjectPath,
+      outputFormat: params.outputFormat,
+      filename: params.filename,
+      downloadUrl,
+    });
   };
 
   const reset = () => {
     setFile(null);
     setState({ status: 'idle' });
+    writeStoredJob(null);
     if (inputRef.current) inputRef.current.value = '';
   };
 
@@ -78,70 +168,81 @@ export function DoclingImportPanel({
           originalFilename: uploaded.filename,
           jobId: uploaded.jobId,
           outputFormat,
+          projectFolderId,
         }),
       });
-      const json = (await res.json().catch(() => ({}))) as any;
-      if (!res.ok) throw new Error(String(json?.error || 'Conversion failed'));
-
-      const outputObjectPath = String(json?.outputObjectPath || '').trim();
-      if (!outputObjectPath) throw new Error('Missing outputObjectPath');
-      const bucketId = String(json?.bucketId || 'docling-files').trim() || 'docling-files';
-
-      // Prefer saving markdown directly into the project as an "Additional resource".
-      if (outputFormat === 'markdown' && projectFolderId) {
-        setState({ status: 'saving', inputObjectPath: uploaded.objectPath, outputObjectPath, outputFormat, filename: uploaded.filename });
-
-        const { data: blob, error: dlErr } = await supabase.storage.from(bucketId).download(outputObjectPath);
-        if (dlErr) throw dlErr;
-        const markdown = await blob.text();
-        if (!markdown.trim()) throw new Error('Converted markdown was empty.');
-
-        const resourceName = toMarkdownFilename(uploaded.filename);
-        const { data: inserted, error: insErr } = await supabase
-          .from('project_resources')
-          .insert({
-            owner_id: userId,
-            project_folder_id: projectFolderId,
-            name: resourceName,
-            kind: 'markdown',
-            markdown,
-            source: { type: 'docling', inputObjectPath: uploaded.objectPath, outputObjectPath, jobId: uploaded.jobId, originalFilename: uploaded.filename },
-          } as any)
-          .select('id')
-          .single();
-        if (insErr) throw insErr;
-
-        // Best-effort cleanup: do not keep uploads/outputs around (we persist markdown only).
+      const raw = await res.text().catch(() => '');
+      const json = (() => {
         try {
-          await supabase.storage.from(bucketId).remove([uploaded.objectPath, outputObjectPath]);
+          return (raw ? JSON.parse(raw) : {}) as Record<string, unknown>;
         } catch {
-          // ignore
+          return {} as Record<string, unknown>;
         }
-
-        const savedResourceId = String((inserted as any)?.id || '');
-        setState({
-          status: 'done',
-          inputObjectPath: uploaded.objectPath,
-          outputObjectPath,
-          outputFormat,
-          filename: uploaded.filename,
-          downloadUrl: null,
-          savedResourceId,
-        });
-        if (savedResourceId) onSavedResource?.(savedResourceId);
-        return;
+      })();
+      if (!res.ok) {
+        const maybeError = typeof json.error === 'string' ? json.error : '';
+        const msg = String(
+          maybeError ||
+          (raw.trim() ? raw.trim().slice(0, 500) : '') ||
+          `Conversion failed (HTTP ${res.status})`,
+        );
+        throw new Error(msg);
       }
 
-      const downloadUrl = bucketId === 'docling-files'
-        ? await createSignedDoclingFileUrl({ supabase, objectPath: outputObjectPath, expiresInSeconds: 60 * 30 })
-        : (
-            await supabase.storage.from(bucketId).createSignedUrl(outputObjectPath, 60 * 30).then((r) => (r.error ? null : r.data?.signedUrl || null)).catch(() => null)
-          );
-      setState({ status: 'done', inputObjectPath: uploaded.objectPath, outputObjectPath, outputFormat, filename: uploaded.filename, downloadUrl });
+      const asyncJobId = String(json.jobId || '').trim();
+      if (!asyncJobId) throw new Error('Missing async job id');
+
+      writeStoredJob({ jobId: asyncJobId, inputObjectPath: uploaded.objectPath, filename: uploaded.filename, outputFormat });
+      const final = await pollDoclingJob(asyncJobId);
+      const out = final.result || {};
+      const outputObjectPath = String(out.outputObjectPath || '').trim();
+      if (!outputObjectPath) throw new Error('Missing outputObjectPath');
+      const bucketId = String(out.bucketId || 'docling-files').trim() || 'docling-files';
+      const finalOutputFormat = String(out.outputFormat || outputFormat) === 'json' ? 'json' : 'markdown';
+
+      await finalizeDoneState({
+        inputObjectPath: uploaded.objectPath,
+        filename: uploaded.filename,
+        outputFormat: finalOutputFormat,
+        outputObjectPath,
+        bucketId,
+        savedResourceId: out.savedResourceId || null,
+      });
+      writeStoredJob(null);
     } catch (e) {
       setState({ status: 'error', message: e instanceof Error ? e.message : 'Conversion failed' });
+      writeStoredJob(null);
     }
   };
+
+  useEffect(() => {
+    const pending = readStoredJob();
+    if (!pending) return;
+    setState({ status: 'processing', inputObjectPath: pending.inputObjectPath, jobId: pending.jobId, filename: pending.filename });
+    void (async () => {
+      try {
+        const final = await pollDoclingJob(pending.jobId);
+        const out = final.result || {};
+        const outputObjectPath = String(out.outputObjectPath || '').trim();
+        if (!outputObjectPath) throw new Error('Missing outputObjectPath');
+        const bucketId = String(out.bucketId || 'docling-files').trim() || 'docling-files';
+        const finalOutputFormat = String(out.outputFormat || pending.outputFormat) === 'json' ? 'json' : 'markdown';
+        await finalizeDoneState({
+          inputObjectPath: pending.inputObjectPath,
+          filename: pending.filename,
+          outputFormat: finalOutputFormat,
+          outputObjectPath,
+          bucketId,
+          savedResourceId: out.savedResourceId || null,
+        });
+        writeStoredJob(null);
+      } catch (e) {
+        setState({ status: 'error', message: e instanceof Error ? e.message : 'Conversion failed' });
+        writeStoredJob(null);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div className="mac-window mac-double-outline p-5 space-y-4 max-w-[760px]">
@@ -162,7 +263,12 @@ export function DoclingImportPanel({
           }}
         />
 
-        <select className="mac-field h-8 text-xs" value={outputFormat} onChange={(e) => setOutputFormat(e.target.value as any)} title="Output format">
+        <select
+          className="mac-field h-8 text-xs"
+          value={outputFormat}
+          onChange={(e) => setOutputFormat(e.target.value === 'json' ? 'json' : 'markdown')}
+          title="Output format"
+        >
           <option value="markdown">Markdown</option>
           <option value="json">JSON</option>
         </select>
@@ -237,4 +343,3 @@ export function DoclingImportPanel({
     </div>
   );
 }
-
