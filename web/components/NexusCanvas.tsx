@@ -4573,29 +4573,33 @@ export function NexusCanvas({
                 
                 const { pathD, mid } =
                   reverseBranchArrow
-                    ? buildStandardConnectorBezier({
-                        start:
-                          layoutDirection === 'vertical'
-                            ? {
-                                x: childX + (childIsDiamond ? childDiamondSize : childLayout.width) / 2,
-                                y: childY,
-                              }
-                            : {
-                                x: childX,
-                                y: childY + (childIsDiamond ? childDiamondSize : childLayout.height) / 2,
-                              },
-                        end:
-                          layoutDirection === 'vertical'
-                            ? {
-                                x: parentX + (parentIsDiamond ? parentDiamondSize : parentLayout.width) / 2,
-                                y: parentY + (parentIsDiamond ? parentDiamondSize : parentLayout.height),
-                              }
-                            : {
-                                x: parentX + (parentIsDiamond ? parentDiamondSize : parentLayout.width),
-                                y: parentY + (parentIsDiamond ? parentDiamondSize : parentLayout.height) / 2,
-                              },
-                        layoutDirection,
-                      })
+                    ? (() => {
+                        if (!parentNode) {
+                          return buildStandardConnectorBezier({
+                            start: { x: endX, y: endY },
+                            end: { x: startX, y: startY },
+                            layoutDirection,
+                          });
+                        }
+                        const fromRect = getRenderedRectForMainCanvasNode({
+                          node,
+                          layout: childLayout,
+                          processNodeType: childType || 'step',
+                          showFlowOn: isShowFlowOnForNode(node.id),
+                        });
+                        const toRect = getRenderedRectForMainCanvasNode({
+                          node: parentNode,
+                          layout: parentLayout,
+                          processNodeType: parentType || 'step',
+                          showFlowOn: isShowFlowOnForNode(parentNode.id),
+                        });
+                        const routed = buildBacktrackBezierBetweenBoxes({
+                          from: { x: fromRect.x, y: fromRect.y, width: fromRect.w, height: fromRect.h },
+                          to: { x: toRect.x, y: toRect.y, width: toRect.w, height: toRect.h },
+                          layoutDirection,
+                        });
+                        return { pathD: routed.pathD, mid: routed.mid };
+                      })()
                     : parentType === 'validation'
                       ? buildValidationConnectorBezier({
                           start: { x: startX, y: startY },
