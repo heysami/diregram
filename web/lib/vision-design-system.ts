@@ -72,6 +72,21 @@ export type VisionSpacingControlsV1 = {
   aroundVsInside: number;
 };
 
+export type VisionDarkModeControlsV1 = {
+  showPreview: boolean;
+  useOverrides: boolean;
+  canvasBg: string;
+  surfaceBg: string;
+  panelBg: string;
+  separator: string;
+  textPrimary: string;
+  textSecondary: string;
+  textMuted: string;
+  primary: string;
+  accent: string;
+  buttonBg: string;
+};
+
 export type VisionDesignSystemControlsV1 = {
   typography: VisionTypographyControlsV1;
   fontVariance: VisionFontVarianceMode;
@@ -92,6 +107,12 @@ export type VisionDesignSystemControlsV1 = {
   skeuomorphismStyle: 'subtle' | 'neomorphic' | 'glass' | 'glow' | 'embossed';
   negativeZoneStyle: number;
   boldness: number;
+  boldTypographyStyle: 'none' | 'gradient' | 'glow' | 'gradientGlow';
+  boldGradientSource: 'auto' | 'custom';
+  boldGradientFrom: string;
+  boldGradientMid: string;
+  boldGradientTo: string;
+  darkMode: VisionDarkModeControlsV1;
 };
 
 export type VisionTypographyTokenV1 = {
@@ -149,6 +170,7 @@ export type VisionDesignSystemDerivedV1 = {
     primary: string;
     accents: string[];
     itemColors: string[];
+    itemTextColors: string[];
     neutrals: string[];
     semantic: VisionSemanticPaletteV1;
     textOnPrimary: string;
@@ -160,6 +182,40 @@ export type VisionDesignSystemDerivedV1 = {
     panelBg: string;
     separator: string;
     tintAmount: number;
+  };
+  dark: {
+    color: {
+      primary: string;
+      accent: string;
+      itemColors: string[];
+      itemTextColors: string[];
+      canvasBg: string;
+      surfaceBg: string;
+      panelBg: string;
+      separator: string;
+      textPrimary: string;
+      textSecondary: string;
+      textMuted: string;
+    };
+    preview: {
+      topNavBg: string;
+      topNavText: string;
+      leftNavBg: string;
+      leftNavText: string;
+      contentBg: string;
+      cardBg: string;
+      cardBorder: string;
+      buttonBg: string;
+      buttonText: string;
+      focusColor: string;
+      shadow: string;
+      shadowColor: string;
+      shadowAccent: string;
+      shadowHighlight: string;
+      gradientFrom: string;
+      gradientMid: string;
+      gradientTo: string;
+    };
   };
   effects: {
     wireframeMix: number;
@@ -208,6 +264,8 @@ export type VisionDesignSystemV1 = {
   scenarios: VisionColorScenarioV1[];
   foundations: {
     fontFamily: string;
+    headingFontFamily?: string;
+    decorativeFontFamily?: string;
     imageProfiles: VisionImageProfileV1[];
   };
   controls: VisionDesignSystemControlsV1;
@@ -516,6 +574,25 @@ const DEFAULT_CONTROLS: VisionDesignSystemControlsV1 = {
   skeuomorphismStyle: 'subtle',
   negativeZoneStyle: 16,
   boldness: 22,
+  boldTypographyStyle: 'none',
+  boldGradientSource: 'auto',
+  boldGradientFrom: '#1d4ed8',
+  boldGradientMid: '#7c3aed',
+  boldGradientTo: '#14b8a6',
+  darkMode: {
+    showPreview: true,
+    useOverrides: false,
+    canvasBg: '#0b1020',
+    surfaceBg: '#121a2d',
+    panelBg: '#1b2740',
+    separator: '#334155',
+    textPrimary: '#f8fafc',
+    textSecondary: '#cbd5e1',
+    textMuted: '#94a3b8',
+    primary: '#60a5fa',
+    accent: '#a78bfa',
+    buttonBg: '#3b82f6',
+  },
 };
 
 function nowIso() {
@@ -668,9 +745,56 @@ function contrastRatio(a: string, b: string): number {
   return (light + 0.05) / (dark + 0.05);
 }
 
+function apcaLuminance(hex: string): number {
+  const { r, g, b } = toRgb(hex);
+  const rr = channelToLinear(r);
+  const gg = channelToLinear(g);
+  const bb = channelToLinear(b);
+  return 0.2126729 * rr + 0.7151522 * gg + 0.072175 * bb;
+}
+
+function apcaContrast(textHex: string, bgHex: string): number {
+  // APCA-inspired lightness contrast estimate (Lc). Positive => dark text on light bg.
+  let txtY = apcaLuminance(textHex);
+  let bgY = apcaLuminance(bgHex);
+  const blkThrs = 0.022;
+  const blkClmp = 1.414;
+  if (txtY < blkThrs) txtY += Math.pow(blkThrs - txtY, blkClmp);
+  if (bgY < blkThrs) bgY += Math.pow(blkThrs - bgY, blkClmp);
+  if (Math.abs(bgY - txtY) < 0.0005) return 0;
+
+  const normBG = 0.56;
+  const normTXT = 0.57;
+  const revTXT = 0.62;
+  const revBG = 0.65;
+  const scaleBoW = 1.14;
+  const scaleWoB = 1.14;
+  const loClip = 0.1;
+  const loBoWoffset = 0.027;
+  const loWoBoffset = 0.027;
+
+  if (bgY > txtY) {
+    const sapc = (Math.pow(bgY, normBG) - Math.pow(txtY, normTXT)) * scaleBoW;
+    if (sapc < loClip) return 0;
+    return (sapc - loBoWoffset) * 100;
+  }
+  const sapc = (Math.pow(bgY, revBG) - Math.pow(txtY, revTXT)) * scaleWoB;
+  if (sapc > -loClip) return 0;
+  return (sapc + loWoBoffset) * 100;
+}
+
+function apcaTargetLc(minContrast: number): number {
+  if (minContrast >= 7) return 75;
+  if (minContrast >= 4.5) return 60;
+  return 45;
+}
+
 function pickTextColor(bg: string): string {
   const black = '#0f172a';
   const white = '#ffffff';
+  const apcaBlack = Math.abs(apcaContrast(black, bg));
+  const apcaWhite = Math.abs(apcaContrast(white, bg));
+  if (Math.abs(apcaBlack - apcaWhite) > 2) return apcaBlack >= apcaWhite ? black : white;
   const cBlack = contrastRatio(bg, black);
   const cWhite = contrastRatio(bg, white);
   return cBlack >= cWhite ? black : white;
@@ -679,8 +803,47 @@ function pickTextColor(bg: string): string {
 function ensureContrastText(bg: string, preferred?: string, minContrast = 4.5): string {
   const safeBg = normalizeHex(bg, '#ffffff');
   const preferredColor = normalizeHex(preferred, pickTextColor(safeBg));
-  if (contrastRatio(safeBg, preferredColor) >= minContrast) return preferredColor;
-  return pickTextColor(safeBg);
+  const targetLc = apcaTargetLc(minContrast);
+  const candidates = new Set<string>();
+  const pushCandidate = (hex: string) => {
+    const normalized = normalizeHex(hex, '');
+    if (normalized) candidates.add(normalized);
+  };
+  pushCandidate(preferredColor);
+  pushCandidate(pickTextColor(safeBg));
+  pushCandidate('#ffffff');
+  pushCandidate('#0f172a');
+  pushCandidate('#111827');
+  pushCandidate('#000000');
+  for (let i = 1; i <= 6; i++) {
+    const t = i / 7;
+    pushCandidate(mix(preferredColor, '#ffffff', t));
+    pushCandidate(mix(preferredColor, '#000000', t));
+  }
+
+  let best: string = pickTextColor(safeBg);
+  let bestScore = -Infinity;
+  let bestPassing: string | null = null;
+  let bestPassingScore = -Infinity;
+
+  for (const candidate of candidates) {
+    const ratio = contrastRatio(safeBg, candidate);
+    const lc = Math.abs(apcaContrast(candidate, safeBg));
+    const ratioScore = Math.min(2, ratio / Math.max(minContrast, 0.1));
+    const lcScore = Math.min(2, lc / Math.max(targetLc, 1));
+    const preference = candidate === preferredColor ? 0.08 : 0;
+    const score = ratioScore * 0.55 + lcScore * 0.45 + preference;
+    if (score > bestScore) {
+      bestScore = score;
+      best = candidate;
+    }
+    if (ratio >= minContrast && lc >= targetLc && score > bestPassingScore) {
+      bestPassing = candidate;
+      bestPassingScore = score;
+    }
+  }
+
+  return bestPassing || best;
 }
 
 function clampPercent(v: unknown): number {
@@ -821,6 +984,7 @@ function normalizeControls(input: unknown): VisionDesignSystemControlsV1 {
   const src = input && typeof input === 'object' ? (input as Record<string, unknown>) : {};
   const typSrc = src.typography && typeof src.typography === 'object' ? (src.typography as Record<string, unknown>) : {};
   const spacingSrc = src.spacing && typeof src.spacing === 'object' ? (src.spacing as Record<string, unknown>) : {};
+  const darkSrc = src.darkMode && typeof src.darkMode === 'object' ? (src.darkMode as Record<string, unknown>) : {};
 
   return {
     typography: {
@@ -869,6 +1033,30 @@ function normalizeControls(input: unknown): VisionDesignSystemControlsV1 {
         : 'subtle',
     negativeZoneStyle: clamp(Math.round(Number(src.negativeZoneStyle)), 0, 100),
     boldness: clamp(Math.round(Number(src.boldness)), 0, 100),
+    boldTypographyStyle:
+      String(src.boldTypographyStyle || '').trim() === 'gradient' ||
+      String(src.boldTypographyStyle || '').trim() === 'glow' ||
+      String(src.boldTypographyStyle || '').trim() === 'gradientGlow'
+        ? (String(src.boldTypographyStyle || '').trim() as VisionDesignSystemControlsV1['boldTypographyStyle'])
+        : 'none',
+    boldGradientSource: String(src.boldGradientSource || '').trim() === 'custom' ? 'custom' : 'auto',
+    boldGradientFrom: normalizeHex(src.boldGradientFrom, DEFAULT_CONTROLS.boldGradientFrom),
+    boldGradientMid: normalizeHex(src.boldGradientMid, DEFAULT_CONTROLS.boldGradientMid),
+    boldGradientTo: normalizeHex(src.boldGradientTo, DEFAULT_CONTROLS.boldGradientTo),
+    darkMode: {
+      showPreview: darkSrc.showPreview === undefined ? DEFAULT_CONTROLS.darkMode.showPreview : Boolean(darkSrc.showPreview),
+      useOverrides: darkSrc.useOverrides === undefined ? DEFAULT_CONTROLS.darkMode.useOverrides : Boolean(darkSrc.useOverrides),
+      canvasBg: normalizeHex(darkSrc.canvasBg, DEFAULT_CONTROLS.darkMode.canvasBg),
+      surfaceBg: normalizeHex(darkSrc.surfaceBg, DEFAULT_CONTROLS.darkMode.surfaceBg),
+      panelBg: normalizeHex(darkSrc.panelBg, DEFAULT_CONTROLS.darkMode.panelBg),
+      separator: normalizeHex(darkSrc.separator, DEFAULT_CONTROLS.darkMode.separator),
+      textPrimary: normalizeHex(darkSrc.textPrimary, DEFAULT_CONTROLS.darkMode.textPrimary),
+      textSecondary: normalizeHex(darkSrc.textSecondary, DEFAULT_CONTROLS.darkMode.textSecondary),
+      textMuted: normalizeHex(darkSrc.textMuted, DEFAULT_CONTROLS.darkMode.textMuted),
+      primary: normalizeHex(darkSrc.primary, DEFAULT_CONTROLS.darkMode.primary),
+      accent: normalizeHex(darkSrc.accent, DEFAULT_CONTROLS.darkMode.accent),
+      buttonBg: normalizeHex(darkSrc.buttonBg, DEFAULT_CONTROLS.darkMode.buttonBg),
+    },
   };
 }
 
@@ -903,6 +1091,25 @@ function withControlDefaults(next: VisionDesignSystemControlsV1): VisionDesignSy
     skeuomorphismStyle: next.skeuomorphismStyle || DEFAULT_CONTROLS.skeuomorphismStyle,
     negativeZoneStyle: Number.isFinite(next.negativeZoneStyle) ? next.negativeZoneStyle : DEFAULT_CONTROLS.negativeZoneStyle,
     boldness: Number.isFinite(next.boldness) ? next.boldness : DEFAULT_CONTROLS.boldness,
+    boldTypographyStyle: next.boldTypographyStyle || DEFAULT_CONTROLS.boldTypographyStyle,
+    boldGradientSource: next.boldGradientSource || DEFAULT_CONTROLS.boldGradientSource,
+    boldGradientFrom: normalizeHex(next.boldGradientFrom, DEFAULT_CONTROLS.boldGradientFrom),
+    boldGradientMid: normalizeHex(next.boldGradientMid, DEFAULT_CONTROLS.boldGradientMid),
+    boldGradientTo: normalizeHex(next.boldGradientTo, DEFAULT_CONTROLS.boldGradientTo),
+    darkMode: {
+      showPreview: next.darkMode?.showPreview ?? DEFAULT_CONTROLS.darkMode.showPreview,
+      useOverrides: next.darkMode?.useOverrides ?? DEFAULT_CONTROLS.darkMode.useOverrides,
+      canvasBg: normalizeHex(next.darkMode?.canvasBg, DEFAULT_CONTROLS.darkMode.canvasBg),
+      surfaceBg: normalizeHex(next.darkMode?.surfaceBg, DEFAULT_CONTROLS.darkMode.surfaceBg),
+      panelBg: normalizeHex(next.darkMode?.panelBg, DEFAULT_CONTROLS.darkMode.panelBg),
+      separator: normalizeHex(next.darkMode?.separator, DEFAULT_CONTROLS.darkMode.separator),
+      textPrimary: normalizeHex(next.darkMode?.textPrimary, DEFAULT_CONTROLS.darkMode.textPrimary),
+      textSecondary: normalizeHex(next.darkMode?.textSecondary, DEFAULT_CONTROLS.darkMode.textSecondary),
+      textMuted: normalizeHex(next.darkMode?.textMuted, DEFAULT_CONTROLS.darkMode.textMuted),
+      primary: normalizeHex(next.darkMode?.primary, DEFAULT_CONTROLS.darkMode.primary),
+      accent: normalizeHex(next.darkMode?.accent, DEFAULT_CONTROLS.darkMode.accent),
+      buttonBg: normalizeHex(next.darkMode?.buttonBg, DEFAULT_CONTROLS.darkMode.buttonBg),
+    },
   };
 }
 
@@ -913,6 +1120,8 @@ export function defaultVisionDesignSystem(): VisionDesignSystemV1 {
     scenarios: [DEFAULT_SCENARIO],
     foundations: {
       fontFamily: 'Inter, system-ui, sans-serif',
+      headingFontFamily: 'Sora, system-ui, sans-serif',
+      decorativeFontFamily: 'Bricolage Grotesque, system-ui, sans-serif',
       imageProfiles: [DEFAULT_IMAGE_PROFILE],
     },
     controls: { ...DEFAULT_CONTROLS, typography: { ...DEFAULT_CONTROLS.typography }, spacing: { ...DEFAULT_CONTROLS.spacing } },
@@ -929,8 +1138,10 @@ export function deriveDesignSystemTokens(spec: VisionDesignSystemV1): VisionDesi
   const scenarios = spec.scenarios.length ? spec.scenarios : [DEFAULT_SCENARIO];
   const active = scenarios.find((s) => s.id === spec.activeScenarioId) || scenarios[0] || DEFAULT_SCENARIO;
   const baseFontFamily = String(spec.foundations.fontFamily || '').trim() || 'Inter, system-ui, sans-serif';
-  const headingCompanion = pickHeadingCompanion(baseFontFamily);
-  const decorativeCompanion = pickDecorativeCompanion(baseFontFamily, controls.fontVariance);
+  const headingSelected = String(spec.foundations.headingFontFamily || '').trim();
+  const decorativeSelected = String(spec.foundations.decorativeFontFamily || '').trim();
+  const headingCompanion = headingSelected || pickHeadingCompanion(baseFontFamily);
+  const decorativeCompanion = decorativeSelected || pickDecorativeCompanion(baseFontFamily, controls.fontVariance);
   const headingFontFamily =
     controls.fontVariance === 'splitHeading' || controls.fontVariance === 'splitHeadingDecorative' ? headingCompanion : baseFontFamily;
   const decorativeFontFamily =
@@ -1105,6 +1316,17 @@ export function deriveDesignSystemTokens(spec: VisionDesignSystemV1): VisionDesi
   const boldZoneCoverage = clamp01(lerp(0.02, 1, boldIntent) * (0.3 + colorBudget * 0.7));
   const boldZonePolicy: VisionDesignSystemDerivedV1['composition']['boldZonePolicy'] =
     boldIntent < 0.22 ? 'neutral' : boldIntent < 0.48 ? 'brandTint' : boldIntent < 0.78 ? 'brandSolid' : 'mediaBacked';
+  const autoBoldGradientFrom = mix(primary, '#0f172a', 0.14);
+  const autoBoldGradientMid = activeAccents[0] || primary;
+  const autoBoldGradientTo = mix(primary, '#ffffff', 0.2);
+  const boldGradientFrom =
+    controls.boldGradientSource === 'custom' ? normalizeHex(controls.boldGradientFrom, autoBoldGradientFrom) : autoBoldGradientFrom;
+  const boldGradientMid =
+    controls.boldGradientSource === 'custom' ? normalizeHex(controls.boldGradientMid, autoBoldGradientMid) : autoBoldGradientMid;
+  const boldGradientTo =
+    controls.boldGradientSource === 'custom' ? normalizeHex(controls.boldGradientTo, autoBoldGradientTo) : autoBoldGradientTo;
+  const topMediaGradient = `linear-gradient(132deg, ${boldGradientFrom}, ${boldGradientMid}, ${boldGradientTo})`;
+  const leftMediaGradient = `linear-gradient(180deg, ${mix(boldGradientFrom, '#0f172a', 0.2)}, ${boldGradientMid})`;
 
   const topNavBg =
     boldZonePolicy === 'neutral'
@@ -1113,7 +1335,7 @@ export function deriveDesignSystemTokens(spec: VisionDesignSystemV1): VisionDesi
         ? mix(panelBg, primary, lerp(0.14, 0.56, boldZoneCoverage))
         : boldZonePolicy === 'brandSolid'
           ? mix(primary, activeAccents[0] || primary, 0.08 + variance * 0.24)
-          : `linear-gradient(132deg, ${mix(primary, '#0f172a', 0.14)}, ${activeAccents[0] || primary}, ${mix(primary, '#ffffff', 0.2)})`;
+          : topMediaGradient;
   const leftNavBg =
     boldZonePolicy === 'neutral'
       ? mix(surfaceBg, primary, 0.02 + boldZoneCoverage * 0.06)
@@ -1121,30 +1343,38 @@ export function deriveDesignSystemTokens(spec: VisionDesignSystemV1): VisionDesi
         ? mix(surfaceBg, primary, lerp(0.12, 0.42, boldZoneCoverage))
         : boldZonePolicy === 'brandSolid'
           ? mix(primary, '#0f172a', 0.16)
-          : `linear-gradient(180deg, ${mix(primary, '#0f172a', 0.2)}, ${activeAccents[0] || primary})`;
+          : leftMediaGradient;
 
-  const topNavText = ensureContrastText(String(topNavBg).startsWith('linear-gradient') ? primary : topNavBg, '#ffffff', 4.5);
-  const leftNavText = ensureContrastText(String(leftNavBg).startsWith('linear-gradient') ? mix(primary, '#0f172a', 0.12) : leftNavBg, '#ffffff', 4.5);
+  const topGradientRef = mix(mix(boldGradientFrom, boldGradientMid, 0.5), boldGradientTo, 0.5);
+  const leftGradientRef = mix(mix(boldGradientFrom, '#0f172a', 0.2), boldGradientMid, 0.55);
+  const topNavText = ensureContrastText(String(topNavBg).startsWith('linear-gradient') ? topGradientRef : topNavBg, '#ffffff', 4.5);
+  const leftNavText = ensureContrastText(String(leftNavBg).startsWith('linear-gradient') ? leftGradientRef : leftNavBg, '#ffffff', 4.5);
   const textTintMix = bleed <= 0.001 ? 0 : bleedText * (0.08 + bleed * 0.44);
   const textPrimary = ensureContrastText(canvasBg, mix(fallbackText, bleedSource, textTintMix), 5.2);
   const textSecondary = ensureContrastText(canvasBg, mix(textPrimary, bleedSource, textTintMix * 0.52), 4.5);
   const textMuted = ensureContrastText(canvasBg, mix(textSecondary, bleedSource, textTintMix * 0.4), 3.8);
 
-  const softnessCurve = Math.pow(softness, 1.12);
-  const cardRadius = Math.round(lerp(2, 30, softnessCurve));
-  const buttonRadius = softness > 0.88 ? 999 : Math.round(lerp(4, 24, Math.pow(softness, 0.88)));
-  const inputRadius = Math.round(lerp(3, 16, Math.pow(softness, 1.04)));
+  const softnessCurve = Math.pow(softness, 1.34);
+  const cardRadius = Math.round(lerp(0, 40, softnessCurve));
+  const buttonRadius =
+    softness > 0.82
+      ? Math.round(lerp(14, 999, Math.pow((softness - 0.82) / 0.18, 1.2)))
+      : Math.round(lerp(0, 14, Math.pow(softness / 0.82, 0.9)));
+  const inputRadius =
+    softness > 0.9
+      ? Math.round(lerp(12, 28, Math.pow((softness - 0.9) / 0.1, 1.12)))
+      : Math.round(lerp(0, 12, Math.pow(softness / 0.9, 1.2)));
 
-  const zoneLevels = 1 + Math.round(zoning * 3);
-  const zoneContrast = Number(lerp(0.02, 0.3, Math.pow(zoning, 0.92)).toFixed(3));
+  const zoneLevels = 1 + Math.round(zoning * 4);
+  const zoneContrast = Number(lerp(0.01, 0.46, Math.pow(zoning, 0.82)).toFixed(3));
   const saturationPolicy = itemSaturation < 0.34 ? 'semanticOnly' : itemSaturation < 0.66 ? 'focused' : 'broad';
   const varianceLevel = variance < 0.34 ? 'low' : variance < 0.66 ? 'medium' : 'high';
 
   const materialBudget = clamp01(skeuo * (0.32 + (1 - flatness) * 0.68));
-  const borderStyle: 'solid' | 'dashed' = wireframeMix > 0.82 ? 'dashed' : 'solid';
-  const borderWidth = Number(lerp(0, 3.2, Math.pow(wireframeMix, 0.94)).toFixed(2));
-  const wireframeLineOpacity = Number(lerp(0, 0.86, Math.pow(wireframeMix, 0.9)).toFixed(3));
-  const wireframeFillOpacity = Number(lerp(1, 0.18, Math.pow(wireframeMix, 0.9)).toFixed(3));
+  const borderStyle: 'solid' | 'dashed' = 'solid';
+  const borderWidth = Number(lerp(0, 0.92, Math.pow(wireframeMix, 0.88)).toFixed(2));
+  const wireframeLineOpacity = Number(lerp(0, 0.3, Math.pow(wireframeMix, 0.84)).toFixed(3));
+  const wireframeFillOpacity = Number(lerp(1, 0.62, Math.pow(wireframeMix, 0.8)).toFixed(3));
   const gradientStrength = Number((visualRangeMix * (0.45 + materialBudget * 0.22) * (1 - wireframeMix * 0.62)).toFixed(3));
   const styleBevelMult =
     controls.skeuomorphismStyle === 'neomorphic'
@@ -1166,19 +1396,19 @@ export function deriveDesignSystemTokens(spec: VisionDesignSystemV1): VisionDesi
           : 1;
   const styleShadowMult =
     controls.skeuomorphismStyle === 'neomorphic'
-      ? 1.36
+      ? 1.18
       : controls.skeuomorphismStyle === 'glass'
-        ? 0.84
-      : controls.skeuomorphismStyle === 'glow'
-          ? 1.58
+        ? 0.74
+        : controls.skeuomorphismStyle === 'glow'
+          ? 1.44
           : controls.skeuomorphismStyle === 'embossed'
-            ? 1.18
-            : 1;
-  const bevelStrength = Number((materialBudget * (0.42 + gradientStrength * 0.58) * styleBevelMult).toFixed(3));
-  const glossStrength = Number((materialBudget * (0.24 + gradientStrength * 0.74) * styleGlossMult).toFixed(3));
-  const innerShadowStrength = Number((materialBudget * (0.2 + wireframeMix * 0.28) * (controls.skeuomorphismStyle === 'glass' ? 0.48 : 1.12)).toFixed(3));
-  const shadowStrength = Number(lerp(0.04, 0.42, materialBudget * styleShadowMult).toFixed(3));
-  const highlightStrength = Number(lerp(0.02, 0.3, materialBudget * (controls.skeuomorphismStyle === 'glow' ? 1.32 : 1)).toFixed(3));
+            ? 1.08
+            : 0.9;
+  const bevelStrength = Number((materialBudget * (0.34 + gradientStrength * 0.52) * styleBevelMult).toFixed(3));
+  const glossStrength = Number((materialBudget * (0.2 + gradientStrength * 0.64) * styleGlossMult).toFixed(3));
+  const innerShadowStrength = Number((materialBudget * (0.16 + wireframeMix * 0.24) * (controls.skeuomorphismStyle === 'glass' ? 0.48 : 1.08)).toFixed(3));
+  const shadowStrength = Number(lerp(0.01, controls.skeuomorphismStyle === 'glow' ? 0.24 : 0.11, materialBudget * styleShadowMult).toFixed(3));
+  const highlightStrength = Number(lerp(0.02, 0.26, materialBudget * (controls.skeuomorphismStyle === 'glow' ? 1.24 : 0.96)).toFixed(3));
   const gradientBase = activeAccents[0] || primary;
   const gradientNeighborA = shiftHue(gradientBase, 24, 1.06, 0.02);
   const gradientNeighborB = shiftHue(gradientBase, -26, 1.02, -0.02);
@@ -1186,29 +1416,31 @@ export function deriveDesignSystemTokens(spec: VisionDesignSystemV1): VisionDesi
   const gradientMid = mix(primary, activeAccents[1] || gradientNeighborB, 0.32 + variance * 0.28);
   const gradientTo = mix(gradientNeighborB, activeAccents[0] || primary, 0.36 + visualRangeMix * 0.34);
 
-  const shadowColor = mix('#0f172a', shiftHue(bleedSource, 12, 0.95, -0.1), 0.18 + visualRangeMix * 0.36);
-  const shadowAccent = mix(
-    shiftHue(gradientBase, controls.skeuomorphismStyle === 'glow' ? 32 : 18, 1.06, -0.08),
-    '#0f172a',
-    0.46 - visualRangeMix * 0.12,
-  );
+  const shadowColor =
+    controls.skeuomorphismStyle === 'glow'
+      ? mix('#111827', shiftHue(bleedSource, 16, 1.02, -0.06), 0.12 + visualRangeMix * 0.24)
+      : mix('#0f172a', shiftHue(bleedSource, 12, 0.95, -0.1), 0.12 + visualRangeMix * 0.22);
+  const shadowAccent =
+    controls.skeuomorphismStyle === 'glow'
+      ? mix('#facc15', shiftHue(gradientBase, 38, 1.18, 0.12), 0.56)
+      : mix(shiftHue(gradientBase, 18, 1.02, -0.08), '#0f172a', 0.58 - visualRangeMix * 0.1);
   const shadowHighlight = mix('#ffffff', shiftHue(gradientBase, -22, 0.26, 0.26), 0.22 + glossStrength * 0.42);
   const shadowRgb = toRgb(shadowColor);
   const shadowAccentRgb = toRgb(shadowAccent);
   const shadowTopRgb = toRgb(shadowHighlight);
-  const shadowX = Math.round(lerp(0, controls.skeuomorphismStyle === 'neomorphic' ? 5 : 3, materialBudget));
-  const shadowY = Math.round(4 + shadowStrength * 24);
-  const shadowBlur = Math.round(10 + shadowStrength * 36);
+  const shadowX = Math.round(lerp(0, controls.skeuomorphismStyle === 'neomorphic' ? 4 : 2, materialBudget));
+  const shadowY = Math.round(1 + shadowStrength * 10);
+  const shadowBlur = Math.round(4 + shadowStrength * 14);
   const accentY = Math.round(shadowY * lerp(0.75, 1.25, visualRangeMix));
   const accentBlur = Math.round(shadowBlur * lerp(0.78, 1.18, visualRangeMix));
   const topYOffset = -Math.round(1 + glossStrength * 7);
   const topBlur = Math.round(2 + glossStrength * 14);
   const shadow = [
-    `0 ${shadowY}px ${shadowBlur}px rgba(${shadowRgb.r},${shadowRgb.g},${shadowRgb.b},${(0.08 + shadowStrength * 0.24).toFixed(3)})`,
+    `0 ${shadowY}px ${shadowBlur}px rgba(${shadowRgb.r},${shadowRgb.g},${shadowRgb.b},${(0.035 + shadowStrength * 0.12).toFixed(3)})`,
     `${shadowX}px ${accentY}px ${accentBlur}px rgba(${shadowAccentRgb.r},${shadowAccentRgb.g},${shadowAccentRgb.b},${(
-      0.05 + shadowStrength * (controls.skeuomorphismStyle === 'glow' ? 0.52 : 0.32)
+      0.02 + shadowStrength * (controls.skeuomorphismStyle === 'glow' ? 0.34 : 0.11)
     ).toFixed(3)})`,
-    `0 ${topYOffset}px ${topBlur}px rgba(${shadowTopRgb.r},${shadowTopRgb.g},${shadowTopRgb.b},${(0.06 + glossStrength * 0.34).toFixed(3)})`,
+    `0 ${topYOffset}px ${topBlur}px rgba(${shadowTopRgb.r},${shadowTopRgb.g},${shadowTopRgb.b},${(0.04 + glossStrength * 0.24).toFixed(3)})`,
   ].join(', ');
 
   const neutralItemAnchor = mix(separatorBase, '#94a3b8', 0.56);
@@ -1229,10 +1461,95 @@ export function deriveDesignSystemTokens(spec: VisionDesignSystemV1): VisionDesi
   const primaryItemColor = saturatedItems[0] || applyItemSaturation(primary, 0);
   const accentItemColors = saturatedItems.slice(1);
   const itemColors = [primaryItemColor, ...accentItemColors].slice(0, 6);
+  const itemTextColors = itemColors.map((color) => ensureContrastText(color, '#ffffff', 4.5));
 
-  const buttonBgBase = primaryItemColor;
+  const accentButtonCandidate = accentItemColors[0] || activeAccents[0] || primaryItemColor;
+  const buttonBgBase = variance >= 0.6 ? accentButtonCandidate : primaryItemColor;
   const buttonBg = wireframeMix > 0.75 ? mix(buttonBgBase, surfaceBg, 0.45) : buttonBgBase;
   const buttonText = ensureContrastText(buttonBg, '#ffffff', 4.5);
+
+  const darkCfg = controls.darkMode;
+  const darkPrimaryAuto = mix(primary, '#93c5fd', 0.26);
+  const darkAccentAuto = activeAccents[0] ? mix(activeAccents[0], '#c4b5fd', 0.24) : shiftHue(darkPrimaryAuto, 28, 1.02, 0.06);
+  const darkPrimary = darkCfg.useOverrides ? normalizeHex(darkCfg.primary, darkPrimaryAuto) : darkPrimaryAuto;
+  const darkAccent = darkCfg.useOverrides ? normalizeHex(darkCfg.accent, darkAccentAuto) : darkAccentAuto;
+  const darkCanvasAuto = mix('#020617', darkPrimary, 0.08 + bleed * 0.16);
+  const darkSurfaceAuto = mix('#0b1220', darkPrimary, 0.12 + bleed * 0.12);
+  const darkPanelAuto = mix(darkSurfaceAuto, darkAccent, 0.16 + zoning * 0.2);
+  const darkSeparatorAuto = mix('#334155', darkPrimary, 0.12 + bleed * 0.12);
+  const darkCanvasBg = darkCfg.useOverrides ? normalizeHex(darkCfg.canvasBg, darkCanvasAuto) : darkCanvasAuto;
+  const darkSurfaceBg = darkCfg.useOverrides ? normalizeHex(darkCfg.surfaceBg, darkSurfaceAuto) : darkSurfaceAuto;
+  const darkPanelBg = darkCfg.useOverrides ? normalizeHex(darkCfg.panelBg, darkPanelAuto) : darkPanelAuto;
+  const darkSeparator = darkCfg.useOverrides ? normalizeHex(darkCfg.separator, darkSeparatorAuto) : darkSeparatorAuto;
+  const darkTextPrimary = ensureContrastText(
+    darkCanvasBg,
+    darkCfg.useOverrides ? normalizeHex(darkCfg.textPrimary, '#f8fafc') : '#f8fafc',
+    7,
+  );
+  const darkTextSecondary = ensureContrastText(
+    darkCanvasBg,
+    darkCfg.useOverrides ? normalizeHex(darkCfg.textSecondary, '#cbd5e1') : '#cbd5e1',
+    4.5,
+  );
+  const darkTextMuted = ensureContrastText(
+    darkCanvasBg,
+    darkCfg.useOverrides ? normalizeHex(darkCfg.textMuted, '#94a3b8') : '#94a3b8',
+    3.2,
+  );
+  const darkTopNavBgAuto =
+    boldZonePolicy === 'mediaBacked'
+      ? `linear-gradient(132deg, ${mix(darkPrimary, '#020617', 0.35)}, ${darkAccent}, ${mix(darkPrimary, '#ffffff', 0.06)})`
+      : mix('#0b1225', darkPrimary, 0.24 + boldZoneCoverage * 0.24);
+  const darkLeftNavBgAuto =
+    boldZonePolicy === 'mediaBacked'
+      ? `linear-gradient(180deg, ${mix(darkPrimary, '#020617', 0.42)}, ${mix(darkAccent, '#0f172a', 0.22)})`
+      : mix('#0f172a', darkPrimary, 0.2 + boldZoneCoverage * 0.2);
+  const darkTopNavBg =
+    darkCfg.useOverrides && !String(darkTopNavBgAuto).startsWith('linear-gradient')
+      ? normalizeHex(darkCfg.panelBg, darkTopNavBgAuto)
+      : darkTopNavBgAuto;
+  const darkLeftNavBg =
+    darkCfg.useOverrides && !String(darkLeftNavBgAuto).startsWith('linear-gradient')
+      ? normalizeHex(darkCfg.surfaceBg, darkLeftNavBgAuto)
+      : darkLeftNavBgAuto;
+  const darkTopNavText = ensureContrastText(
+    String(darkTopNavBg).startsWith('linear-gradient') ? mix(darkPrimary, darkAccent, 0.5) : darkTopNavBg,
+    '#f8fafc',
+    4.5,
+  );
+  const darkLeftNavText = ensureContrastText(
+    String(darkLeftNavBg).startsWith('linear-gradient') ? mix(darkPrimary, '#0f172a', 0.36) : darkLeftNavBg,
+    '#f8fafc',
+    4.5,
+  );
+  const darkContentBg = mix(darkCanvasBg, darkPanelBg, clamp01(0.22 + zoneContrast * 0.5));
+  const darkCardBg = mix(darkSurfaceBg, darkPanelBg, clamp01(0.26 + zoning * 0.42));
+  const darkButtonAuto = variance >= 0.6 ? mix(darkAccent, darkPrimary, 0.36) : mix(darkPrimary, darkAccent, 0.16);
+  const darkButtonBg = darkCfg.useOverrides ? normalizeHex(darkCfg.buttonBg, darkButtonAuto) : darkButtonAuto;
+  const darkButtonText = ensureContrastText(darkButtonBg, '#ffffff', 4.5);
+  const darkItemColors = itemColors
+    .map((color, idx) => {
+      const anchor = idx === 0 ? darkPrimary : darkAccent;
+      return mix(color, anchor, 0.28);
+    })
+    .slice(0, 6);
+  const darkItemTextColors = darkItemColors.map((color) => ensureContrastText(color, '#ffffff', 4.5));
+  const darkGradientFrom = mix(gradientFrom, darkPrimary, 0.46);
+  const darkGradientMid = mix(gradientMid, darkAccent, 0.52);
+  const darkGradientTo = mix(gradientTo, darkPrimary, 0.44);
+  const darkShadowColor = mix(shadowColor, '#020617', 0.66);
+  const darkShadowAccent = mix(shadowAccent, darkAccent, 0.42);
+  const darkShadowHighlight = mix(shadowHighlight, '#94a3b8', 0.24);
+  const darkShadowRgb = toRgb(darkShadowColor);
+  const darkShadowAccentRgb = toRgb(darkShadowAccent);
+  const darkTopShadowRgb = toRgb(darkShadowHighlight);
+  const darkShadow = [
+    `0 ${Math.max(1, shadowY - 1)}px ${Math.max(3, shadowBlur - 2)}px rgba(${darkShadowRgb.r},${darkShadowRgb.g},${darkShadowRgb.b},${(0.05 + shadowStrength * 0.14).toFixed(3)})`,
+    `${Math.max(0, shadowX)}px ${Math.max(1, accentY - 1)}px ${Math.max(3, accentBlur - 2)}px rgba(${darkShadowAccentRgb.r},${darkShadowAccentRgb.g},${darkShadowAccentRgb.b},${(
+      0.03 + shadowStrength * 0.22
+    ).toFixed(3)})`,
+    `0 ${Math.min(-1, topYOffset)}px ${Math.max(2, topBlur - 2)}px rgba(${darkTopShadowRgb.r},${darkTopShadowRgb.g},${darkTopShadowRgb.b},${(0.04 + glossStrength * 0.18).toFixed(3)})`,
+  ].join(', ');
 
   const negativeZoneMode: VisionDesignSystemDerivedV1['negativeZone']['mode'] =
     controls.negativeZoneStyle < 30
@@ -1250,6 +1567,8 @@ export function deriveDesignSystemTokens(spec: VisionDesignSystemV1): VisionDesi
         : negativeZoneMode === 'texture'
           ? `radial-gradient(circle at 1px 1px, ${mix(separator, '#ffffff', 0.25)} 1px, transparent 1px), ${canvasBg}`
           : `linear-gradient(140deg, ${mix(gradientFrom, '#0f172a', 0.22)}, ${mix(gradientTo, '#ffffff', 0.14)})`;
+  const contentBg = mix(canvasBg, panelBg, clamp01(0.03 + zoneContrast * 0.66));
+  const cardBg = mix(wellSurface, panelBg, clamp01(0.12 + zoning * 0.54 + (zoneLevels - 1) * 0.035));
 
   const captionOpacity = Number(lerp(0.4, 0.88, typeContrast).toFixed(3));
   const labelOpacity = Number(lerp(0.56, 0.94, typeContrast).toFixed(3));
@@ -1280,11 +1599,11 @@ export function deriveDesignSystemTokens(spec: VisionDesignSystemV1): VisionDesi
       gapPx,
     },
     shape: {
-      radiusXs: Math.max(0, Math.round(lerp(1, 8, Math.pow(softness, 1.1)))),
-      radiusSm: Math.max(0, Math.round(lerp(3, 12, Math.pow(softness, 1.02)))),
-      radiusMd: Math.max(0, Math.round(lerp(6, 18, Math.pow(softness, 0.94)))),
-      radiusLg: Math.max(0, Math.round(lerp(10, 24, Math.pow(softness, 0.9)))),
-      radiusXl: Math.max(0, Math.round(lerp(14, 32, Math.pow(softness, 0.85)))),
+      radiusXs: Math.max(0, Math.round(lerp(0, 4, Math.pow(softness, 1.62)))),
+      radiusSm: Math.max(0, Math.round(lerp(0, 8, Math.pow(softness, 1.28)))),
+      radiusMd: Math.max(0, Math.round(lerp(1, 14, Math.pow(softness, 1.04)))),
+      radiusLg: Math.max(0, Math.round(lerp(3, 24, Math.pow(softness, 0.9)))),
+      radiusXl: Math.max(0, Math.round(lerp(6, 36, Math.pow(softness, 0.8)))),
       cardRadius,
       buttonRadius,
       inputRadius,
@@ -1304,6 +1623,7 @@ export function deriveDesignSystemTokens(spec: VisionDesignSystemV1): VisionDesi
       primary,
       accents: activeAccents,
       itemColors,
+      itemTextColors,
       neutrals: active.palette.neutral,
       semantic: active.palette.semantic,
       textOnPrimary: ensureContrastText(primary, '#ffffff', 4.5),
@@ -1315,6 +1635,40 @@ export function deriveDesignSystemTokens(spec: VisionDesignSystemV1): VisionDesi
       panelBg: wellSurface,
       separator,
       tintAmount,
+    },
+    dark: {
+      color: {
+        primary: darkPrimary,
+        accent: darkAccent,
+        itemColors: darkItemColors,
+        itemTextColors: darkItemTextColors,
+        canvasBg: darkCanvasBg,
+        surfaceBg: darkSurfaceBg,
+        panelBg: darkPanelBg,
+        separator: darkSeparator,
+        textPrimary: darkTextPrimary,
+        textSecondary: darkTextSecondary,
+        textMuted: darkTextMuted,
+      },
+      preview: {
+        topNavBg: darkTopNavBg,
+        topNavText: darkTopNavText,
+        leftNavBg: darkLeftNavBg,
+        leftNavText: darkLeftNavText,
+        contentBg: darkContentBg,
+        cardBg: darkCardBg,
+        cardBorder: darkSeparator,
+        buttonBg: darkButtonBg,
+        buttonText: darkButtonText,
+        focusColor: darkItemColors[1] || darkAccent || darkPrimary,
+        shadow: darkShadow,
+        shadowColor: darkShadowColor,
+        shadowAccent: darkShadowAccent,
+        shadowHighlight: darkShadowHighlight,
+        gradientFrom: darkGradientFrom,
+        gradientMid: darkGradientMid,
+        gradientTo: darkGradientTo,
+      },
     },
     effects: {
       wireframeMix: Number(wireframeMix.toFixed(3)),
@@ -1341,8 +1695,8 @@ export function deriveDesignSystemTokens(spec: VisionDesignSystemV1): VisionDesi
       topNavText,
       leftNavBg,
       leftNavText,
-      contentBg: mix(canvasBg, fallbackText, zoneContrast * 0.03),
-      cardBg: mix(wellSurface, panelBg, zoning * 0.22),
+      contentBg,
+      cardBg,
       cardBorder: separator,
       buttonBg,
       buttonText,
@@ -1382,6 +1736,8 @@ export function coerceVisionDesignSystem(input: unknown): VisionDesignSystemV1 |
     scenarios: resolvedScenarios,
     foundations: {
       fontFamily: String(foundationsSrc.fontFamily || '').trim() || 'Inter, system-ui, sans-serif',
+      headingFontFamily: String(foundationsSrc.headingFontFamily || '').trim() || undefined,
+      decorativeFontFamily: String(foundationsSrc.decorativeFontFamily || '').trim() || undefined,
       imageProfiles: imageProfiles.length ? imageProfiles : [DEFAULT_IMAGE_PROFILE],
     },
     controls,
@@ -1511,6 +1867,13 @@ export function buildVisionDesignSystemReadout(spec: VisionDesignSystemV1): stri
   lines.push(`Color bleed: ${ds.controls.colorBleedTone} (${Math.round(ds.controls.colorBleed)}%)`);
   lines.push(`Negative zone mode: ${derived.negativeZone.mode}`);
   lines.push(`Bold zone policy: ${derived.composition.boldZonePolicy} (${(derived.composition.boldZoneCoverage * 100).toFixed(0)}% coverage)`);
+  lines.push(`Bold typography style: ${ds.controls.boldTypographyStyle}`);
+  lines.push(`Bold gradient source: ${ds.controls.boldGradientSource}`);
+  if (ds.controls.boldGradientSource === 'custom') {
+    lines.push(`Bold gradient stops: ${ds.controls.boldGradientFrom} -> ${ds.controls.boldGradientMid} -> ${ds.controls.boldGradientTo}`);
+  }
+  lines.push(`Dark preview: ${ds.controls.darkMode.showPreview ? 'enabled' : 'disabled'}`);
+  lines.push(`Dark overrides: ${ds.controls.darkMode.useOverrides ? 'custom' : 'auto'}`);
   if (uiRatio) {
     const breakdown = uiRatio.primitiveBreakdown || ratioBreakdownFromLegacy(uiRatio);
     lines.push(`UI ratio summary: neutral ${uiRatio.neutralPct}% · primary ${uiRatio.primaryPct}% · accent ${uiRatio.accentPct}%`);
@@ -1539,6 +1902,10 @@ export function buildVisionDesignSystemReadout(spec: VisionDesignSystemV1): stri
   lines.push(`- skeuomorphism style: ${ds.controls.skeuomorphismStyle}`);
   lines.push(`- negative zone style: ${controlBand(ds.controls.negativeZoneStyle)}`);
   lines.push(`- boldness: ${controlBand(ds.controls.boldness)}`);
+  lines.push(`- bold typography style: ${ds.controls.boldTypographyStyle}`);
+  lines.push(`- bold gradient source: ${ds.controls.boldGradientSource}`);
+  lines.push(`- dark preview: ${ds.controls.darkMode.showPreview ? 'enabled' : 'disabled'}`);
+  lines.push(`- dark overrides: ${ds.controls.darkMode.useOverrides ? 'custom' : 'auto'}`);
   lines.push('');
   lines.push('Image profiles:');
   for (const profile of ds.foundations.imageProfiles) {

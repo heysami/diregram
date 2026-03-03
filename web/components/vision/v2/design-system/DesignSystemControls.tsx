@@ -2,6 +2,7 @@
 
 import {
   normalizeVisionDesignSystem,
+  VISION_DECORATIVE_FONT_OPTIONS,
   VISION_GOOGLE_FONT_OPTIONS,
   VISION_TAILWIND_PRIMITIVE_COLORS,
   type VisionColorRatioV1,
@@ -21,6 +22,7 @@ const NEUTRAL_PRIMITIVES = VISION_TAILWIND_PRIMITIVE_COLORS.filter((c) => c.kind
 const ACCENT_PRIMITIVES = VISION_TAILWIND_PRIMITIVE_COLORS.filter((c) => c.kind === 'accent');
 const ALL_PRIMITIVES = VISION_TAILWIND_PRIMITIVE_COLORS;
 const SEMANTIC_KEYS: Array<keyof VisionSemanticPaletteV1> = ['success', 'warning', 'error', 'info'];
+const ALL_FONT_OPTIONS = [...VISION_GOOGLE_FONT_OPTIONS, ...VISION_DECORATIVE_FONT_OPTIONS];
 const FONT_VARIANCE_OPTIONS = [
   {
     id: 'single',
@@ -187,6 +189,14 @@ export function DesignSystemControls({ value, onChange }: Props) {
   const selectedFont =
     VISION_GOOGLE_FONT_OPTIONS.find((f) => f.family === value.foundations.fontFamily)?.id ||
     VISION_GOOGLE_FONT_OPTIONS.find((f) => value.foundations.fontFamily.includes(f.label))?.id ||
+    'custom';
+  const selectedHeadingFont =
+    ALL_FONT_OPTIONS.find((f) => f.family === value.foundations.headingFontFamily)?.id ||
+    ALL_FONT_OPTIONS.find((f) => String(value.foundations.headingFontFamily || '').includes(f.label))?.id ||
+    'custom';
+  const selectedDecorativeFont =
+    ALL_FONT_OPTIONS.find((f) => f.family === value.foundations.decorativeFontFamily)?.id ||
+    ALL_FONT_OPTIONS.find((f) => String(value.foundations.decorativeFontFamily || '').includes(f.label))?.id ||
     'custom';
 
   const commit = (updater: (draft: VisionDesignSystemV1) => void) => {
@@ -972,6 +982,76 @@ export function DesignSystemControls({ value, onChange }: Props) {
             </select>
             <div className="vds-help">{FONT_VARIANCE_OPTIONS.find((opt) => opt.id === value.controls.fontVariance)?.description}</div>
           </label>
+          {value.controls.fontVariance === 'splitHeading' || value.controls.fontVariance === 'splitHeadingDecorative' ? (
+            <label className="vds-field">
+              <span>Heading font family</span>
+              <div className="vds-row">
+                <select
+                  value={selectedHeadingFont}
+                  onChange={(e) =>
+                    commit((draft) => {
+                      if (e.target.value === 'custom') return;
+                      const selected = ALL_FONT_OPTIONS.find((f) => f.id === e.target.value);
+                      if (!selected) return;
+                      draft.foundations.headingFontFamily = selected.family;
+                    })
+                  }
+                >
+                  {ALL_FONT_OPTIONS.map((f) => (
+                    <option key={`heading-${f.id}`} value={f.id} style={{ fontFamily: f.family }}>
+                      {f.label}
+                    </option>
+                  ))}
+                  <option value="custom">Custom</option>
+                </select>
+                <input
+                  type="text"
+                  value={value.foundations.headingFontFamily || ''}
+                  onChange={(e) =>
+                    commit((draft) => {
+                      draft.foundations.headingFontFamily = e.target.value;
+                    })
+                  }
+                  placeholder="Heading font stack"
+                />
+              </div>
+            </label>
+          ) : null}
+          {value.controls.fontVariance === 'singleDecorative' || value.controls.fontVariance === 'splitHeadingDecorative' ? (
+            <label className="vds-field">
+              <span>Decorative font family</span>
+              <div className="vds-row">
+                <select
+                  value={selectedDecorativeFont}
+                  onChange={(e) =>
+                    commit((draft) => {
+                      if (e.target.value === 'custom') return;
+                      const selected = ALL_FONT_OPTIONS.find((f) => f.id === e.target.value);
+                      if (!selected) return;
+                      draft.foundations.decorativeFontFamily = selected.family;
+                    })
+                  }
+                >
+                  {ALL_FONT_OPTIONS.map((f) => (
+                    <option key={`decorative-${f.id}`} value={f.id} style={{ fontFamily: f.family }}>
+                      {f.label}
+                    </option>
+                  ))}
+                  <option value="custom">Custom</option>
+                </select>
+                <input
+                  type="text"
+                  value={value.foundations.decorativeFontFamily || ''}
+                  onChange={(e) =>
+                    commit((draft) => {
+                      draft.foundations.decorativeFontFamily = e.target.value;
+                    })
+                  }
+                  placeholder="Decorative font stack"
+                />
+              </div>
+            </label>
+          ) : null}
           <SliderRow
             label="Typography base size"
             helper="Sets body baseline before scale expansion/compression."
@@ -1077,7 +1157,7 @@ export function DesignSystemControls({ value, onChange }: Props) {
           />
           <SliderRow
             label="Zoning"
-            helper="From minimal zones to strong multi-zone hierarchy."
+            helper="Controls zone separation (canvas, shell, wells, nested surfaces) using contrast and depth levels."
             value={value.controls.zoning}
             onChange={(next) => commit((draft) => (draft.controls.zoning = clamp(Math.round(next), 0, 100)))}
           />
@@ -1089,7 +1169,7 @@ export function DesignSystemControls({ value, onChange }: Props) {
           />
           <SliderRow
             label="Wireframe feeling"
-            helper="From barely-there borders to thick structural lines/dashes."
+            helper="Always subtle strokes: from near-invisible separators to clearer structural lines without heavy borders."
             value={value.controls.wireframeFeeling}
             onChange={(next) => commit((draft) => (draft.controls.wireframeFeeling = clamp(Math.round(next), 0, 100)))}
           />
@@ -1134,6 +1214,376 @@ export function DesignSystemControls({ value, onChange }: Props) {
             value={value.controls.boldness}
             onChange={(next) => commit((draft) => (draft.controls.boldness = clamp(Math.round(next), 0, 100)))}
           />
+          <label className="vds-field">
+            <span>Bold typography style</span>
+            <select
+              value={value.controls.boldTypographyStyle}
+              onChange={(e) =>
+                commit((draft) => {
+                  draft.controls.boldTypographyStyle = e.target.value as typeof value.controls.boldTypographyStyle;
+                })
+              }
+            >
+              <option value="none">none</option>
+              <option value="gradient">gradient text</option>
+              <option value="glow">glow text</option>
+              <option value="gradientGlow">gradient + glow</option>
+            </select>
+            <div className="vds-help">Applies to display text in shell headline and font showcase title.</div>
+          </label>
+          <label className="vds-field">
+            <span>Bold gradient source</span>
+            <select
+              value={value.controls.boldGradientSource}
+              onChange={(e) =>
+                commit((draft) => {
+                  draft.controls.boldGradientSource = e.target.value === 'custom' ? 'custom' : 'auto';
+                })
+              }
+            >
+              <option value="auto">auto</option>
+              <option value="custom">custom</option>
+            </select>
+            <div className="vds-help">Used when boldness pushes shell zones into media-backed gradients.</div>
+          </label>
+          {value.controls.boldGradientSource === 'custom' ? (
+            <div className="vds-grid vds-grid--2">
+              <label className="vds-field">
+                <span>Gradient from</span>
+                <div className="vds-row">
+                  <input
+                    type="color"
+                    value={value.controls.boldGradientFrom}
+                    onChange={(e) =>
+                      commit((draft) => {
+                        draft.controls.boldGradientFrom = normalizeHexLoose(e.target.value, draft.controls.boldGradientFrom || '#1d4ed8');
+                      })
+                    }
+                  />
+                  <input
+                    type="text"
+                    value={value.controls.boldGradientFrom}
+                    onChange={(e) =>
+                      commit((draft) => {
+                        draft.controls.boldGradientFrom = normalizeHexLoose(e.target.value, draft.controls.boldGradientFrom || '#1d4ed8');
+                      })
+                    }
+                  />
+                </div>
+              </label>
+              <label className="vds-field">
+                <span>Gradient mid</span>
+                <div className="vds-row">
+                  <input
+                    type="color"
+                    value={value.controls.boldGradientMid}
+                    onChange={(e) =>
+                      commit((draft) => {
+                        draft.controls.boldGradientMid = normalizeHexLoose(e.target.value, draft.controls.boldGradientMid || '#7c3aed');
+                      })
+                    }
+                  />
+                  <input
+                    type="text"
+                    value={value.controls.boldGradientMid}
+                    onChange={(e) =>
+                      commit((draft) => {
+                        draft.controls.boldGradientMid = normalizeHexLoose(e.target.value, draft.controls.boldGradientMid || '#7c3aed');
+                      })
+                    }
+                  />
+                </div>
+              </label>
+              <label className="vds-field">
+                <span>Gradient to</span>
+                <div className="vds-row">
+                  <input
+                    type="color"
+                    value={value.controls.boldGradientTo}
+                    onChange={(e) =>
+                      commit((draft) => {
+                        draft.controls.boldGradientTo = normalizeHexLoose(e.target.value, draft.controls.boldGradientTo || '#14b8a6');
+                      })
+                    }
+                  />
+                  <input
+                    type="text"
+                    value={value.controls.boldGradientTo}
+                    onChange={(e) =>
+                      commit((draft) => {
+                        draft.controls.boldGradientTo = normalizeHexLoose(e.target.value, draft.controls.boldGradientTo || '#14b8a6');
+                      })
+                    }
+                  />
+                </div>
+              </label>
+            </div>
+          ) : null}
+
+          <details className="vds-mini-collapse" open>
+            <summary>Dark Mode Preview</summary>
+            <div className="vds-stack">
+              <label className="vds-row">
+                <input
+                  type="checkbox"
+                  checked={Boolean(value.controls.darkMode.showPreview)}
+                  onChange={(e) =>
+                    commit((draft) => {
+                      draft.controls.darkMode.showPreview = e.target.checked;
+                    })
+                  }
+                />
+                <span>Show dark mode preview</span>
+              </label>
+              <label className="vds-row">
+                <input
+                  type="checkbox"
+                  checked={Boolean(value.controls.darkMode.useOverrides)}
+                  onChange={(e) =>
+                    commit((draft) => {
+                      draft.controls.darkMode.useOverrides = e.target.checked;
+                    })
+                  }
+                />
+                <span>Override dark mode colors</span>
+              </label>
+
+              {value.controls.darkMode.useOverrides ? (
+                <div className="vds-grid vds-grid--2">
+                  <label className="vds-field">
+                    <span>Canvas</span>
+                    <div className="vds-row">
+                      <input
+                        type="color"
+                        value={value.controls.darkMode.canvasBg}
+                        onChange={(e) =>
+                          commit((draft) => {
+                            draft.controls.darkMode.canvasBg = normalizeHexLoose(e.target.value, draft.controls.darkMode.canvasBg || '#0b1020');
+                          })
+                        }
+                      />
+                      <input
+                        type="text"
+                        value={value.controls.darkMode.canvasBg}
+                        onChange={(e) =>
+                          commit((draft) => {
+                            draft.controls.darkMode.canvasBg = normalizeHexLoose(e.target.value, draft.controls.darkMode.canvasBg || '#0b1020');
+                          })
+                        }
+                      />
+                    </div>
+                  </label>
+                  <label className="vds-field">
+                    <span>Surface</span>
+                    <div className="vds-row">
+                      <input
+                        type="color"
+                        value={value.controls.darkMode.surfaceBg}
+                        onChange={(e) =>
+                          commit((draft) => {
+                            draft.controls.darkMode.surfaceBg = normalizeHexLoose(e.target.value, draft.controls.darkMode.surfaceBg || '#121a2d');
+                          })
+                        }
+                      />
+                      <input
+                        type="text"
+                        value={value.controls.darkMode.surfaceBg}
+                        onChange={(e) =>
+                          commit((draft) => {
+                            draft.controls.darkMode.surfaceBg = normalizeHexLoose(e.target.value, draft.controls.darkMode.surfaceBg || '#121a2d');
+                          })
+                        }
+                      />
+                    </div>
+                  </label>
+                  <label className="vds-field">
+                    <span>Panel</span>
+                    <div className="vds-row">
+                      <input
+                        type="color"
+                        value={value.controls.darkMode.panelBg}
+                        onChange={(e) =>
+                          commit((draft) => {
+                            draft.controls.darkMode.panelBg = normalizeHexLoose(e.target.value, draft.controls.darkMode.panelBg || '#1b2740');
+                          })
+                        }
+                      />
+                      <input
+                        type="text"
+                        value={value.controls.darkMode.panelBg}
+                        onChange={(e) =>
+                          commit((draft) => {
+                            draft.controls.darkMode.panelBg = normalizeHexLoose(e.target.value, draft.controls.darkMode.panelBg || '#1b2740');
+                          })
+                        }
+                      />
+                    </div>
+                  </label>
+                  <label className="vds-field">
+                    <span>Separator</span>
+                    <div className="vds-row">
+                      <input
+                        type="color"
+                        value={value.controls.darkMode.separator}
+                        onChange={(e) =>
+                          commit((draft) => {
+                            draft.controls.darkMode.separator = normalizeHexLoose(e.target.value, draft.controls.darkMode.separator || '#334155');
+                          })
+                        }
+                      />
+                      <input
+                        type="text"
+                        value={value.controls.darkMode.separator}
+                        onChange={(e) =>
+                          commit((draft) => {
+                            draft.controls.darkMode.separator = normalizeHexLoose(e.target.value, draft.controls.darkMode.separator || '#334155');
+                          })
+                        }
+                      />
+                    </div>
+                  </label>
+                  <label className="vds-field">
+                    <span>Text primary</span>
+                    <div className="vds-row">
+                      <input
+                        type="color"
+                        value={value.controls.darkMode.textPrimary}
+                        onChange={(e) =>
+                          commit((draft) => {
+                            draft.controls.darkMode.textPrimary = normalizeHexLoose(e.target.value, draft.controls.darkMode.textPrimary || '#f8fafc');
+                          })
+                        }
+                      />
+                      <input
+                        type="text"
+                        value={value.controls.darkMode.textPrimary}
+                        onChange={(e) =>
+                          commit((draft) => {
+                            draft.controls.darkMode.textPrimary = normalizeHexLoose(e.target.value, draft.controls.darkMode.textPrimary || '#f8fafc');
+                          })
+                        }
+                      />
+                    </div>
+                  </label>
+                  <label className="vds-field">
+                    <span>Text secondary</span>
+                    <div className="vds-row">
+                      <input
+                        type="color"
+                        value={value.controls.darkMode.textSecondary}
+                        onChange={(e) =>
+                          commit((draft) => {
+                            draft.controls.darkMode.textSecondary = normalizeHexLoose(e.target.value, draft.controls.darkMode.textSecondary || '#cbd5e1');
+                          })
+                        }
+                      />
+                      <input
+                        type="text"
+                        value={value.controls.darkMode.textSecondary}
+                        onChange={(e) =>
+                          commit((draft) => {
+                            draft.controls.darkMode.textSecondary = normalizeHexLoose(e.target.value, draft.controls.darkMode.textSecondary || '#cbd5e1');
+                          })
+                        }
+                      />
+                    </div>
+                  </label>
+                  <label className="vds-field">
+                    <span>Text muted</span>
+                    <div className="vds-row">
+                      <input
+                        type="color"
+                        value={value.controls.darkMode.textMuted}
+                        onChange={(e) =>
+                          commit((draft) => {
+                            draft.controls.darkMode.textMuted = normalizeHexLoose(e.target.value, draft.controls.darkMode.textMuted || '#94a3b8');
+                          })
+                        }
+                      />
+                      <input
+                        type="text"
+                        value={value.controls.darkMode.textMuted}
+                        onChange={(e) =>
+                          commit((draft) => {
+                            draft.controls.darkMode.textMuted = normalizeHexLoose(e.target.value, draft.controls.darkMode.textMuted || '#94a3b8');
+                          })
+                        }
+                      />
+                    </div>
+                  </label>
+                  <label className="vds-field">
+                    <span>Primary</span>
+                    <div className="vds-row">
+                      <input
+                        type="color"
+                        value={value.controls.darkMode.primary}
+                        onChange={(e) =>
+                          commit((draft) => {
+                            draft.controls.darkMode.primary = normalizeHexLoose(e.target.value, draft.controls.darkMode.primary || '#60a5fa');
+                          })
+                        }
+                      />
+                      <input
+                        type="text"
+                        value={value.controls.darkMode.primary}
+                        onChange={(e) =>
+                          commit((draft) => {
+                            draft.controls.darkMode.primary = normalizeHexLoose(e.target.value, draft.controls.darkMode.primary || '#60a5fa');
+                          })
+                        }
+                      />
+                    </div>
+                  </label>
+                  <label className="vds-field">
+                    <span>Accent</span>
+                    <div className="vds-row">
+                      <input
+                        type="color"
+                        value={value.controls.darkMode.accent}
+                        onChange={(e) =>
+                          commit((draft) => {
+                            draft.controls.darkMode.accent = normalizeHexLoose(e.target.value, draft.controls.darkMode.accent || '#a78bfa');
+                          })
+                        }
+                      />
+                      <input
+                        type="text"
+                        value={value.controls.darkMode.accent}
+                        onChange={(e) =>
+                          commit((draft) => {
+                            draft.controls.darkMode.accent = normalizeHexLoose(e.target.value, draft.controls.darkMode.accent || '#a78bfa');
+                          })
+                        }
+                      />
+                    </div>
+                  </label>
+                  <label className="vds-field">
+                    <span>Button</span>
+                    <div className="vds-row">
+                      <input
+                        type="color"
+                        value={value.controls.darkMode.buttonBg}
+                        onChange={(e) =>
+                          commit((draft) => {
+                            draft.controls.darkMode.buttonBg = normalizeHexLoose(e.target.value, draft.controls.darkMode.buttonBg || '#3b82f6');
+                          })
+                        }
+                      />
+                      <input
+                        type="text"
+                        value={value.controls.darkMode.buttonBg}
+                        onChange={(e) =>
+                          commit((draft) => {
+                            draft.controls.darkMode.buttonBg = normalizeHexLoose(e.target.value, draft.controls.darkMode.buttonBg || '#3b82f6');
+                          })
+                        }
+                      />
+                    </div>
+                  </label>
+                </div>
+              ) : null}
+            </div>
+          </details>
         </div>
       </details>
     </div>

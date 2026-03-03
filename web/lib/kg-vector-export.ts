@@ -483,6 +483,12 @@ function exportVisionSemanticKg(opts: {
           skeuomorphismStyle: controls.skeuomorphismStyle,
           negativeZoneStyle: controls.negativeZoneStyle,
           boldness: controls.boldness,
+          boldTypographyStyle: controls.boldTypographyStyle,
+          boldGradientSource: controls.boldGradientSource,
+          boldGradientFrom: controls.boldGradientFrom,
+          boldGradientMid: controls.boldGradientMid,
+          boldGradientTo: controls.boldGradientTo,
+          darkMode: controls.darkMode || null,
         },
       });
       edges.push({
@@ -505,6 +511,9 @@ function exportVisionSemanticKg(opts: {
         `Bleed text ${controls?.colorBleedText || 0}`,
         `Wireframe ${controls?.wireframeFeeling || 0}, VisualRange ${controls?.visualRange || 0}, Skeuomorphism ${controls?.skeuomorphism || 0} (${controls?.skeuomorphismStyle || 'subtle'})`,
         `NegativeZoneStyle ${controls?.negativeZoneStyle || 0}, Boldness ${controls?.boldness || 0}`,
+        `Bold typography style ${controls?.boldTypographyStyle || 'none'}`,
+        `Bold gradient ${controls?.boldGradientSource || 'auto'} ${controls?.boldGradientFrom || ''} ${controls?.boldGradientMid || ''} ${controls?.boldGradientTo || ''}`,
+        `Dark mode preview ${controls?.darkMode?.showPreview ? 'enabled' : 'disabled'}, overrides ${controls?.darkMode?.useOverrides ? 'custom' : 'auto'}`,
       ]
         .filter(Boolean)
         .join('\n');

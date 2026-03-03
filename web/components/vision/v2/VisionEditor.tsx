@@ -74,7 +74,7 @@ export function VisionEditor({
   const [markdownOpen, setMarkdownOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [insertCardTemplateOpen, setInsertCardTemplateOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<'designSystem' | 'customVisualElements'>('customVisualElements');
+  const [activeTab, setActiveTab] = useState<'designSystem' | 'customVisualElements'>('designSystem');
   useCardCount(doc); // keep memoized for future use (e.g. status line); doesn't render now.
 
   const [activeTool, setActiveTool] = useState<'select' | 'comment'>('select');

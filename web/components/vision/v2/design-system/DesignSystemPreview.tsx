@@ -1,6 +1,6 @@
 'use client';
 
-import type { CSSProperties } from 'react';
+import { useState, type CSSProperties } from 'react';
 import { deriveDesignSystemTokens, type VisionDesignSystemV1, type VisionTypographyTokenV1 } from '@/lib/vision-design-system';
 
 type Props = {
@@ -17,9 +17,16 @@ function colorAt(pool: string[], index: number, fallback: string) {
 
 export function DesignSystemPreview({ value }: Props) {
   const derived = value.derived || deriveDesignSystemTokens(value);
+  const [previewTheme, setPreviewTheme] = useState<'light' | 'dark'>('light');
   const activeScenario = value.scenarios.find((s) => s.id === value.activeScenarioId) || value.scenarios[0];
   const activeImage = value.foundations.imageProfiles[0] || null;
   const uiRatio = activeScenario?.ratios.find((r) => r.scope === 'ui' || r.scope === 'all') || activeScenario?.ratios[0];
+  const showDarkPreview = Boolean(value.controls.darkMode.showPreview);
+  const themeMode: 'light' | 'dark' = showDarkPreview && previewTheme === 'dark' ? 'dark' : 'light';
+  const modeColor = themeMode === 'dark' ? derived.dark.color : null;
+  const modePreview = themeMode === 'dark' ? derived.dark.preview : derived.preview;
+  const modePrimary = themeMode === 'dark' ? modeColor!.primary : derived.color.primary;
+  const modeAccents = themeMode === 'dark' ? [modeColor!.accent, ...derived.color.accents] : derived.color.accents;
 
   const caption = getToken(derived.typography.tokens, 'caption');
   const label = getToken(derived.typography.tokens, 'label');
@@ -27,7 +34,22 @@ export function DesignSystemPreview({ value }: Props) {
   const h4 = getToken(derived.typography.tokens, 'h4');
   const h2 = getToken(derived.typography.tokens, 'h2');
 
-  const itemColors = derived.color.itemColors.length ? derived.color.itemColors : [derived.color.primary, ...derived.color.accents];
+  const itemColors =
+    themeMode === 'dark'
+      ? modeColor!.itemColors.length
+        ? modeColor!.itemColors
+        : [modePrimary, ...modeAccents]
+      : derived.color.itemColors.length
+        ? derived.color.itemColors
+        : [modePrimary, ...modeAccents];
+  const itemTextColors =
+    themeMode === 'dark'
+      ? modeColor!.itemTextColors.length
+        ? modeColor!.itemTextColors
+        : [derived.color.textOnPrimary]
+      : derived.color.itemTextColors.length
+        ? derived.color.itemTextColors
+        : [derived.color.textOnPrimary];
   const fontVarianceLabel =
     value.controls.fontVariance === 'singleDecorative'
       ? 'Single + decorative'
@@ -41,29 +63,30 @@ export function DesignSystemPreview({ value }: Props) {
     '--vds-font-family': derived.typography.fontFamily,
     '--vds-font-heading': derived.typography.headingFontFamily,
     '--vds-font-decorative': derived.typography.decorativeFontFamily,
-    '--vds-canvas': derived.color.canvasBg,
-    '--vds-surface': derived.color.surfaceBg,
-    '--vds-panel': derived.color.panelBg,
-    '--vds-separator': derived.color.separator,
-    '--vds-focus': derived.preview.focusColor,
-    '--vds-text-primary': derived.color.textPrimary,
-    '--vds-text-secondary': derived.color.textSecondary,
-    '--vds-text-muted': derived.color.textMuted,
-    '--vds-top-nav-bg': derived.preview.topNavBg,
-    '--vds-top-nav-text': derived.preview.topNavText,
-    '--vds-left-nav-bg': derived.preview.leftNavBg,
-    '--vds-left-nav-text': derived.preview.leftNavText,
-    '--vds-card-bg': derived.preview.cardBg,
-    '--vds-card-border': derived.preview.cardBorder,
-    '--vds-btn-bg': derived.preview.buttonBg,
-    '--vds-btn-text': derived.preview.buttonText,
-    '--vds-shadow': derived.preview.shadow,
-    '--vds-shadow-color': derived.preview.shadowColor,
-    '--vds-shadow-accent': derived.preview.shadowAccent,
-    '--vds-shadow-highlight': derived.preview.shadowHighlight,
-    '--vds-gradient-from': derived.preview.gradientFrom,
-    '--vds-gradient-mid': derived.preview.gradientMid,
-    '--vds-gradient-to': derived.preview.gradientTo,
+    '--vds-canvas': themeMode === 'dark' ? modeColor!.canvasBg : derived.color.canvasBg,
+    '--vds-surface': themeMode === 'dark' ? modeColor!.surfaceBg : derived.color.surfaceBg,
+    '--vds-panel': themeMode === 'dark' ? modeColor!.panelBg : derived.color.panelBg,
+    '--vds-separator': themeMode === 'dark' ? modeColor!.separator : derived.color.separator,
+    '--vds-focus': modePreview.focusColor,
+    '--vds-text-primary': themeMode === 'dark' ? modeColor!.textPrimary : derived.color.textPrimary,
+    '--vds-text-secondary': themeMode === 'dark' ? modeColor!.textSecondary : derived.color.textSecondary,
+    '--vds-text-muted': themeMode === 'dark' ? modeColor!.textMuted : derived.color.textMuted,
+    '--vds-top-nav-bg': modePreview.topNavBg,
+    '--vds-top-nav-text': modePreview.topNavText,
+    '--vds-left-nav-bg': modePreview.leftNavBg,
+    '--vds-left-nav-text': modePreview.leftNavText,
+    '--vds-content-bg': modePreview.contentBg,
+    '--vds-card-bg': modePreview.cardBg,
+    '--vds-card-border': modePreview.cardBorder,
+    '--vds-btn-bg': modePreview.buttonBg,
+    '--vds-btn-text': modePreview.buttonText,
+    '--vds-shadow': modePreview.shadow,
+    '--vds-shadow-color': modePreview.shadowColor,
+    '--vds-shadow-accent': modePreview.shadowAccent,
+    '--vds-shadow-highlight': modePreview.shadowHighlight,
+    '--vds-gradient-from': modePreview.gradientFrom,
+    '--vds-gradient-mid': modePreview.gradientMid,
+    '--vds-gradient-to': modePreview.gradientTo,
     '--vds-radius-xs': `${derived.shape.radiusXs}px`,
     '--vds-radius-sm': `${derived.shape.radiusSm}px`,
     '--vds-radius-md': `${derived.shape.radiusMd}px`,
@@ -83,6 +106,7 @@ export function DesignSystemPreview({ value }: Props) {
     '--vds-border-style': derived.effects.borderStyle,
     '--vds-card-usage': `${derived.composition.cardUsage}`,
     '--vds-zone-contrast': `${derived.composition.zoneContrast}`,
+    '--vds-zone-levels': `${derived.composition.zoneLevels}`,
     '--vds-line-opacity': `${derived.effects.wireframeLineOpacity}`,
     '--vds-fill-opacity': `${derived.effects.wireframeFillOpacity}`,
     '--vds-gradient-strength': `${derived.effects.gradientStrength}`,
@@ -110,29 +134,49 @@ export function DesignSystemPreview({ value }: Props) {
     '--vds-type-label-opacity': `${derived.typography.labelOpacity}`,
     '--vds-type-body-opacity': `${derived.typography.bodyOpacity}`,
     '--vds-type-subdued-opacity': `${derived.typography.subduedOpacity}`,
-    '--vds-item-color-1': colorAt(itemColors, 0, derived.color.primary),
-    '--vds-item-color-2': colorAt(itemColors, 1, derived.color.accents[0] || derived.color.primary),
-    '--vds-item-color-3': colorAt(itemColors, 2, derived.color.accents[1] || derived.color.primary),
-    '--vds-item-color-4': colorAt(itemColors, 3, derived.color.accents[2] || derived.color.primary),
-    '--vds-item-color-5': colorAt(itemColors, 4, derived.color.accents[0] || derived.color.primary),
-    '--vds-item-color-6': colorAt(itemColors, 5, derived.color.accents[1] || derived.color.primary),
+    '--vds-item-color-1': colorAt(itemColors, 0, modePrimary),
+    '--vds-item-color-2': colorAt(itemColors, 1, modeAccents[0] || modePrimary),
+    '--vds-item-color-3': colorAt(itemColors, 2, modeAccents[1] || modePrimary),
+    '--vds-item-color-4': colorAt(itemColors, 3, modeAccents[2] || modePrimary),
+    '--vds-item-color-5': colorAt(itemColors, 4, modeAccents[0] || modePrimary),
+    '--vds-item-color-6': colorAt(itemColors, 5, modeAccents[1] || modePrimary),
+    '--vds-item-text-1': colorAt(itemTextColors, 0, derived.color.textOnPrimary),
+    '--vds-item-text-2': colorAt(itemTextColors, 1, derived.color.textOnPrimary),
+    '--vds-item-text-3': colorAt(itemTextColors, 2, derived.color.textOnPrimary),
+    '--vds-item-text-4': colorAt(itemTextColors, 3, derived.color.textOnPrimary),
+    '--vds-item-text-5': colorAt(itemTextColors, 4, derived.color.textOnPrimary),
+    '--vds-item-text-6': colorAt(itemTextColors, 5, derived.color.textOnPrimary),
   } as CSSProperties;
 
   return (
-    <div
-      className="vds-preview"
-      style={vars}
-      data-carded={derived.composition.cardUsage > 0.5 ? '1' : '0'}
-      data-wireframe={derived.effects.wireframeMix > 0.6 ? '1' : '0'}
-      data-wire-mode={derived.effects.wireframeMix < 0.18 ? 'low' : derived.effects.wireframeMix > 0.66 ? 'high' : 'mid'}
-      data-visual-range={derived.effects.visualRangeMix > 0.55 ? '1' : '0'}
-      data-skeuo={derived.effects.materialBudget > 0.5 ? '1' : '0'}
-      data-skeuo-style={value.controls.skeuomorphismStyle}
-      data-variance={value.controls.colorVariance > 60 ? 'high' : value.controls.colorVariance > 30 ? 'medium' : 'low'}
-      data-flat-mode={derived.composition.cardUsage < 0.34 ? 'line' : derived.composition.cardUsage < 0.67 ? 'mixed' : 'card'}
-      data-font-variance={value.controls.fontVariance}
-      data-flatness={Math.round(derived.composition.cardUsage * 100)}
-    >
+    <>
+      {showDarkPreview ? (
+        <div className="vds-preview-mode-toggle">
+          <button type="button" className={previewTheme === 'light' ? 'is-active' : ''} onClick={() => setPreviewTheme('light')}>
+            Light preview
+          </button>
+          <button type="button" className={previewTheme === 'dark' ? 'is-active' : ''} onClick={() => setPreviewTheme('dark')}>
+            Dark preview
+          </button>
+        </div>
+      ) : null}
+      <div
+        className="vds-preview"
+        style={vars}
+        data-preview-theme={themeMode}
+        data-carded={derived.composition.cardUsage > 0.5 ? '1' : '0'}
+        data-wireframe={derived.effects.wireframeMix > 0.6 ? '1' : '0'}
+        data-wire-mode={derived.effects.wireframeMix < 0.18 ? 'low' : derived.effects.wireframeMix > 0.66 ? 'high' : 'mid'}
+        data-visual-range={derived.effects.visualRangeMix > 0.55 ? '1' : '0'}
+        data-skeuo={derived.effects.materialBudget > 0.5 ? '1' : '0'}
+        data-skeuo-style={value.controls.skeuomorphismStyle}
+        data-variance={value.controls.colorVariance > 60 ? 'high' : value.controls.colorVariance > 30 ? 'medium' : 'low'}
+        data-zoning={value.controls.zoning > 66 ? 'high' : value.controls.zoning > 33 ? 'mid' : 'low'}
+        data-flat-mode={derived.composition.cardUsage < 0.34 ? 'line' : derived.composition.cardUsage < 0.67 ? 'mixed' : 'card'}
+        data-font-variance={value.controls.fontVariance}
+        data-bold-type-style={value.controls.boldTypographyStyle}
+        data-flatness={Math.round(derived.composition.cardUsage * 100)}
+      >
       <section className="vds-preview-card">
         <div className="vds-preview-card__title">Design system summary</div>
         <div className="vds-summary-grid">
@@ -198,6 +242,9 @@ export function DesignSystemPreview({ value }: Props) {
             <span>Global search</span>
             <span>Notifications</span>
             <span>User</span>
+            <button type="button" className="vds-shell-topbar__action is-primary">
+              New report
+            </button>
           </div>
         </header>
         <div className="vds-shell-body">
@@ -207,6 +254,11 @@ export function DesignSystemPreview({ value }: Props) {
             <div className="vds-nav-item">Customers</div>
             <div className="vds-nav-item">Billing</div>
             <div className="vds-nav-item">Settings</div>
+            <div className="vds-shell-leftnav__actions">
+              <button type="button" className="vds-shell-leftnav__action is-primary">
+                + Create
+              </button>
+            </div>
           </aside>
           <main className="vds-shell-content">
             <div className="vds-shell-headline">Weekly operational snapshot</div>
@@ -230,14 +282,30 @@ export function DesignSystemPreview({ value }: Props) {
       </section>
 
       <section className="vds-preview-grid">
+        {value.controls.fontVariance !== 'single' ? (
+          <article className="vds-preview-card">
+            <div className="vds-preview-card__title">Font variance showcase</div>
+            <div className="vds-font-showcase">
+              <div className="vds-font-decor-bg">KINETIC SIGNAL</div>
+              <div className="vds-font-tech-label">System narrative layer</div>
+              <h3 className="vds-font-hero-title">Adaptive commerce interface</h3>
+              <p className="vds-font-body-line">UI controls stay consistent while hero/decorative text can split by mode.</p>
+            </div>
+          </article>
+        ) : null}
+
         <article className="vds-preview-card">
-          <div className="vds-preview-card__title">Font variance showcase</div>
-          <div className="vds-font-showcase">
-            <div className="vds-font-decor-bg">KINETIC SIGNAL</div>
-            <div className="vds-font-tech-label">System narrative layer</div>
-            <h3 className="vds-font-hero-title">Adaptive commerce interface</h3>
-            <p className="vds-font-body-line">UI controls stay consistent while hero/decorative text can split by mode.</p>
+          <div className="vds-preview-card__title">Zoning depth</div>
+          <div className="vds-zone-stack">
+            <div className="vds-zone-layer is-level-1">
+              Workspace zone
+              <div className="vds-zone-layer is-level-2">
+                Content zone
+                <div className="vds-zone-layer is-level-3">Detail zone</div>
+              </div>
+            </div>
           </div>
+          <div className="vds-preview-note">Low zoning keeps one plane. High zoning increases distinct nested surfaces and separation.</div>
         </article>
 
         <article className="vds-preview-card">
@@ -320,7 +388,7 @@ export function DesignSystemPreview({ value }: Props) {
                   <span className="vds-dot" style={{ background: 'var(--vds-item-color-1)' }} /> Alex
                 </td>
                 <td>
-                  <span className="vds-table__tag" style={{ background: 'var(--vds-item-color-1)' }}>
+                  <span className="vds-table__tag" style={{ background: 'var(--vds-item-color-1)', color: 'var(--vds-item-text-1)' }}>
                     Active
                   </span>
                 </td>
@@ -331,7 +399,7 @@ export function DesignSystemPreview({ value }: Props) {
                   <span className="vds-dot" style={{ background: 'var(--vds-item-color-2)' }} /> Rina
                 </td>
                 <td>
-                  <span className="vds-table__tag" style={{ background: 'var(--vds-item-color-2)' }}>
+                  <span className="vds-table__tag" style={{ background: 'var(--vds-item-color-2)', color: 'var(--vds-item-text-2)' }}>
                     Review
                   </span>
                 </td>
@@ -342,7 +410,7 @@ export function DesignSystemPreview({ value }: Props) {
                   <span className="vds-dot" style={{ background: 'var(--vds-item-color-3)' }} /> Omar
                 </td>
                 <td>
-                  <span className="vds-table__tag" style={{ background: 'var(--vds-item-color-3)' }}>
+                  <span className="vds-table__tag" style={{ background: 'var(--vds-item-color-3)', color: 'var(--vds-item-text-3)' }}>
                     Blocked
                   </span>
                 </td>
@@ -376,13 +444,13 @@ export function DesignSystemPreview({ value }: Props) {
             </button>
           </div>
           <div className="vds-chip-row">
-            <span className="vds-chip" style={{ background: 'var(--vds-item-color-1)' }}>
+            <span className="vds-chip" style={{ background: 'var(--vds-item-color-1)', color: 'var(--vds-item-text-1)' }}>
               In progress
             </span>
-            <span className="vds-chip" style={{ background: 'var(--vds-item-color-2)' }}>
+            <span className="vds-chip" style={{ background: 'var(--vds-item-color-2)', color: 'var(--vds-item-text-2)' }}>
               On hold
             </span>
-            <span className="vds-chip" style={{ background: 'var(--vds-item-color-3)' }}>
+            <span className="vds-chip" style={{ background: 'var(--vds-item-color-3)', color: 'var(--vds-item-text-3)' }}>
               Completed
             </span>
           </div>
@@ -471,6 +539,7 @@ export function DesignSystemPreview({ value }: Props) {
           </div>
         </article>
       </section>
-    </div>
+      </div>
+    </>
   );
 }
