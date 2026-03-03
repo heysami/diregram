@@ -26,6 +26,7 @@ export function adjustGotoLayoutAndRouting(opts: {
   const axis: 'x' | 'y' = layoutDirection === 'vertical' ? 'y' : 'x';
   const routeHintsByGotoId: Record<string, GotoRouteMode> = {};
   const requestedAxisByTarget = new Map<string, number>();
+  const excludedChildRootsByTarget = new Map<string, Set<string>>();
   const baseAxisById = new Map<string, number>();
 
   Object.entries(layout).forEach(([id, l]) => {
@@ -65,6 +66,16 @@ export function adjustGotoLayoutAndRouting(opts: {
     return depth;
   };
 
+  const getDirectChildOnPath = (ancestorId: string, descendantId: string): string | null => {
+    if (!ancestorId || !descendantId || ancestorId === descendantId) return null;
+    let cur = nodeMap.get(descendantId);
+    while (cur?.parentId) {
+      if (cur.parentId === ancestorId) return cur.id;
+      cur = nodeMap.get(cur.parentId);
+    }
+    return null;
+  };
+
   Object.entries(gotoTargets).forEach(([gotoId, targetId]) => {
     if (processNodeTypes[gotoId] !== 'goto') return;
     if (!isShowFlowOnForNode(gotoId)) return;
@@ -102,6 +113,15 @@ export function adjustGotoLayoutAndRouting(opts: {
     if (requested === undefined || gotoAxis > requested) {
       requestedAxisByTarget.set(targetId, gotoAxis);
     }
+
+    // If target is an ancestor of the goto node, do not shift the goto-containing branch.
+    // Otherwise the goto anchor moves together with target and alignment cannot converge.
+    const protectedChild = getDirectChildOnPath(targetId, gotoId);
+    if (protectedChild) {
+      const set = excludedChildRootsByTarget.get(targetId) || new Set<string>();
+      set.add(protectedChild);
+      excludedChildRootsByTarget.set(targetId, set);
+    }
   });
 
   if (requestedAxisByTarget.size === 0) {
@@ -121,7 +141,24 @@ export function adjustGotoLayoutAndRouting(opts: {
 
   const shiftSubtreeAlongAxis = (targetId: string, delta: number): void => {
     if (!delta || !Number.isFinite(delta) || delta <= 0) return;
-    const stack: string[] = [targetId];
+    const targetNode = nodeMap.get(targetId);
+    if (!targetNode) return;
+    const excludedChildren = excludedChildRootsByTarget.get(targetId) || new Set<string>();
+
+    const targetLayout = adjustedLayout[targetId];
+    if (targetLayout) {
+      adjustedLayout[targetId] =
+        axis === 'x'
+          ? { ...targetLayout, x: targetLayout.x + delta }
+          : { ...targetLayout, y: targetLayout.y + delta };
+    }
+
+    const stack: string[] = [];
+    targetNode.children.forEach((child) => {
+      if (!excludedChildren.has(child.id)) {
+        stack.push(child.id);
+      }
+    });
     const visited = new Set<string>();
 
     while (stack.length) {

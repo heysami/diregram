@@ -4333,6 +4333,28 @@ export function NexusCanvas({
               >
                 <polygon points="0 0, 8 4, 0 8" fill="#000000" stroke="#000000" strokeWidth="1" />
               </marker>
+              <marker
+                id="arrowhead-light-start-reverse"
+                markerWidth="8"
+                markerHeight="8"
+                refX="7"
+                refY="4"
+                orient="auto-start-reverse"
+                markerUnits="userSpaceOnUse"
+              >
+                <polygon points="0 0, 8 4, 0 8" fill="#000000" stroke="#000000" strokeWidth="1" />
+              </marker>
+              <marker
+                id="arrowhead-gray-start-reverse"
+                markerWidth="8"
+                markerHeight="8"
+                refX="7"
+                refY="4"
+                orient="auto-start-reverse"
+                markerUnits="userSpaceOnUse"
+              >
+                <polygon points="0 0, 8 4, 0 8" fill="#000000" stroke="#000000" strokeWidth="1" />
+              </marker>
             </defs>
             {/* eslint-disable-next-line react-hooks/refs */}
             {flattenedNodes.map(node => {
@@ -4614,6 +4636,7 @@ export function NexusCanvas({
               const targetLayout = animatedLayout[targetId];
               if (!sourceLayout || !targetLayout) return null;
               const routeMode = gotoRouteHints[node.id] || 'default';
+              const reverseArrow = routeMode === 'backtrack';
 
               const isCollapsedGoto = selectedNodeId !== node.id;
               const isGotoSelected = selectedNodeId === node.id;
@@ -4656,7 +4679,8 @@ export function NexusCanvas({
                       stroke="#000000"
                       strokeWidth={isGotoSelected ? 3 : 2}
                       fill="none"
-                      markerEnd="url(#arrowhead-light)"
+                      markerStart={reverseArrow ? 'url(#arrowhead-light-start-reverse)' : undefined}
+                      markerEnd={reverseArrow ? undefined : 'url(#arrowhead-light)'}
                       opacity={dim ? 0.25 : 0.9}
                     />
                     {/* Click target (fatter, transparent) */}
@@ -4700,7 +4724,8 @@ export function NexusCanvas({
                     strokeWidth="1.5"
                     fill="none"
                     strokeDasharray="4 4"
-                    markerEnd="url(#arrowhead-gray)"
+                    markerStart={reverseArrow ? 'url(#arrowhead-gray-start-reverse)' : undefined}
+                    markerEnd={reverseArrow ? undefined : 'url(#arrowhead-gray)'}
                     opacity={dim ? 0.3 : 0.6}
                   />
                 </g>
