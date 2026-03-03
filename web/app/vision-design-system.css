@@ -703,6 +703,10 @@
   align-items: center;
   gap: var(--vds-gap, 12px);
   font-size: var(--vds-type-caption-size, 12px);
+  opacity: 1;
+}
+
+.vds-shell-topbar__meta > span {
   opacity: 0.92;
 }
 

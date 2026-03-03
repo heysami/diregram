@@ -1479,19 +1479,22 @@ export function deriveDesignSystemTokens(spec: VisionDesignSystemV1): VisionDesi
   const buttonBgBase = variance >= 0.6 ? accentButtonCandidate : primaryItemColor;
   const buttonBg = wireframeMix > 0.75 ? mix(buttonBgBase, surfaceBg, 0.45) : buttonBgBase;
   const buttonText = ensureContrastText(buttonBg, '#ffffff', 4.5);
-  const deriveActionOnSurface = (surfaceHex: string, desiredBgHex: string) => {
-    const surface = normalizeHex(surfaceHex, '#0f172a');
+  const deriveActionOnSurfaces = (surfacesHex: string[], desiredBgHex: string) => {
+    const surfaces = surfacesHex.length
+      ? surfacesHex.map((surfaceHex) => normalizeHex(surfaceHex, '#0f172a'))
+      : ['#0f172a'];
     const desired = normalizeHex(desiredBgHex, '#3b82f6');
-    const candidates = [desired, mix(desired, surface, 0.48), mix('#ffffff', surface, 0.24), mix('#0f172a', surface, 0.24)];
+    const surfaceAvg = surfaces.reduce((acc, s) => mix(acc, s, 0.5), surfaces[0] || '#0f172a');
+    const candidates = [desired, mix(desired, surfaceAvg, 0.2), mix(desired, surfaceAvg, 0.32), mix('#ffffff', desired, 0.08), mix('#0f172a', desired, 0.08)];
     let best = desired;
     let bestText = ensureContrastText(desired, '#ffffff', 4.5);
     let bestScore = -Infinity;
     for (const bg of candidates) {
       const text = ensureContrastText(bg, '#ffffff', 4.5);
       const textContrast = contrastRatio(bg, text);
-      const surfaceContrast = contrastRatio(bg, surface);
+      const surfaceContrast = Math.min(...surfaces.map((surface) => contrastRatio(bg, surface)));
       const preference = bg === desired ? 0.08 : 0;
-      const score = surfaceContrast + textContrast * 0.38 + preference;
+      const score = surfaceContrast * 0.7 + textContrast * 0.38 + preference;
       if (score > bestScore) {
         best = bg;
         bestText = text;
@@ -1501,13 +1504,12 @@ export function deriveDesignSystemTokens(spec: VisionDesignSystemV1): VisionDesi
     return {
       bg: best,
       text: bestText,
-      border: mix(best, surface, 0.56),
+      border: mix(best, surfaceAvg, 0.56),
     };
   };
   const topSurfaceRef = String(topNavBg).startsWith('linear-gradient') ? topGradientRef : normalizeHex(topNavBg, panelBg);
   const leftSurfaceRef = String(leftNavBg).startsWith('linear-gradient') ? leftGradientRef : normalizeHex(leftNavBg, surfaceBg);
-  const topNavAction = deriveActionOnSurface(topSurfaceRef, buttonBg);
-  const leftNavAction = deriveActionOnSurface(leftSurfaceRef, buttonBg);
+  const unifiedNavAction = deriveActionOnSurfaces([topSurfaceRef, leftSurfaceRef], buttonBg);
 
   const darkCfg = controls.darkMode;
   const darkPrimaryAuto = mix(primary, '#93c5fd', 0.26);
@@ -1571,8 +1573,7 @@ export function deriveDesignSystemTokens(spec: VisionDesignSystemV1): VisionDesi
   const darkTopSurfaceRef = String(darkTopNavBg).startsWith('linear-gradient') ? mix(darkPrimary, darkAccent, 0.5) : normalizeHex(darkTopNavBg, darkPanelBg);
   const darkLeftSurfaceRef =
     String(darkLeftNavBg).startsWith('linear-gradient') ? mix(darkPrimary, '#0f172a', 0.36) : normalizeHex(darkLeftNavBg, darkSurfaceBg);
-  const darkTopNavAction = deriveActionOnSurface(darkTopSurfaceRef, darkButtonBg);
-  const darkLeftNavAction = deriveActionOnSurface(darkLeftSurfaceRef, darkButtonBg);
+  const darkUnifiedNavAction = deriveActionOnSurfaces([darkTopSurfaceRef, darkLeftSurfaceRef], darkButtonBg);
   const darkItemColors = itemColors
     .map((color, idx) => {
       const anchor = idx === 0 ? darkPrimary : darkAccent;
@@ -1699,14 +1700,14 @@ export function deriveDesignSystemTokens(spec: VisionDesignSystemV1): VisionDesi
       preview: {
         topNavBg: darkTopNavBg,
         topNavText: darkTopNavText,
-        topNavActionBg: darkTopNavAction.bg,
-        topNavActionText: darkTopNavAction.text,
-        topNavActionBorder: darkTopNavAction.border,
+        topNavActionBg: darkUnifiedNavAction.bg,
+        topNavActionText: darkUnifiedNavAction.text,
+        topNavActionBorder: darkUnifiedNavAction.border,
         leftNavBg: darkLeftNavBg,
         leftNavText: darkLeftNavText,
-        leftNavActionBg: darkLeftNavAction.bg,
-        leftNavActionText: darkLeftNavAction.text,
-        leftNavActionBorder: darkLeftNavAction.border,
+        leftNavActionBg: darkUnifiedNavAction.bg,
+        leftNavActionText: darkUnifiedNavAction.text,
+        leftNavActionBorder: darkUnifiedNavAction.border,
         contentBg: darkContentBg,
         cardBg: darkCardBg,
         cardBorder: darkSeparator,
@@ -1745,14 +1746,14 @@ export function deriveDesignSystemTokens(spec: VisionDesignSystemV1): VisionDesi
     preview: {
       topNavBg,
       topNavText,
-      topNavActionBg: topNavAction.bg,
-      topNavActionText: topNavAction.text,
-      topNavActionBorder: topNavAction.border,
+      topNavActionBg: unifiedNavAction.bg,
+      topNavActionText: unifiedNavAction.text,
+      topNavActionBorder: unifiedNavAction.border,
       leftNavBg,
       leftNavText,
-      leftNavActionBg: leftNavAction.bg,
-      leftNavActionText: leftNavAction.text,
-      leftNavActionBorder: leftNavAction.border,
+      leftNavActionBg: unifiedNavAction.bg,
+      leftNavActionText: unifiedNavAction.text,
+      leftNavActionBorder: unifiedNavAction.border,
       contentBg,
       cardBg,
       cardBorder: separator,
