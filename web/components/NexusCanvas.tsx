@@ -1253,7 +1253,7 @@ export function NexusCanvas({
 
   // --- Hooks ---
   const structure = useNexusStructure(doc, roots);
-  const navigation = useKeyboardNavigation(selectedNodeId, nodeMap, roots, visualTree);
+  const navigation = useKeyboardNavigation(selectedNodeId, nodeMap, roots, visualTree, layoutDirection);
   const dragDrop = useDragDrop(doc, rawNodeMap);
 
   // --- Effects ---
@@ -2608,7 +2608,22 @@ export function NexusCanvas({
       // Structural Moves
       if (isCmd && ['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)) {
           e.preventDefault();
-          const direction = e.key === 'ArrowUp' ? 'up' : e.key === 'ArrowDown' ? 'down' : e.key === 'ArrowLeft' ? 'unindent' : 'indent';
+          const direction =
+            layoutDirection === 'vertical'
+              ? e.key === 'ArrowUp'
+                ? 'unindent'
+                : e.key === 'ArrowDown'
+                  ? 'indent'
+                  : e.key === 'ArrowLeft'
+                    ? 'up'
+                    : 'down'
+              : e.key === 'ArrowUp'
+                ? 'up'
+                : e.key === 'ArrowDown'
+                  ? 'down'
+                  : e.key === 'ArrowLeft'
+                    ? 'unindent'
+                    : 'indent';
 
           if (direction === 'unindent') {
             const blocked = getBlockedCmdUnindentReason(node, nodeMap);

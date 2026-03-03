@@ -5,14 +5,14 @@ export type BlockedMoveReason =
   | { kind: 'conditional_root_parent'; message: string };
 
 /**
- * Guard for Cmd+Left (unindent) move.
+ * Guard for the "unindent" structural move (Cmd+Arrow depending on layout direction).
  *
  * We disallow structural unindent when the node is directly under:
  * - a root process node, or
  * - a conditional root (hub)
  *
  * Exception: if the node is visually indented via `>>` (visualLevel > 0),
- * Cmd+Left should still work because it only changes visual indentation and
+ * the unindent shortcut should still work because it only changes visual indentation and
  * does not reparent in the structural tree.
  */
 export function getBlockedCmdUnindentReason(
@@ -29,17 +29,16 @@ export function getBlockedCmdUnindentReason(
   const parentIsRootProcess =
     !!parent.isFlowNode && (!parent.parentId || !nodeMap.get(parent.parentId)?.isFlowNode);
   if (parentIsRootProcess) {
-    return { kind: 'process_root_parent', message: 'Cannot move left: node is directly under a process root.' };
+    return { kind: 'process_root_parent', message: 'Cannot unindent: node is directly under a process root.' };
   }
 
   const parentIsConditionalRoot = !!parent.isHub;
   if (parentIsConditionalRoot) {
     return {
       kind: 'conditional_root_parent',
-      message: 'Cannot move left: node is directly under a conditional root.',
+      message: 'Cannot unindent: node is directly under a conditional root.',
     };
   }
 
   return null;
 }
-
