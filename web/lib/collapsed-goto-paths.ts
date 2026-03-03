@@ -36,6 +36,7 @@ export function buildCollapsedGotoPaths(opts: {
   source: Box;
   target: Box;
   layoutDirection?: 'horizontal' | 'vertical';
+  routeMode?: 'default' | 'backtrack';
   /** Minimum curve distance used for the vertical bezier control points. Default 80. */
   minCurveDistance?: number;
   /** Multiplier for vertical distance used for curve distance. Default 0.5. */
@@ -47,6 +48,7 @@ export function buildCollapsedGotoPaths(opts: {
     source,
     target,
     layoutDirection = 'horizontal',
+    routeMode = 'default',
     minCurveDistance = 80,
     curveFactor = 0.5,
     bridgeCtrlT = 0.65,
@@ -66,6 +68,31 @@ export function buildCollapsedGotoPaths(opts: {
   let bridgeCtrlY: number;
 
   if (layoutDirection === 'vertical') {
+    if (routeMode === 'backtrack') {
+      // Entry is top-center (incoming from above).
+      entryX = source.x + source.width / 2;
+      entryY = source.y;
+
+      // Backtrack exit is bottom-center.
+      startX = source.x + source.width / 2;
+      startY = source.y + source.height;
+
+      // Backtrack target attaches at top-center.
+      endX = target.x + target.width / 2;
+      endY = target.y;
+
+      const verticalDistance = Math.abs(endY - startY);
+      const curveDistance = Math.max(verticalDistance * curveFactor, minCurveDistance);
+      const targetIsLower = endY > startY;
+
+      c1x = startX;
+      c1y = targetIsLower ? startY + curveDistance : startY - curveDistance;
+      c2x = endX;
+      c2y = targetIsLower ? endY - curveDistance : endY + curveDistance;
+
+      bridgeCtrlX = entryX;
+      bridgeCtrlY = entryY + (startY - entryY) * bridgeCtrlT;
+    } else {
     // Entry is top-center (incoming from above).
     entryX = source.x + source.width / 2;
     entryY = source.y;
@@ -92,7 +119,33 @@ export function buildCollapsedGotoPaths(opts: {
     // Bridge: quadratic bezier (single bend) from top-center -> left/right exit.
     bridgeCtrlX = entryX;
     bridgeCtrlY = entryY + (startY - entryY) * bridgeCtrlT;
+    }
   } else {
+    if (routeMode === 'backtrack') {
+      // Entry is left-center (incoming from the left).
+      entryX = source.x;
+      entryY = source.y + source.height / 2;
+
+      // Backtrack exit is right-center.
+      startX = source.x + source.width;
+      startY = source.y + source.height / 2;
+
+      // Backtrack target attaches at left-center.
+      endX = target.x;
+      endY = target.y + target.height / 2;
+
+      const horizontalDistance = Math.abs(endX - startX);
+      const curveDistance = Math.max(horizontalDistance * curveFactor, minCurveDistance);
+      const targetIsMoreRight = endX > startX;
+
+      c1x = targetIsMoreRight ? startX + curveDistance : startX - curveDistance;
+      c1y = startY;
+      c2x = targetIsMoreRight ? endX - curveDistance : endX + curveDistance;
+      c2y = endY;
+
+      bridgeCtrlX = entryX + (startX - entryX) * bridgeCtrlT;
+      bridgeCtrlY = entryY;
+    } else {
     // Entry is left-center (incoming from the left).
     entryX = source.x;
     entryY = source.y + source.height / 2;
@@ -119,6 +172,7 @@ export function buildCollapsedGotoPaths(opts: {
     // Bridge: quadratic bezier (single bend) from left-center -> top/bottom exit.
     bridgeCtrlX = entryX + (startX - entryX) * bridgeCtrlT;
     bridgeCtrlY = entryY;
+    }
   }
 
   const bridgePath = `M ${entryX} ${entryY} Q ${bridgeCtrlX} ${bridgeCtrlY}, ${startX} ${startY}`;
@@ -134,4 +188,3 @@ export function buildCollapsedGotoPaths(opts: {
     },
   };
 }
-

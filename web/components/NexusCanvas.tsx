@@ -49,11 +49,13 @@ import { saveNodeAnnotation } from '@/lib/node-annotations';
 import { buildNexusNodeCommentTargetKey, getAllThreads, getThread, observeComments } from '@/lib/node-comments';
 import { ensureRunningNumberTagsForNodes, extractRunningNumbersFromMarkdown } from '@/lib/node-running-numbers';
 import {
+  buildBacktrackBezierBetweenBoxes,
   buildJumpBezierBetweenBoxes,
   buildJumpBezierToPoint,
   buildStandardConnectorBezier,
   buildValidationConnectorBezier,
 } from '@/lib/canvas-link-routing';
+import { adjustGotoLayoutAndRouting, type GotoRouteMode } from '@/lib/process-goto-adjustments';
 import {
   computeSwimlaneLayoutOverride,
   type SwimlaneBandMetrics,
@@ -1101,6 +1103,7 @@ export function NexusCanvas({
 
   const [connectorLabels, setConnectorLabels] = useState<Record<string, { label: string; color: string }>>({});
   const [gotoTargets, setGotoTargets] = useState<Record<string, string>>({}); // Map from nodeId to targetNodeId
+  const [gotoRouteHints, setGotoRouteHints] = useState<Record<string, GotoRouteMode>>({});
   const [loopTargets, setLoopTargets] = useState<Record<string, string>>({}); // Map from nodeId to targetNodeId
   const [processTypeMenuForId, setProcessTypeMenuForId] = useState<string | null>(null);
   const [processTypeMenuPosition, setProcessTypeMenuPosition] = useState<{ x: number; y: number } | null>(null);
@@ -1656,6 +1659,18 @@ export function NexusCanvas({
         }
         return true;
       };
+      const isSameRouteHints = (
+        a: Record<string, GotoRouteMode>,
+        b: Record<string, GotoRouteMode>,
+      ): boolean => {
+        const aKeys = Object.keys(a);
+        const bKeys = Object.keys(b);
+        if (aKeys.length !== bKeys.length) return false;
+        for (const key of aKeys) {
+          if (a[key] !== b[key]) return false;
+        }
+        return true;
+      };
 
       // Sanitize layout values to prevent NaN/Infinity from breaking CSS transforms and viewport centering.
       // If any entry is invalid, coerce it to a safe default so nodes remain renderable.
@@ -1717,6 +1732,23 @@ export function NexusCanvas({
       } else {
         setSwimlaneBands((prev) => (prev === null ? prev : null));
       }
+
+      // Process-flow goto adjustment pass:
+      // - align selected target subtrees with goto axis for validation-branch cases
+      // - compute per-goto route hints for explicit backtrack rendering
+      const gotoAdjusted = adjustGotoLayoutAndRouting({
+        layout: newLayout,
+        flattenedNodes,
+        nodeMap,
+        processNodeTypes,
+        gotoTargets,
+        layoutDirection,
+        isShowFlowOnForNode,
+      });
+      newLayout = gotoAdjusted.layout;
+      setGotoRouteHints((prev) =>
+        isSameRouteHints(prev, gotoAdjusted.routeHintsByGotoId) ? prev : gotoAdjusted.routeHintsByGotoId,
+      );
 
       // Conditional hub notes: reserve EXACT space for the notes box without moving the hub group upward.
       // We do this by computing an extra top padding per hub and shifting the hub's nodes down by that amount.
@@ -1966,6 +1998,8 @@ export function NexusCanvas({
     processFlowModeNodes,
     swimlaneLayout,
     flattenedNodes,
+    gotoTargets,
+    isShowFlowOnForNode,
     hubNotesExpandedIds,
     scale,
     conditionalHubNoteIndex,
@@ -4579,6 +4613,7 @@ export function NexusCanvas({
               const sourceLayout = animatedLayout[node.id];
               const targetLayout = animatedLayout[targetId];
               if (!sourceLayout || !targetLayout) return null;
+              const routeMode = gotoRouteHints[node.id] || 'default';
 
               const isCollapsedGoto = selectedNodeId !== node.id;
               const isGotoSelected = selectedNodeId === node.id;
@@ -4592,6 +4627,7 @@ export function NexusCanvas({
                   source: sourceLayout,
                   target: targetLayout,
                   layoutDirection,
+                  routeMode,
                 });
 
                 const handleExpand = (e: React.MouseEvent) => {
@@ -4639,11 +4675,18 @@ export function NexusCanvas({
                 );
               }
 
-              const { pathD } = buildJumpBezierBetweenBoxes({
-                from: sourceLayout,
-                to: targetLayout,
-                layoutDirection,
-              });
+              const { pathD } =
+                routeMode === 'backtrack'
+                  ? buildBacktrackBezierBetweenBoxes({
+                      from: sourceLayout,
+                      to: targetLayout,
+                      layoutDirection,
+                    })
+                  : buildJumpBezierBetweenBoxes({
+                      from: sourceLayout,
+                      to: targetLayout,
+                      layoutDirection,
+                    });
               
               const sourceNode = nodeMap.get(node.id);
               const targetNode = nodeMap.get(targetId);

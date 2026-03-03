@@ -135,6 +135,58 @@ export function buildJumpBezierBetweenBoxes(opts: {
   return { pathD, start, end, mid: { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 } };
 }
 
+export function buildBacktrackBezierBetweenBoxes(opts: {
+  from: { x: number; y: number; width: number; height: number };
+  to: { x: number; y: number; width: number; height: number };
+  layoutDirection: LayoutDirection;
+  minCurveDistance?: number;
+  curveFactor?: number;
+}): { pathD: string; start: Point; end: Point; mid: Point } {
+  const { from, to, layoutDirection, minCurveDistance = 80, curveFactor = 0.5 } = opts;
+
+  if (layoutDirection === 'vertical') {
+    // Vertical backtrack: source bottom-center -> target top-center.
+    const start: Point = {
+      x: from.x + from.width / 2,
+      y: from.y + from.height,
+    };
+    const end: Point = {
+      x: to.x + to.width / 2,
+      y: to.y,
+    };
+
+    const verticalDistance = Math.abs(end.y - start.y);
+    const curveDistance = Math.max(verticalDistance * curveFactor, minCurveDistance);
+    const targetIsLower = end.y > start.y;
+
+    const c1: Point = { x: start.x, y: targetIsLower ? start.y + curveDistance : start.y - curveDistance };
+    const c2: Point = { x: end.x, y: targetIsLower ? end.y - curveDistance : end.y + curveDistance };
+
+    const pathD = cubicBezierPath({ start, c1, c2, end });
+    return { pathD, start, end, mid: { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 } };
+  }
+
+  // Horizontal backtrack: source right-center -> target left-center.
+  const start: Point = {
+    x: from.x + from.width,
+    y: from.y + from.height / 2,
+  };
+  const end: Point = {
+    x: to.x,
+    y: to.y + to.height / 2,
+  };
+
+  const horizontalDistance = Math.abs(end.x - start.x);
+  const curveDistance = Math.max(horizontalDistance * curveFactor, minCurveDistance);
+  const targetIsMoreRight = end.x > start.x;
+
+  const c1: Point = { x: targetIsMoreRight ? start.x + curveDistance : start.x - curveDistance, y: start.y };
+  const c2: Point = { x: targetIsMoreRight ? end.x - curveDistance : end.x + curveDistance, y: end.y };
+
+  const pathD = cubicBezierPath({ start, c1, c2, end });
+  return { pathD, start, end, mid: { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 } };
+}
+
 export function buildJumpBezierToPoint(opts: {
   from: { x: number; y: number; width: number; height: number };
   to: Point;
@@ -176,4 +228,3 @@ export function buildJumpBezierToPoint(opts: {
   const c2: Point = { x: end.x, y: targetIsLower ? end.y - curveDistance : end.y + curveDistance };
   return { pathD: cubicBezierPath({ start, c1, c2, end }), start, end };
 }
-
