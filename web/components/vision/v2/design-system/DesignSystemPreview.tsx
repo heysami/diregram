@@ -59,6 +59,10 @@ export function DesignSystemPreview({ value }: Props) {
           ? 'Split + decorative'
           : 'Single font';
   const pillTargets = new Set(value.controls.pillTargets || []);
+  const previewInputRadiusPx = pillTargets.has('inputs') ? 999 : Math.max(0, Math.round(derived.shape.inputRadius));
+  const previewInputStyle = {
+    borderRadius: `${previewInputRadiusPx}px`,
+  } as CSSProperties;
 
   const vars = {
     '--vds-font-family': derived.typography.fontFamily,
@@ -367,11 +371,11 @@ export function DesignSystemPreview({ value }: Props) {
           <div className="vds-preview-card__title">Forms and controls</div>
           <label className="vds-form-field">
             <span>Project name</span>
-            <input type="text" value="Core redesign" readOnly />
+            <input type="text" value="Core redesign" readOnly style={previewInputStyle} />
           </label>
           <label className="vds-form-field">
             <span>Owner</span>
-            <select value="sam" disabled>
+            <select value="sam" disabled style={previewInputStyle}>
               <option value="sam">Sam</option>
             </select>
           </label>

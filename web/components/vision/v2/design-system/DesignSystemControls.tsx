@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, type CSSProperties } from 'react';
 import {
   normalizeVisionDesignSystem,
   VISION_DECORATIVE_FONT_OPTIONS,
@@ -194,6 +194,7 @@ function PrimitiveBadge({ value, fallbackLabel = 'unset' }: { value?: string; fa
 
 export function DesignSystemControls({ value, onChange }: Props) {
   const [pillPopoverOpen, setPillPopoverOpen] = useState(false);
+  const editorInputRadiusPx = Math.max(4, Math.round((clamp(value.controls.softness, 0, 100) / 100) * 24));
   const activeScenarioIndex = Math.max(0, value.scenarios.findIndex((s) => s.id === value.activeScenarioId));
   const activeScenario = value.scenarios[activeScenarioIndex] || value.scenarios[0];
 
@@ -304,7 +305,7 @@ export function DesignSystemControls({ value, onChange }: Props) {
   })();
 
   return (
-    <div className="vds-controls">
+    <div className="vds-controls" style={{ '--vds-editor-input-radius': `${editorInputRadiusPx}px` } as CSSProperties}>
       <details className="vds-controls__section vds-collapsible" open>
         <summary>Foundations</summary>
         <div className="vds-section-body">

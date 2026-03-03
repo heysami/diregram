@@ -276,18 +276,19 @@
   opacity: 0.72;
 }
 
-.vds-field input,
+.vds-field input:not([type='color']):not([type='file']),
 .vds-field select,
 .vds-field textarea,
 .vds-ratio-grid input,
 .vds-ratio-card select {
   height: 30px;
   border: 1px solid rgba(15, 23, 42, 0.18);
-  border-radius: 8px;
+  border-radius: var(--vds-editor-input-radius, 8px);
   background: rgba(255, 255, 255, 0.96);
   padding: 0 8px;
   font-size: 12px;
   min-width: 0;
+  transition: border-radius 140ms ease;
 }
 
 .vds-field textarea {
