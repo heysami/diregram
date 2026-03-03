@@ -4195,7 +4195,7 @@ export function NexusCanvas({
             );
           })}
 
-        <svg className="absolute top-0 left-0 w-[5000px] h-[5000px] overflow-visible">
+        <svg className="absolute top-0 left-0 w-[5000px] h-[5000px] overflow-visible pointer-events-none">
             <defs>
               <marker
                 id="arrowhead-light"
