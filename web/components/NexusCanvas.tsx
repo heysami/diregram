@@ -2970,6 +2970,9 @@ export function NexusCanvas({
         if (activeTool !== 'select') return;
         if (target.closest('[data-nexus-node]')) return;
         if (target.closest('[data-expanded-node]')) return;
+        // Don't start marquee selection on interactive background groups.
+        // (Marquee sets suppressNextClick, which would block group onClick handlers.)
+        if (target.closest('[data-single-screen-group]')) return;
         const isAdd = e.shiftKey || e.metaKey || e.ctrlKey;
         startMarquee(e.clientX, e.clientY, isAdd);
       }}
