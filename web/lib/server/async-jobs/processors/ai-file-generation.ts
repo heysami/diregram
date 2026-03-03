@@ -25,6 +25,7 @@ type FileGenerationTask = {
   prompt: string;
   artifactUrls: string[];
   artifactFiles: string[];
+  artifactImages: Array<{ name: string; dataUrl: string }>;
 };
 
 function coerceOutputKind(input: unknown): FileGenerationTask['outputKind'] {
@@ -87,6 +88,19 @@ function coerceStringList(input: unknown, opts: { maxItems: number; maxCharsPerI
   return input
     .map((x) => normalizeText(x).slice(0, opts.maxCharsPerItem))
     .filter(Boolean)
+    .slice(0, opts.maxItems);
+}
+
+function coerceImageList(input: unknown, opts: { maxItems: number; maxCharsPerItem: number }): Array<{ name: string; dataUrl: string }> {
+  if (!Array.isArray(input)) return [];
+  return input
+    .map((x) => (x && typeof x === 'object' ? (x as Record<string, unknown>) : null))
+    .filter((x): x is Record<string, unknown> => x !== null)
+    .map((x, idx) => ({
+      name: normalizeText(x.name).slice(0, 120) || `image-${idx + 1}`,
+      dataUrl: normalizeText(x.dataUrl).slice(0, opts.maxCharsPerItem),
+    }))
+    .filter((x) => /^data:image\/[a-zA-Z0-9.+-]+;base64,/i.test(x.dataUrl))
     .slice(0, opts.maxItems);
 }
 
@@ -417,10 +431,28 @@ async function generateVisionDesignSystem(input: {
   prompt: string;
   contextText: string;
   artifactContext: string;
+  artifactImages: Array<{ name: string; dataUrl: string }>;
   apiKey: string;
   chatModel?: string;
 }): Promise<VisionDesignSystemV1> {
   const primitiveIds = primitiveIdAllowlistText();
+  const imageNotes = input.artifactImages.map((img, idx) => `${idx + 1}. ${img.name}`).join('\n');
+  const userContent: Array<{ type: 'input_text'; text: string } | { type: 'input_image'; image_url: string; detail?: 'low' | 'high' | 'auto' }> = [
+    {
+      type: 'input_text',
+      text: [
+        `Style goal prompt:\n${input.prompt || '(none provided)'}`,
+        `\nProject KB context:\n${clipText(input.contextText || '(none)', 12000)}`,
+        `\nArtifacts (ONLY these sources):\n${clipText(input.artifactContext || '(none)', 20000)}`,
+        `\nUploaded artifact images (${input.artifactImages.length}):\n${imageNotes || '(none)'}`,
+      ].join('\n'),
+    },
+    ...input.artifactImages.map((img) => ({
+      type: 'input_image' as const,
+      image_url: img.dataUrl,
+      detail: 'low' as const,
+    })),
+  ];
   const text = await runOpenAIResponsesText(
     [
       {
@@ -432,17 +464,31 @@ async function generateVisionDesignSystem(input: {
           'Use palette.pairings to specify primitive mapping and overrides.',
           'Allowed primitive ids:',
           primitiveIds,
+          'INTERNAL RENDER CONTRACT (not user-visible):',
+          '- Your JSON is inserted into markdown as visionjson.designSystem and mirrored in a vision-design-system block.',
+          '- Diregram then normalizes your object and derives final visual tokens from controls/scenarios/foundations.',
+          '- Therefore, choose property values for visual fidelity, not placeholder defaults.',
+          'VISUAL MAPPING GUIDE:',
+          '- Typography likeness: foundations.fontFamily, headingFontFamily, decorativeFontFamily, controls.typography.* and controls.fontVariance.',
+          '- Spacing rhythm: controls.spacing.pattern, controls.spacing.density, controls.spacing.aroundVsInside.',
+          '- Shape softness: controls.softness and controls.flatness (affects corner feel and material flatness).',
+          '- Zoning/composition: controls.zoning and controls.negativeZoneStyle.',
+          '- Color behavior: scenario.palette.pairings.*, scenario.ratios.*, controls.surfaceSaturation, itemSaturation, colorVariance, colorBleed, colorBleedTone.',
+          '- Material style: controls.skeuomorphism and controls.skeuomorphismStyle.',
+          '- Bold emphasis: controls.boldness, controls.boldTypographyStyle, controls.boldGradient*.',
+          '- Image look: foundations.imageProfiles[].style/lighting/lineWeight/notes should mirror artifact visual language.',
+          'QUALITY CHECKLIST BEFORE RETURN:',
+          '- Use primitives that match the artifact hue families and contrast.',
+          '- Keep UI ratio totals coherent (neutral vs primary vs accent) and non-random.',
+          '- Avoid contradictory combinations (e.g., high wireframeFeeling with heavy skeuomorphic gloss unless artifacts justify it).',
+          '- Prefer one coherent scenario ("base") over multiple weak scenarios.',
           'Controls are integers 0..100 where applicable.',
           'If unsure, keep values conservative and coherent.',
         ].join('\n'),
       },
       {
         role: 'user',
-        content: [
-          `Style goal prompt:\n${input.prompt || '(none provided)'}`,
-          `\nProject KB context:\n${clipText(input.contextText || '(none)', 12000)}`,
-          `\nArtifacts (ONLY these sources):\n${clipText(input.artifactContext || '(none)', 20000)}`,
-        ].join('\n'),
+        content: userContent,
       },
     ],
     { apiKey: input.apiKey, model: input.chatModel, withWebSearch: false },
@@ -660,10 +706,11 @@ export async function runAiFileGenerationJob(job: AsyncJobRow): Promise<Record<s
       prompt: normalizeText(t.prompt),
       artifactUrls: coerceStringList(t.artifactUrls, { maxItems: 8, maxCharsPerItem: 1000 }),
       artifactFiles: coerceStringList(t.artifactFiles, { maxItems: 20, maxCharsPerItem: 220 }),
+      artifactImages: coerceImageList(t.artifactImages, { maxItems: 4, maxCharsPerItem: 1_000_000 }),
     }))
     .filter((t) => {
       if (t.outputKind === 'vision') {
-        return Boolean(t.prompt) || Boolean(t.artifactUrls.length) || Boolean(t.artifactFiles.length);
+        return Boolean(t.prompt) || Boolean(t.artifactUrls.length) || Boolean(t.artifactFiles.length) || Boolean(t.artifactImages.length);
       }
       return Boolean(t.prompt);
     })
@@ -737,6 +784,7 @@ export async function runAiFileGenerationJob(job: AsyncJobRow): Promise<Record<s
           prompt: task.prompt,
           contextText,
           artifactContext,
+          artifactImages: task.artifactImages,
           apiKey: openaiApiKey,
           chatModel,
         });

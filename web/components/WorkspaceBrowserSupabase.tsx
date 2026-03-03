@@ -123,6 +123,7 @@ function effectiveCanEditFolder(folder: DbFolder, userId: string, userEmail: str
 
 type EditProjectState = { id: string; name: string; people: AccessPerson[] };
 type EditFileState = { id: string; name: string; people: AccessPerson[] };
+type AiVisionImageArtifact = { name: string; dataUrl: string };
 
 export function WorkspaceBrowserSupabase() {
   const router = useRouter();
@@ -171,8 +172,9 @@ export function WorkspaceBrowserSupabase() {
       prompt: string;
       artifactUrls: string;
       artifactFiles: string;
+      artifactImages: AiVisionImageArtifact[];
     }>
-  >([{ outputKind: 'note', fileName: 'Generated Note', prompt: '', artifactUrls: '', artifactFiles: '' }]);
+  >([{ outputKind: 'note', fileName: 'Generated Note', prompt: '', artifactUrls: '', artifactFiles: '', artifactImages: [] }]);
   const [aiGenerateError, setAiGenerateError] = useState<string | null>(null);
   const asyncQueue = useAsyncJobQueue();
 
@@ -742,7 +744,7 @@ export function WorkspaceBrowserSupabase() {
   };
 
   const resetAiGenerateModal = () => {
-    setAiGenerateRows([{ outputKind: 'note', fileName: 'Generated Note', prompt: '', artifactUrls: '', artifactFiles: '' }]);
+    setAiGenerateRows([{ outputKind: 'note', fileName: 'Generated Note', prompt: '', artifactUrls: '', artifactFiles: '', artifactImages: [] }]);
     setAiGenerateError(null);
     setAiGenerateBusy(false);
   };
@@ -753,6 +755,61 @@ export function WorkspaceBrowserSupabase() {
       .map((x) => x.trim())
       .filter(Boolean)
       .slice(0, maxItems);
+  };
+
+  const readImageFileAsDataUrl = (file: File): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '');
+      reader.onerror = () => reject(reader.error || new Error('Failed to read image file.'));
+      reader.readAsDataURL(file);
+    });
+
+  const appendVisionArtifactImages = async (rowIndex: number, files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    const existing = aiGenerateRows[rowIndex]?.artifactImages || [];
+    if (existing.length >= 4) {
+      setAiGenerateError('Maximum 4 uploaded images per Vision task.');
+      return;
+    }
+    const slotsLeft = Math.max(0, 4 - existing.length);
+    const picked = Array.from(files)
+      .filter((f) => String(f.type || '').toLowerCase().startsWith('image/'))
+      .slice(0, slotsLeft);
+    if (!picked.length) {
+      setAiGenerateError('Please choose image files.');
+      return;
+    }
+
+    const added: AiVisionImageArtifact[] = [];
+    for (const file of picked) {
+      try {
+        const dataUrl = await readImageFileAsDataUrl(file);
+        if (!/^data:image\/[a-zA-Z0-9.+-]+;base64,/i.test(dataUrl)) {
+          setAiGenerateError(`Unsupported image format: ${file.name}`);
+          continue;
+        }
+        if (dataUrl.length > 1_000_000) {
+          setAiGenerateError(`Image too large: ${file.name}. Use a smaller image.`);
+          continue;
+        }
+        added.push({ name: file.name, dataUrl });
+      } catch {
+        setAiGenerateError(`Failed to read image: ${file.name}`);
+      }
+    }
+    if (!added.length) return;
+    setAiGenerateRows((prev) =>
+      prev.map((row, idx) =>
+        idx === rowIndex
+          ? {
+              ...row,
+              artifactImages: [...(row.artifactImages || []), ...added].slice(0, 4),
+            }
+          : row,
+      ),
+    );
+    setAiGenerateError(null);
   };
 
   const runAiGenerateFiles = async () => {
@@ -766,11 +823,20 @@ export function WorkspaceBrowserSupabase() {
         prompt: String(r.prompt || '').trim(),
         artifactUrls: parseArtifactEntries(r.artifactUrls, 8),
         artifactFiles: parseArtifactEntries(r.artifactFiles, 20),
+        artifactImages: Array.isArray(r.artifactImages)
+          ? r.artifactImages
+              .map((img) => ({
+                name: String(img?.name || '').trim().slice(0, 120) || 'uploaded-image',
+                dataUrl: String(img?.dataUrl || '').trim().slice(0, 1_000_000),
+              }))
+              .filter((img) => /^data:image\/[a-zA-Z0-9.+-]+;base64,/i.test(img.dataUrl))
+              .slice(0, 4)
+          : [],
       }))
       .filter((r) => {
         if (!r.fileName) return false;
         if (r.outputKind === 'vision') {
-          return Boolean(r.prompt) || Boolean(r.artifactUrls.length) || Boolean(r.artifactFiles.length);
+          return Boolean(r.prompt) || Boolean(r.artifactUrls.length) || Boolean(r.artifactFiles.length) || Boolean(r.artifactImages.length);
         }
         return Boolean(r.prompt);
       })
@@ -1620,31 +1686,76 @@ export function WorkspaceBrowserSupabase() {
                     disabled={aiGenerateBusy}
                   />
                   {row.outputKind === 'vision' ? (
-                    <div className="grid gap-2 md:grid-cols-2">
+                    <div className="space-y-2">
+                      <div className="grid gap-2 md:grid-cols-2">
+                        <label className="space-y-1">
+                          <div className="text-[11px] opacity-70">Artifact URLs (one per line)</div>
+                          <textarea
+                            className="mac-field w-full min-h-[82px]"
+                            placeholder="https://example.com/page"
+                            value={row.artifactUrls}
+                            onChange={(e) =>
+                              setAiGenerateRows((prev) => prev.map((x, i) => (i === idx ? { ...x, artifactUrls: e.target.value } : x)))
+                            }
+                            disabled={aiGenerateBusy}
+                          />
+                        </label>
+                        <label className="space-y-1">
+                          <div className="text-[11px] opacity-70">Project files/resources (ID or exact name, one per line)</div>
+                          <textarea
+                            className="mac-field w-full min-h-[82px]"
+                            placeholder="Design brief.md"
+                            value={row.artifactFiles}
+                            onChange={(e) =>
+                              setAiGenerateRows((prev) => prev.map((x, i) => (i === idx ? { ...x, artifactFiles: e.target.value } : x)))
+                            }
+                            disabled={aiGenerateBusy}
+                          />
+                        </label>
+                      </div>
                       <label className="space-y-1">
-                        <div className="text-[11px] opacity-70">Artifact URLs (one per line)</div>
-                        <textarea
-                          className="mac-field w-full min-h-[82px]"
-                          placeholder="https://example.com/page"
-                          value={row.artifactUrls}
-                          onChange={(e) =>
-                            setAiGenerateRows((prev) => prev.map((x, i) => (i === idx ? { ...x, artifactUrls: e.target.value } : x)))
-                          }
-                          disabled={aiGenerateBusy}
+                        <div className="text-[11px] opacity-70">Upload artifact images (max 4)</div>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          multiple
+                          className="mac-field h-8 w-full"
+                          disabled={aiGenerateBusy || (row.artifactImages?.length || 0) >= 4}
+                          onChange={(e) => {
+                            void appendVisionArtifactImages(idx, e.target.files);
+                            e.currentTarget.value = '';
+                          }}
                         />
                       </label>
-                      <label className="space-y-1">
-                        <div className="text-[11px] opacity-70">Project files/resources (ID or exact name, one per line)</div>
-                        <textarea
-                          className="mac-field w-full min-h-[82px]"
-                          placeholder="Design brief.md"
-                          value={row.artifactFiles}
-                          onChange={(e) =>
-                            setAiGenerateRows((prev) => prev.map((x, i) => (i === idx ? { ...x, artifactFiles: e.target.value } : x)))
-                          }
-                          disabled={aiGenerateBusy}
-                        />
-                      </label>
+                      {row.artifactImages?.length ? (
+                        <div className="grid gap-2 md:grid-cols-2">
+                          {row.artifactImages.map((img, imageIdx) => (
+                            <div key={`${img.name}-${imageIdx}`} className="mac-double-outline p-2 flex items-center gap-2">
+                              <img src={img.dataUrl} alt={img.name || `artifact-${imageIdx + 1}`} className="h-12 w-12 object-cover border" />
+                              <div className="min-w-0 flex-1 text-[11px] truncate">{img.name || `image-${imageIdx + 1}`}</div>
+                              <button
+                                type="button"
+                                className="mac-btn h-7"
+                                disabled={aiGenerateBusy}
+                                onClick={() =>
+                                  setAiGenerateRows((prev) =>
+                                    prev.map((x, i) =>
+                                      i === idx
+                                        ? {
+                                            ...x,
+                                            artifactImages: (x.artifactImages || []).filter((_, j) => j !== imageIdx),
+                                          }
+                                        : x,
+                                    ),
+                                  )
+                                }
+                              >
+                                Remove
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
                     </div>
                   ) : null}
                 </div>
@@ -1657,7 +1768,14 @@ export function WorkspaceBrowserSupabase() {
                   onClick={() =>
                     setAiGenerateRows((prev) => [
                       ...prev,
-                      { outputKind: 'note', fileName: `Generated Note ${prev.length + 1}`, prompt: '', artifactUrls: '', artifactFiles: '' },
+                      {
+                        outputKind: 'note',
+                        fileName: `Generated Note ${prev.length + 1}`,
+                        prompt: '',
+                        artifactUrls: '',
+                        artifactFiles: '',
+                        artifactImages: [],
+                      },
                     ])
                   }
                 >

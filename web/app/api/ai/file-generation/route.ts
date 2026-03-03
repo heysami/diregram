@@ -16,6 +16,7 @@ type FileGenerationTaskInput = {
   prompt: string;
   artifactUrls?: string[];
   artifactFiles?: string[];
+  artifactImages?: Array<{ name?: string; dataUrl?: string }>;
 };
 
 function coerceOutputKind(input: unknown): FileGenerationTaskInput['outputKind'] {
@@ -49,6 +50,19 @@ function coerceStringList(input: unknown, opts: { maxItems: number; maxCharsPerI
   return input
     .map((x) => clampText(x, opts.maxCharsPerItem))
     .filter(Boolean)
+    .slice(0, opts.maxItems);
+}
+
+function coerceImageList(input: unknown, opts: { maxItems: number; maxCharsPerItem: number }) {
+  if (!Array.isArray(input)) return [] as Array<{ name: string; dataUrl: string }>;
+  return input
+    .map((x) => (x && typeof x === 'object' ? (x as Record<string, unknown>) : null))
+    .filter((x): x is Record<string, unknown> => x !== null)
+    .map((x, idx) => ({
+      name: clampText(x.name, 120) || `image-${idx + 1}`,
+      dataUrl: clampText(x.dataUrl, opts.maxCharsPerItem),
+    }))
+    .filter((x) => /^data:image\/[a-zA-Z0-9.+-]+;base64,/i.test(x.dataUrl))
     .slice(0, opts.maxItems);
 }
 
@@ -89,11 +103,12 @@ export async function POST(request: Request) {
         prompt: clampText(t.prompt, 8000),
         artifactUrls: coerceStringList(t.artifactUrls, { maxItems: 8, maxCharsPerItem: 1000 }),
         artifactFiles: coerceStringList(t.artifactFiles, { maxItems: 20, maxCharsPerItem: 220 }),
+        artifactImages: coerceImageList(t.artifactImages, { maxItems: 4, maxCharsPerItem: 1_000_000 }),
       }))
       .filter((t) => {
         if (!t.fileName) return false;
         if (t.outputKind === 'vision') {
-          return Boolean(t.prompt) || Boolean(t.artifactUrls?.length) || Boolean(t.artifactFiles?.length);
+          return Boolean(t.prompt) || Boolean(t.artifactUrls?.length) || Boolean(t.artifactFiles?.length) || Boolean(t.artifactImages?.length);
         }
         return Boolean(t.prompt);
       })

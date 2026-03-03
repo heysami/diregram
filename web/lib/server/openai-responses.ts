@@ -2,9 +2,20 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { getAdminSupabaseClient } from '@/lib/server/supabase-admin';
 import { embedTextsOpenAI } from '@/lib/server/openai-embeddings';
 
+type OpenAIResponsesContentPart =
+  | {
+      type: 'input_text';
+      text: string;
+    }
+  | {
+      type: 'input_image';
+      image_url: string;
+      detail?: 'low' | 'high' | 'auto';
+    };
+
 type OpenAIResponsesInputItem = {
   role: 'system' | 'user' | 'assistant';
-  content: string;
+  content: string | OpenAIResponsesContentPart[];
 };
 
 type OpenAIResponsesOutput = {
