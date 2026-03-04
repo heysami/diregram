@@ -685,6 +685,7 @@ function mergeColorPassDesignSystem(base: VisionDesignSystemV1, incoming: Vision
   draft.controls.boldGradientFrom = src.controls.boldGradientFrom;
   draft.controls.boldGradientMid = src.controls.boldGradientMid;
   draft.controls.boldGradientTo = src.controls.boldGradientTo;
+  draft.controls.strictNoDarkMode = src.controls.strictNoDarkMode;
   draft.controls.darkMode = { ...src.controls.darkMode };
   return normalizeVisionDesignSystem(draft);
 }
@@ -893,7 +894,7 @@ async function generateVisionDesignSystem(input: {
     '- scenarios[0].ratios[] (coherent neutral/primary/accent/semantic proportions)',
     '- controls.surfaceSaturation, itemSaturation, colorVariance, colorBleed, colorBleedTone, colorBleedCustom, colorBleedText, boldness',
     '- controls.boldTypographyStyle, boldGradientSource, boldGradientFrom, boldGradientMid, boldGradientTo',
-    '- controls.darkMode.{showPreview,useOverrides,canvasBg,surfaceBg,panelBg,separator,textPrimary,textSecondary,textMuted,primary,accent,buttonBg}',
+    '- controls.strictNoDarkMode (boolean; true only when the request explicitly requires no dark mode)',
     '- foundations.imageProfiles[] to mirror visual language of artifacts',
     'Do not default to blue/violet templates unless artifacts explicitly show that family.',
   ];

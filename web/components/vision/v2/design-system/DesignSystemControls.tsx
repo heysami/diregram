@@ -197,6 +197,7 @@ export function DesignSystemControls({ value, onChange }: Props) {
   const editorInputRadiusPx = Math.max(4, Math.round((clamp(value.controls.softness, 0, 100) / 100) * 24));
   const activeScenarioIndex = Math.max(0, value.scenarios.findIndex((s) => s.id === value.activeScenarioId));
   const activeScenario = value.scenarios[activeScenarioIndex] || value.scenarios[0];
+  const strictNoDarkMode = Boolean(value.controls.strictNoDarkMode);
 
   const selectedFont =
     VISION_GOOGLE_FONT_OPTIONS.find((f) => f.family === value.foundations.fontFamily)?.id ||
@@ -1389,12 +1390,33 @@ export function DesignSystemControls({ value, onChange }: Props) {
           ) : null}
 
           <details className="vds-mini-collapse" open>
-            <summary>Dark Mode Preview</summary>
+            <summary>Dark Mode</summary>
             <div className="vds-stack">
               <label className="vds-row">
                 <input
                   type="checkbox"
+                  checked={strictNoDarkMode}
+                  onChange={(e) =>
+                    commit((draft) => {
+                      const enabled = e.target.checked;
+                      draft.controls.strictNoDarkMode = enabled;
+                      if (enabled) {
+                        draft.controls.darkMode.showPreview = false;
+                        draft.controls.darkMode.useOverrides = false;
+                      }
+                    })
+                  }
+                />
+                <span>VERY IMPORTANT: Strictly no dark mode</span>
+              </label>
+              {strictNoDarkMode ? (
+                <p className="vds-help">Dark mode preview and dark color overrides are disabled and excluded from markdown export.</p>
+              ) : null}
+              <label className="vds-row">
+                <input
+                  type="checkbox"
                   checked={Boolean(value.controls.darkMode.showPreview)}
+                  disabled={strictNoDarkMode}
                   onChange={(e) =>
                     commit((draft) => {
                       draft.controls.darkMode.showPreview = e.target.checked;
@@ -1407,6 +1429,7 @@ export function DesignSystemControls({ value, onChange }: Props) {
                 <input
                   type="checkbox"
                   checked={Boolean(value.controls.darkMode.useOverrides)}
+                  disabled={strictNoDarkMode}
                   onChange={(e) =>
                     commit((draft) => {
                       draft.controls.darkMode.useOverrides = e.target.checked;
@@ -1416,7 +1439,7 @@ export function DesignSystemControls({ value, onChange }: Props) {
                 <span>Override dark mode colors</span>
               </label>
 
-              {value.controls.darkMode.useOverrides ? (
+              {!strictNoDarkMode && value.controls.darkMode.useOverrides ? (
                 <div className="vds-grid vds-grid--2">
                   <label className="vds-field">
                     <span>Canvas</span>

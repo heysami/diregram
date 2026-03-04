@@ -21,7 +21,8 @@ export function DesignSystemPreview({ value }: Props) {
   const activeScenario = value.scenarios.find((s) => s.id === value.activeScenarioId) || value.scenarios[0];
   const activeImage = value.foundations.imageProfiles[0] || null;
   const uiRatio = activeScenario?.ratios.find((r) => r.scope === 'ui' || r.scope === 'all') || activeScenario?.ratios[0];
-  const showDarkPreview = Boolean(value.controls.darkMode.showPreview);
+  const strictNoDarkMode = Boolean(value.controls.strictNoDarkMode);
+  const showDarkPreview = !strictNoDarkMode && Boolean(value.controls.darkMode.showPreview);
   const themeMode: 'light' | 'dark' = showDarkPreview && previewTheme === 'dark' ? 'dark' : 'light';
   const modeColor = themeMode === 'dark' ? derived.dark.color : null;
   const modePreview = themeMode === 'dark' ? derived.dark.preview : derived.preview;

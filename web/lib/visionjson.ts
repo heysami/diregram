@@ -2,6 +2,7 @@ import {
   coerceVisionDesignSystem,
   extractVisionDesignSystemPayload,
   parseVisionDesignSystemPayload,
+  toVisionDesignSystemMarkdownPayload,
   upsertVisionDesignSystemBlocks,
   type VisionDesignSystemV1,
 } from '@/lib/vision-design-system';
@@ -101,9 +102,9 @@ function coerceDoc(x: unknown): VisionDoc | null {
   if (!x || typeof x !== 'object') return null;
   const r = x as JsonObject;
   if (r.version !== 2) return null;
-  const tldraw = (r as any).tldraw;
-  const designSystem = coerceVisionDesignSystem((r as any).designSystem);
-  const updatedAt = typeof (r as any).updatedAt === 'string' ? String((r as any).updatedAt) : undefined;
+  const tldraw = r.tldraw;
+  const designSystem = coerceVisionDesignSystem(r.designSystem);
+  const updatedAt = typeof r.updatedAt === 'string' ? r.updatedAt : undefined;
   return {
     version: 2,
     ...(tldraw !== undefined ? { tldraw } : null),
@@ -164,10 +165,18 @@ export function loadVisionDoc(markdown: string): LoadVisionDocResult {
 
 export function saveVisionDoc(markdown: string, doc: VisionDoc): string {
   const text = normalize(markdown);
+  const designSystem = doc.version === 2 ? coerceVisionDesignSystem(doc.designSystem) : null;
+  const markdownDoc =
+    doc.version === 2
+      ? {
+          ...doc,
+          ...(designSystem ? { designSystem: toVisionDesignSystemMarkdownPayload(designSystem) } : null),
+        }
+      : doc;
   // IMPORTANT: keep this compact.
   // Vision docs can get large quickly (tldraw snapshots, thumbs). Pretty-printing balloons
   // file size and can freeze the browser during save/parse cycles.
-  const payload = JSON.stringify(doc);
+  const payload = JSON.stringify(markdownDoc);
   const block = ['```visionjson', payload, '```'].join('\n');
   const afterVisionJson = getVisionJsonFullBlockRegex().test(text)
     ? text.replace(getVisionJsonFullBlockRegex(), block)
@@ -177,6 +186,5 @@ export function saveVisionDoc(markdown: string, doc: VisionDoc): string {
         return text + (needsLeadingNewline ? '\n' : '') + sep + block + '\n';
       })();
 
-  const designSystem = doc && (doc as any).version === 2 ? coerceVisionDesignSystem((doc as any).designSystem) : null;
   return upsertVisionDesignSystemBlocks(afterVisionJson, designSystem);
 }

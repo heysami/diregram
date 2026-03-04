@@ -33,6 +33,18 @@ function isCancelledError(err: unknown): boolean {
   return /cancel/i.test(msg);
 }
 
+function isNonRetriableMessage(msg: string): boolean {
+  const clean = String(msg || '').trim();
+  return clean.startsWith('NON_RETRYABLE:') || clean.startsWith('[no-retry]');
+}
+
+function stripNonRetriablePrefix(msg: string): string {
+  const clean = String(msg || '').trim();
+  if (clean.startsWith('NON_RETRYABLE:')) return clean.replace(/^NON_RETRYABLE:\s*/i, '').trim();
+  if (clean.startsWith('[no-retry]')) return clean.replace(/^\[no-retry\]\s*/i, '').trim();
+  return clean;
+}
+
 async function runClaimedJob(job: AsyncJobRow): Promise<void> {
   if (job.cancel_requested) {
     await markAsyncJobCancelled(job.id);
@@ -50,9 +62,15 @@ async function runClaimedJob(job: AsyncJobRow): Promise<void> {
     const result = await runAsyncJob(job);
     await markAsyncJobSucceeded(job.id, result);
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e || 'Job failed');
+    const rawMsg = e instanceof Error ? e.message : String(e || 'Job failed');
+    const nonRetriable = isNonRetriableMessage(rawMsg);
+    const msg = stripNonRetriablePrefix(rawMsg) || 'Job failed';
     if (job.cancel_requested || isCancelledError(e) || (await isAsyncJobCancelRequested(job.id).catch(() => false))) {
       await markAsyncJobCancelled(job.id);
+      return;
+    }
+    if (nonRetriable) {
+      await markAsyncJobFailed(job.id, msg);
       return;
     }
     if (Number(job.attempts || 0) < Number(job.max_attempts || 1)) {

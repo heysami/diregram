@@ -114,6 +114,7 @@ export type VisionDesignSystemControlsV1 = {
   boldGradientFrom: string;
   boldGradientMid: string;
   boldGradientTo: string;
+  strictNoDarkMode: boolean;
   darkMode: VisionDarkModeControlsV1;
 };
 
@@ -594,6 +595,7 @@ const DEFAULT_CONTROLS: VisionDesignSystemControlsV1 = {
   boldGradientFrom: '#1d4ed8',
   boldGradientMid: '#7c3aed',
   boldGradientTo: '#14b8a6',
+  strictNoDarkMode: false,
   darkMode: {
     showPreview: true,
     useOverrides: false,
@@ -1013,6 +1015,8 @@ function normalizeControls(input: unknown): VisionDesignSystemControlsV1 {
   const typSrc = src.typography && typeof src.typography === 'object' ? (src.typography as Record<string, unknown>) : {};
   const spacingSrc = src.spacing && typeof src.spacing === 'object' ? (src.spacing as Record<string, unknown>) : {};
   const darkSrc = src.darkMode && typeof src.darkMode === 'object' ? (src.darkMode as Record<string, unknown>) : {};
+  const strictNoDarkMode =
+    src.strictNoDarkMode === undefined ? DEFAULT_CONTROLS.strictNoDarkMode : Boolean(src.strictNoDarkMode);
 
   return {
     typography: {
@@ -1072,9 +1076,10 @@ function normalizeControls(input: unknown): VisionDesignSystemControlsV1 {
     boldGradientFrom: normalizeHex(src.boldGradientFrom, DEFAULT_CONTROLS.boldGradientFrom),
     boldGradientMid: normalizeHex(src.boldGradientMid, DEFAULT_CONTROLS.boldGradientMid),
     boldGradientTo: normalizeHex(src.boldGradientTo, DEFAULT_CONTROLS.boldGradientTo),
+    strictNoDarkMode,
     darkMode: {
-      showPreview: darkSrc.showPreview === undefined ? DEFAULT_CONTROLS.darkMode.showPreview : Boolean(darkSrc.showPreview),
-      useOverrides: darkSrc.useOverrides === undefined ? DEFAULT_CONTROLS.darkMode.useOverrides : Boolean(darkSrc.useOverrides),
+      showPreview: strictNoDarkMode ? false : darkSrc.showPreview === undefined ? DEFAULT_CONTROLS.darkMode.showPreview : Boolean(darkSrc.showPreview),
+      useOverrides: strictNoDarkMode ? false : darkSrc.useOverrides === undefined ? DEFAULT_CONTROLS.darkMode.useOverrides : Boolean(darkSrc.useOverrides),
       canvasBg: normalizeHex(darkSrc.canvasBg, DEFAULT_CONTROLS.darkMode.canvasBg),
       surfaceBg: normalizeHex(darkSrc.surfaceBg, DEFAULT_CONTROLS.darkMode.surfaceBg),
       panelBg: normalizeHex(darkSrc.panelBg, DEFAULT_CONTROLS.darkMode.panelBg),
@@ -1090,6 +1095,7 @@ function normalizeControls(input: unknown): VisionDesignSystemControlsV1 {
 }
 
 function withControlDefaults(next: VisionDesignSystemControlsV1): VisionDesignSystemControlsV1 {
+  const strictNoDarkMode = Boolean(next.strictNoDarkMode ?? DEFAULT_CONTROLS.strictNoDarkMode);
   return {
     typography: {
       baseSizePx: next.typography.baseSizePx || DEFAULT_CONTROLS.typography.baseSizePx,
@@ -1126,9 +1132,10 @@ function withControlDefaults(next: VisionDesignSystemControlsV1): VisionDesignSy
     boldGradientFrom: normalizeHex(next.boldGradientFrom, DEFAULT_CONTROLS.boldGradientFrom),
     boldGradientMid: normalizeHex(next.boldGradientMid, DEFAULT_CONTROLS.boldGradientMid),
     boldGradientTo: normalizeHex(next.boldGradientTo, DEFAULT_CONTROLS.boldGradientTo),
+    strictNoDarkMode,
     darkMode: {
-      showPreview: next.darkMode?.showPreview ?? DEFAULT_CONTROLS.darkMode.showPreview,
-      useOverrides: next.darkMode?.useOverrides ?? DEFAULT_CONTROLS.darkMode.useOverrides,
+      showPreview: strictNoDarkMode ? false : next.darkMode?.showPreview ?? DEFAULT_CONTROLS.darkMode.showPreview,
+      useOverrides: strictNoDarkMode ? false : next.darkMode?.useOverrides ?? DEFAULT_CONTROLS.darkMode.useOverrides,
       canvasBg: normalizeHex(next.darkMode?.canvasBg, DEFAULT_CONTROLS.darkMode.canvasBg),
       surfaceBg: normalizeHex(next.darkMode?.surfaceBg, DEFAULT_CONTROLS.darkMode.surfaceBg),
       panelBg: normalizeHex(next.darkMode?.panelBg, DEFAULT_CONTROLS.darkMode.panelBg),
@@ -1941,11 +1948,34 @@ function controlBand(value: number): 'low' | 'mid' | 'high' {
   return 'mid';
 }
 
+export type VisionDesignSystemMarkdownPayloadV1 = Omit<VisionDesignSystemV1, 'controls' | 'derived'> & {
+  controls: Omit<VisionDesignSystemControlsV1, 'darkMode'>;
+};
+
+export function toVisionDesignSystemMarkdownPayload(spec: VisionDesignSystemV1): VisionDesignSystemMarkdownPayloadV1 {
+  const ds = normalizeVisionDesignSystem(spec);
+  const controls = { ...ds.controls } as Partial<VisionDesignSystemControlsV1>;
+  delete controls.darkMode;
+  return {
+    version: 1,
+    activeScenarioId: ds.activeScenarioId,
+    scenarios: ds.scenarios,
+    foundations: ds.foundations,
+    controls: controls as Omit<VisionDesignSystemControlsV1, 'darkMode'>,
+    updatedAt: ds.updatedAt,
+  };
+}
+
 export function buildVisionDesignSystemReadout(spec: VisionDesignSystemV1): string {
   const ds = normalizeVisionDesignSystem(spec);
   const active = ds.scenarios.find((s) => s.id === ds.activeScenarioId) || ds.scenarios[0];
   const derived = ds.derived || deriveDesignSystemTokens(ds);
   const uiRatio = active?.ratios.find((r) => r.scope === 'ui' || r.scope === 'all') || active?.ratios[0];
+  const visualRangeEnabled = derived.effects.visualRangeMix > 0.55;
+  const materialFxEnabled = derived.effects.materialBudget > 0.5;
+  const boldGradientTextEnabled = ds.controls.boldTypographyStyle === 'gradient' || ds.controls.boldTypographyStyle === 'gradientGlow';
+  const boldGlowTextEnabled = ds.controls.boldTypographyStyle === 'glow' || ds.controls.boldTypographyStyle === 'gradientGlow';
+  const visualRangeHeadlineGradientEnabled = visualRangeEnabled && ds.controls.boldTypographyStyle === 'none';
 
   const lines: string[] = [];
   lines.push('Vision Design System Readout');
@@ -1978,8 +2008,9 @@ export function buildVisionDesignSystemReadout(spec: VisionDesignSystemV1): stri
   if (ds.controls.boldGradientSource === 'custom') {
     lines.push(`Bold gradient stops: ${ds.controls.boldGradientFrom} -> ${ds.controls.boldGradientMid} -> ${ds.controls.boldGradientTo}`);
   }
-  lines.push(`Dark preview: ${ds.controls.darkMode.showPreview ? 'enabled' : 'disabled'}`);
-  lines.push(`Dark overrides: ${ds.controls.darkMode.useOverrides ? 'custom' : 'auto'}`);
+  if (ds.controls.strictNoDarkMode) {
+    lines.push('VERY IMPORTANT: STRICTLY NO DARK MODE.');
+  }
   if (uiRatio) {
     const breakdown = uiRatio.primitiveBreakdown || ratioBreakdownFromLegacy(uiRatio);
     lines.push(`UI ratio summary: neutral ${uiRatio.neutralPct}% · primary ${uiRatio.primaryPct}% · accent ${uiRatio.accentPct}%`);
@@ -2011,8 +2042,7 @@ export function buildVisionDesignSystemReadout(spec: VisionDesignSystemV1): stri
   lines.push(`- boldness: ${controlBand(ds.controls.boldness)}`);
   lines.push(`- bold typography style: ${ds.controls.boldTypographyStyle}`);
   lines.push(`- bold gradient source: ${ds.controls.boldGradientSource}`);
-  lines.push(`- dark preview: ${ds.controls.darkMode.showPreview ? 'enabled' : 'disabled'}`);
-  lines.push(`- dark overrides: ${ds.controls.darkMode.useOverrides ? 'custom' : 'auto'}`);
+  lines.push(`- strict no dark mode: ${ds.controls.strictNoDarkMode ? 'enabled' : 'disabled'}`);
   lines.push('');
   lines.push('Exact control values:');
   lines.push(`- typography.baseSizePx: ${ds.controls.typography.baseSizePx}`);
@@ -2043,18 +2073,64 @@ export function buildVisionDesignSystemReadout(spec: VisionDesignSystemV1): stri
   lines.push(`- boldGradientFrom: ${ds.controls.boldGradientFrom}`);
   lines.push(`- boldGradientMid: ${ds.controls.boldGradientMid}`);
   lines.push(`- boldGradientTo: ${ds.controls.boldGradientTo}`);
-  lines.push(`- darkMode.showPreview: ${String(ds.controls.darkMode.showPreview)}`);
-  lines.push(`- darkMode.useOverrides: ${String(ds.controls.darkMode.useOverrides)}`);
-  lines.push(`- darkMode.canvasBg: ${ds.controls.darkMode.canvasBg}`);
-  lines.push(`- darkMode.surfaceBg: ${ds.controls.darkMode.surfaceBg}`);
-  lines.push(`- darkMode.panelBg: ${ds.controls.darkMode.panelBg}`);
-  lines.push(`- darkMode.separator: ${ds.controls.darkMode.separator}`);
-  lines.push(`- darkMode.textPrimary: ${ds.controls.darkMode.textPrimary}`);
-  lines.push(`- darkMode.textSecondary: ${ds.controls.darkMode.textSecondary}`);
-  lines.push(`- darkMode.textMuted: ${ds.controls.darkMode.textMuted}`);
-  lines.push(`- darkMode.primary: ${ds.controls.darkMode.primary}`);
-  lines.push(`- darkMode.accent: ${ds.controls.darkMode.accent}`);
-  lines.push(`- darkMode.buttonBg: ${ds.controls.darkMode.buttonBg}`);
+  lines.push(`- strictNoDarkMode: ${String(ds.controls.strictNoDarkMode)}`);
+  lines.push('');
+  lines.push('Style placement map (preview renderer):');
+  lines.push(`- Shell top nav (.vds-shell-topbar) background: ${derived.preview.topNavBg}`);
+  lines.push(`- Shell left nav (.vds-shell-leftnav) background: ${derived.preview.leftNavBg}`);
+  lines.push(`- Shell content canvas (.vds-shell-content) background: ${derived.preview.contentBg}`);
+  lines.push(`- Card shell surfaces (.vds-preview-shell, .vds-preview-card) base: bg=${derived.preview.cardBg}, border=${derived.preview.cardBorder}`);
+  lines.push(`- Primary action surfaces (.vds-shell-action, .vds-variant-row .is-primary, .vds-form-actions .is-primary): bg=${derived.preview.buttonBg}, text=${derived.preview.buttonText}`);
+  lines.push(
+    `- Gradient tokens: from=${derived.preview.gradientFrom}, mid=${derived.preview.gradientMid}, to=${derived.preview.gradientTo}`,
+  );
+  lines.push(
+    `- Headline gradient (visual range path): ${visualRangeHeadlineGradientEnabled ? 'active' : 'inactive'}; selector=.vds-shell-headline; linear-gradient direction=120deg; stops=0%/48%/100%`,
+  );
+  lines.push(
+    `- Bold type gradient path: ${boldGradientTextEnabled ? 'active' : 'inactive'}; selectors=.vds-shell-headline + .vds-font-hero-title; direction=120deg; stops=0%/48%/100%`,
+  );
+  lines.push(
+    `- Action/chip gradient path: ${visualRangeEnabled ? 'active' : 'inactive'}; selectors=.vds-chip, .vds-variant-row .is-primary, .vds-form-actions .is-primary; direction=135deg; stops=0%/52%/100%; mix strength=gradientStrength ${derived.effects.gradientStrength.toFixed(3)}`,
+  );
+  lines.push(
+    `- Card overlay gradients (.vds-preview-card::before): layer1 direction=145deg stops=0%/52%/100%; layer2 gloss direction=180deg top->transparent at 40%; overlay opacity uses gradientStrength+glossStrength (${derived.effects.gradientStrength.toFixed(3)}+${derived.effects.glossStrength.toFixed(3)})`,
+  );
+  lines.push(`- Base shadow stack (.vds-preview-shell, .vds-preview-card, .vds-modal-frame): ${derived.preview.shadow}`);
+  lines.push(
+    `- Shadow tokens: shadowColor=${derived.preview.shadowColor}, shadowAccent=${derived.preview.shadowAccent}, shadowHighlight=${derived.preview.shadowHighlight}`,
+  );
+  lines.push(
+    `- Material style gate: ${materialFxEnabled ? 'active' : 'inactive'} (controls.skeuomorphism=${ds.controls.skeuomorphism}, style=${ds.controls.skeuomorphismStyle}, materialBudget=${derived.effects.materialBudget.toFixed(3)})`,
+  );
+  if (materialFxEnabled) {
+    if (ds.controls.skeuomorphismStyle === 'subtle') {
+      lines.push(
+        `- Subtle material placement: .vds-preview-card and .vds-modal-frame add inset top highlight + inset bottom inner-shadow; strengths use bevel=${derived.effects.bevelStrength.toFixed(3)} and innerShadow=${derived.effects.innerShadowStrength.toFixed(3)}`,
+      );
+    } else if (ds.controls.skeuomorphismStyle === 'neomorphic') {
+      lines.push(
+        `- Neomorphic placement: .vds-preview-card and .vds-modal-frame use opposing outer shadows (+x/+y and -x/-y) with blur scaled by bevelStrength=${derived.effects.bevelStrength.toFixed(3)}`,
+      );
+    } else if (ds.controls.skeuomorphismStyle === 'glass') {
+      lines.push(
+        `- Glass placement: .vds-preview-card and .vds-modal-frame use translucent surface mix + highlight border + backdrop-filter blur(2px + gloss*8); extra top/accent shadows use gloss=${derived.effects.glossStrength.toFixed(3)} and bevel=${derived.effects.bevelStrength.toFixed(3)}`,
+      );
+    } else if (ds.controls.skeuomorphismStyle === 'glow') {
+      lines.push(
+        `- Glow placement: .vds-preview-card and .vds-modal-frame add ambient glow shadow (0 0 blur) plus top glow; glow radius scales with gloss=${derived.effects.glossStrength.toFixed(3)}`,
+      );
+    } else if (ds.controls.skeuomorphismStyle === 'embossed') {
+      lines.push(
+        `- Embossed placement: .vds-preview-card and .vds-modal-frame use multi-inset highlights/shadows plus base shadow; inset depth scales with innerShadow=${derived.effects.innerShadowStrength.toFixed(3)}`,
+      );
+    }
+  }
+  lines.push(
+    `- Focus accent placement: .vds-tabs.is-underline button.is-active border-bottom-color=${derived.preview.focusColor}`,
+  );
+  lines.push(`- Negative zone sample (.vds-negative-zone-box) background: ${derived.negativeZone.background}`);
+  lines.push(`- Bold glow text path: ${boldGlowTextEnabled ? 'active' : 'inactive'}; selectors=.vds-shell-headline + .vds-font-hero-title`);
   lines.push('');
   lines.push('Image profiles:');
   for (const profile of ds.foundations.imageProfiles) {
@@ -2071,7 +2147,7 @@ export function upsertVisionDesignSystemBlocks(markdown: string, spec: VisionDes
     return text;
   }
   const normalized = normalizeVisionDesignSystem(spec);
-  const compact = JSON.stringify(normalized);
+  const compact = JSON.stringify(toVisionDesignSystemMarkdownPayload(normalized));
   const readout = buildVisionDesignSystemReadout(normalized);
   text = upsertFencedBlock(text, 'vision-design-system', compact);
   text = upsertFencedBlock(text, 'vision-design-system-readout', readout);

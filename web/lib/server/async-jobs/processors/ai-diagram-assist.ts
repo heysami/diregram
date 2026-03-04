@@ -46,6 +46,7 @@ const FLOW_NODE_TYPES = [
   'single_screen_steps',
 ] as const;
 type FlowNodeTypeValue = (typeof FLOW_NODE_TYPES)[number];
+const NON_RETRYABLE_PREFIX = 'NON_RETRYABLE:';
 
 function coerceFlowNodeType(input: unknown): FlowNodeTypeValue | null {
   const v = normalizeText(input);
@@ -981,7 +982,7 @@ export async function runAiDiagramAssistJob(job: AsyncJobRow): Promise<Record<st
     if (!acceptedParsed || !acceptedSimulated) {
       const firstValidationIssue = lastValidationErrors[0] ? ` First issue: ${lastValidationErrors[0]}.` : '';
       throw new Error(
-        `Unable to produce a valid node structure proposal after ${MAX_MODEL_REPAIR_ATTEMPTS} attempts.${firstValidationIssue} Please re-run analysis.`,
+        `${NON_RETRYABLE_PREFIX} Unable to produce a valid node structure proposal after ${MAX_MODEL_REPAIR_ATTEMPTS} repair attempts.${firstValidationIssue} Auto-repair stopped; re-run analysis manually.`,
       );
     }
 
@@ -1065,7 +1066,9 @@ export async function runAiDiagramAssistJob(job: AsyncJobRow): Promise<Record<st
     }
 
     if (!parsed) {
-      throw new Error(`Unable to produce a valid AI proposal after ${MAX_MODEL_REPAIR_ATTEMPTS} attempts. Please re-run analysis.`);
+      throw new Error(
+        `${NON_RETRYABLE_PREFIX} Unable to produce a valid AI proposal after ${MAX_MODEL_REPAIR_ATTEMPTS} repair attempts. Auto-repair stopped; re-run analysis manually.`,
+      );
     }
 
     await ensureNotCancelled(job.id);
