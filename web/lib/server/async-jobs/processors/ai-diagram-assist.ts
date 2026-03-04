@@ -37,7 +37,9 @@ const MAX_TABLE_ROWS = 140;
 const MAX_FLOW_LINES = 180;
 const MAX_MARKDOWN_FIX_ISSUES = 80;
 const MAX_MARKDOWN_FIX_TARGETS = 40;
-const MAX_MARKDOWN_FIX_PATCHES = 24;
+const MAX_MARKDOWN_FIX_PATCHES = 40;
+const DEFAULT_MARKDOWN_FIX_PATCHES = 24;
+const MAX_MARKDOWN_FIX_REPAIR_ATTEMPTS = 4;
 const MAX_MARKDOWN_FIX_REPLACEMENT_CHARS = 8000;
 const MAX_MODEL_REPAIR_ATTEMPTS = 6;
 const MAX_REPAIR_FEEDBACK_ERRORS = 8;
@@ -1055,7 +1057,15 @@ function buildMarkdownErrorsFixPrompt(input: {
     })
     .join('\n\n---\n\n');
   const fileHead = normalizeNewlines(input.markdown).split('\n').slice(0, 220).join('\n').slice(0, 7000);
-  const maxPatches = Math.min(MAX_MARKDOWN_FIX_PATCHES, Math.max(1, Math.floor(Number(input.selection.maxPatches || 12))));
+  const requestedMaxPatches = Math.min(
+    MAX_MARKDOWN_FIX_PATCHES,
+    Math.max(1, Math.floor(Number(input.selection.maxPatches || DEFAULT_MARKDOWN_FIX_PATCHES))),
+  );
+  const requiredPatchBudget = Math.min(
+    MAX_MARKDOWN_FIX_PATCHES,
+    Math.max(input.targets.length, input.issues.length),
+  );
+  const maxPatches = Math.max(requestedMaxPatches, requiredPatchBudget);
 
   const system = [
     'You are a Diregram markdown repair assistant.',
@@ -1417,7 +1427,10 @@ function coerceSelection(action: DiagramAssistAction, raw: unknown): DiagramAssi
     return {
       ...s,
       issueKeys: (s.issueKeys || []).slice(0, MAX_MARKDOWN_FIX_ISSUES).map((x) => normalizeText(x).slice(0, 500)).filter(Boolean),
-      maxPatches: Math.min(MAX_MARKDOWN_FIX_PATCHES, Math.max(1, Math.floor(Number(s.maxPatches || 12)))),
+      maxPatches: Math.min(
+        MAX_MARKDOWN_FIX_PATCHES,
+        Math.max(1, Math.floor(Number(s.maxPatches || DEFAULT_MARKDOWN_FIX_PATCHES))),
+      ),
     } satisfies DiagramAssistMarkdownErrorsFixSelection;
   }
 
@@ -1637,16 +1650,18 @@ export async function runAiDiagramAssistJob(job: AsyncJobRow): Promise<Record<st
     },
   });
 
-  const kbQuery = buildKbQuery(action, selection);
-  const kb = await queryProjectKbContext({
-    ownerId,
-    projectFolderId,
-    query: kbQuery,
-    topK: 10,
-    apiKey: openaiApiKey,
-    embeddingModel,
-    admin,
-  });
+  const kb =
+    action === 'markdown_errors_fix'
+      ? { matches: [], contextText: '' }
+      : await queryProjectKbContext({
+          ownerId,
+          projectFolderId,
+          query: buildKbQuery(action, selection),
+          topK: 10,
+          apiKey: openaiApiKey,
+          embeddingModel,
+          admin,
+        });
 
   const dataObjects = parseDataObjectsFromMarkdown(fileContent);
 
@@ -1882,6 +1897,16 @@ export async function runAiDiagramAssistJob(job: AsyncJobRow): Promise<Record<st
           `${NON_RETRYABLE_PREFIX} Unable to build editable target sections for markdown repair. Re-run analysis manually.`,
         );
       }
+      const requestedMaxPatches = Math.min(
+        MAX_MARKDOWN_FIX_PATCHES,
+        Math.max(1, Math.floor(Number(selectionFix.maxPatches || DEFAULT_MARKDOWN_FIX_PATCHES))),
+      );
+      const requiredPatchBudget = Math.min(
+        MAX_MARKDOWN_FIX_PATCHES,
+        Math.max(targets.length, issuesToFix.length),
+      );
+      const maxPatches = Math.max(requestedMaxPatches, requiredPatchBudget);
+      const maxRepairAttempts = MAX_MARKDOWN_FIX_REPAIR_ATTEMPTS;
 
       let lastFailureReason = 'No valid response received';
       let lastValidationIssues: ImportValidationIssue[] = [];
@@ -1893,7 +1918,7 @@ export async function runAiDiagramAssistJob(job: AsyncJobRow): Promise<Record<st
       let acceptedNewIssues: ImportValidationIssue[] = [];
       let acceptedValidationWarnings: string[] = [];
 
-      for (let attempt = 1; attempt <= MAX_MODEL_REPAIR_ATTEMPTS; attempt += 1) {
+      for (let attempt = 1; attempt <= maxRepairAttempts; attempt += 1) {
         await ensureNotCancelled(job.id);
         modelAttemptsUsed = attempt;
         if (attempt > 1) {
@@ -1931,7 +1956,7 @@ export async function runAiDiagramAssistJob(job: AsyncJobRow): Promise<Record<st
           {
             apiKey: openaiApiKey,
             model: chatModel,
-            withWebSearch: true,
+            withWebSearch: false,
           },
         );
         lastResponseText = responseText;
@@ -1945,10 +1970,6 @@ export async function runAiDiagramAssistJob(job: AsyncJobRow): Promise<Record<st
           continue;
         }
 
-        const maxPatches = Math.min(
-          MAX_MARKDOWN_FIX_PATCHES,
-          Math.max(1, Math.floor(Number(selectionFix.maxPatches || 12))),
-        );
         const patches = sanitizeMarkdownFixPatchesFromParsed({
           parsed,
           targets,
@@ -1992,7 +2013,7 @@ export async function runAiDiagramAssistJob(job: AsyncJobRow): Promise<Record<st
         const human = formatValidationIssuesHuman(lastValidationIssues, 10);
         const technical = formatValidationIssuesTechnical(lastValidationIssues, 10);
         throw new Error(
-          `${NON_RETRYABLE_PREFIX} Unable to produce a valid markdown repair proposal after ${MAX_MODEL_REPAIR_ATTEMPTS} repair attempts. Auto-repair stopped.\nHuman-readable issues:\n${human}${technical ? `\nTechnical issues:\n${technical}` : ''}\nRe-run analysis manually after fixing the issues above.`,
+          `${NON_RETRYABLE_PREFIX} Unable to produce a valid markdown repair proposal after ${maxRepairAttempts} repair attempts. Auto-repair stopped.\nHuman-readable issues:\n${human}${technical ? `\nTechnical issues:\n${technical}` : ''}\nRe-run analysis manually after fixing the issues above.`,
         );
       }
 

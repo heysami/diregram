@@ -37,7 +37,7 @@ const STANDARD_BLOCKING_LINE = 'If any required input is missing, stop and ask t
 const generationSkillName = 'diregram-generation-checklist';
 const generationSkillMd = `---
 name: ${generationSkillName}
-description: Generate and validate Diregram Diagram and Vision outputs with a strict, non-skippable checklist sequence. Use when users need generation guidance, verification order enforcement, and explicit blocker handling.
+description: Generate and validate Diregram Diagram and Vision outputs with a strict, non-skippable checklist sequence. Use when users need generation guidance, verification order enforcement, and explicit blocker handling. Always follow this SKILL.md plus references/verification-order.md and references/checklists/*.md as the required guide/checklist files.
 ---
 
 # Diregram Generation Checklist
@@ -95,7 +95,7 @@ ${STANDARD_BLOCKING_LINE}
 
 const generationOpenAiYaml = `interface:
   display_name: "Diregram Generation Checklist"
-  short_description: "Generate and verify Diagram and Vision outputs"
+  short_description: "Guide/checklist-driven Diagram + Vision generation"
   default_prompt: "Use $${generationSkillName} to generate and verify Diagram and Vision outputs in strict sequence."
 `;
 
@@ -195,7 +195,7 @@ const generationClaudePrompt = [
 const mcpSkillName = 'diregram-mcp-rag-operator';
 const mcpSkillMd = `---
 name: ${mcpSkillName}
-description: Operate Diregram RAG via MCP tools using a strict decision tree. Use when selecting projects, setting keys, running scoped RAG queries, and handling missing context without tool drift.
+description: Operate Diregram RAG via MCP tools using a strict decision tree. Use when selecting projects, setting keys, running scoped RAG queries, and handling missing context without tool drift. Always follow this SKILL.md plus references/mcp-tool-contract.md and references/error-recovery.md as the required guide/checklist files.
 ---
 
 # Diregram MCP RAG Operator
@@ -248,7 +248,7 @@ ${STANDARD_BLOCKING_LINE}
 
 const mcpOpenAiYaml = `interface:
   display_name: "Diregram MCP RAG Operator"
-  short_description: "Use Diregram MCP tools in strict order"
+  short_description: "Guide/checklist-driven Diregram MCP tool flow"
   default_prompt: "Use $${mcpSkillName} to run Diregram MCP RAG in strict sequence with project and key gating."
 `;
 
@@ -334,7 +334,7 @@ const mcpClaudePrompt = [
 const uiContentSignalAuditSkillName = 'diregram-ui-content-signal-audit';
 const uiContentSignalAuditSkillMd = `---
 name: ${uiContentSignalAuditSkillName}
-description: Audit and rewrite UI text for signal-to-noise, task clarity, and discoverability using screenshot-first evidence and strict action ordering.
+description: Audit and rewrite UI text for signal-to-noise, task clarity, and discoverability using screenshot-first evidence and strict action ordering. Always follow this SKILL.md plus references/rubric.md and references/templates.md as the required guide/checklist files.
 ---
 
 # Diregram UI Content Signal Audit
@@ -392,7 +392,7 @@ ${STANDARD_BLOCKING_LINE}
 
 const uiContentSignalAuditOpenAiYaml = `interface:
   display_name: "Diregram UI Content Signal Audit"
-  short_description: "Screenshot-first UI content signal audit"
+  short_description: "Guide/checklist-driven screenshot-first content audit"
   default_prompt: "Use $${uiContentSignalAuditSkillName} to run a whole-screen-first content signal audit, enforce remove->relayout->replace->add ordering, and return screenshot-anchored changes plus manager-loop handoff items."
 `;
 
@@ -447,7 +447,7 @@ const uiContentSignalAuditClaudePrompt = [
 const uiManagerLoopSkillName = 'diregram-ui-manager-loop';
 const uiManagerLoopSkillMd = `---
 name: ${uiManagerLoopSkillName}
-description: Evaluate UI/UX with original manager-loop metrics plus mandatory Diregram design-system match gates for MCP-generated app outputs.
+description: Evaluate UI/UX with original manager-loop metrics plus mandatory Diregram design-system match gates for MCP-generated app outputs. Always follow this SKILL.md plus references/framework.md and references/templates.md as the required guide/checklist files.
 ---
 
 # Diregram UI Manager Loop
@@ -507,7 +507,7 @@ ${STANDARD_BLOCKING_LINE}
 
 const uiManagerLoopOpenAiYaml = `interface:
   display_name: "Diregram UI Manager Loop"
-  short_description: "Classic manager-loop + strict DS match gate"
+  short_description: "Guide/checklist-driven manager-loop + DS match gate"
   default_prompt: "Use $${uiManagerLoopSkillName} to run original manager-loop scoring and add strict required-control design-system matching for MCP-generated app UI before final sign-off."
 `;
 

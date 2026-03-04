@@ -70,6 +70,12 @@ function resolveModel(model?: string) {
   return String(model || process.env.OPENAI_CHAT_MODEL || 'gpt-4o-mini').trim();
 }
 
+function resolveTimeoutMs(envName: string, fallbackMs: number, minMs: number, maxMs: number): number {
+  const raw = Number(process.env[envName] || fallbackMs);
+  if (!Number.isFinite(raw)) return fallbackMs;
+  return Math.max(minMs, Math.min(maxMs, Math.floor(raw)));
+}
+
 export async function runOpenAIResponsesText(
   input: OpenAIResponsesInputItem[],
   opts?: { apiKey?: string; model?: string; withWebSearch?: boolean },
@@ -77,6 +83,7 @@ export async function runOpenAIResponsesText(
   const apiKey = resolveApiKey(opts?.apiKey);
   const model = resolveModel(opts?.model);
   const withWebSearch = Boolean(opts?.withWebSearch);
+  const timeoutMs = resolveTimeoutMs('OPENAI_RESPONSES_TIMEOUT_MS', 120_000, 5_000, 600_000);
 
   const body: Record<string, unknown> = {
     model,
@@ -87,14 +94,28 @@ export async function runOpenAIResponsesText(
     body.tools = [{ type: 'web_search_preview' }];
   }
 
-  const res = await fetch('https://api.openai.com/v1/responses', {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify(body),
-  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let res: Response;
+  try {
+    res = await fetch('https://api.openai.com/v1/responses', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+  } catch (e) {
+    if (e instanceof Error && e.name === 'AbortError') {
+      throw new Error(`OpenAI responses timed out after ${timeoutMs}ms`);
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+
   if (!res.ok) {
     const msg = await res.text().catch(() => '');
     throw new Error(`OpenAI responses failed (${res.status}): ${msg || res.statusText}`);

@@ -129,6 +129,7 @@ export function MarkdownDiagnosticsModal({
       }
       const baseFileHash = await sha256Hex(markdown);
       const issueKeys = errors.slice(0, 120).map((issue) => issueKey(issue));
+      const maxPatches = Math.min(24, Math.max(12, errors.length));
       const res = await fetch('/api/ai/diagram-assist/execute', {
         method: 'POST',
         headers: {
@@ -142,7 +143,7 @@ export function MarkdownDiagnosticsModal({
           selection: {
             baseFileHash,
             issueKeys,
-            maxPatches: 12,
+            maxPatches,
           },
         }),
       });

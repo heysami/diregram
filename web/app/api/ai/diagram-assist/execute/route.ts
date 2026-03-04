@@ -163,7 +163,7 @@ function coerceMarkdownErrorsFixSelection(raw: Record<string, unknown>): Diagram
     baseFileHash: clampText(raw.baseFileHash, 256),
     baseUpdatedAt: clampText(raw.baseUpdatedAt, 120) || null,
     issueKeys: clampArray(raw.issueKeys, { maxItems: 120, maxChars: 500 }),
-    maxPatches: Math.min(24, Math.max(1, Math.floor(Number(raw.maxPatches || 12)))),
+    maxPatches: Math.min(40, Math.max(1, Math.floor(Number(raw.maxPatches || 24)))),
   };
 }
 
