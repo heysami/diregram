@@ -13,6 +13,7 @@ import {
   type VisionDesignSystemV1,
 } from '@/lib/vision-design-system';
 import {
+  buildBakedPreviewHtmlFromRoot,
   buildVisionDesignSystemComponentsResourceMarkdown,
   buildVisionDesignSystemVarsClassesResourceMarkdown,
   normalizeVisionResourceBaseName,
@@ -193,12 +194,16 @@ export function VisionEditor({
       const baseName = normalizeVisionResourceBaseName(visionName);
       const componentsResourceName = `${baseName}_components`;
       const varsClassResourceName = `${baseName}_var+class`;
+      const previewRoot = document.querySelector<HTMLElement>('.dg-vision-design-system .vds-preview');
+      const bakedPreviewHtml = buildBakedPreviewHtmlFromRoot(previewRoot);
+      if (!bakedPreviewHtml) throw new Error('Unable to capture baked preview HTML. Keep the Design System preview visible and try publish again.');
 
       const componentsMarkdown = buildVisionDesignSystemComponentsResourceMarkdown({
         visionFileId: fileId,
         visionFileName: visionName,
         designSystem,
         previewMeta: publishPreviewMeta,
+        bakedPreviewHtml,
         publishedAtIso,
       });
       const varsClassMarkdown = buildVisionDesignSystemVarsClassesResourceMarkdown({

@@ -5,6 +5,83 @@ import {
   type VisionDesignSystemV1,
 } from '@/lib/vision-design-system';
 
+const BAKED_STYLE_PROPS = [
+  'display',
+  'position',
+  'top',
+  'right',
+  'bottom',
+  'left',
+  'z-index',
+  'box-sizing',
+  'width',
+  'height',
+  'min-width',
+  'min-height',
+  'max-width',
+  'max-height',
+  'margin',
+  'margin-top',
+  'margin-right',
+  'margin-bottom',
+  'margin-left',
+  'padding',
+  'padding-top',
+  'padding-right',
+  'padding-bottom',
+  'padding-left',
+  'gap',
+  'row-gap',
+  'column-gap',
+  'grid-template-columns',
+  'grid-template-rows',
+  'grid-auto-flow',
+  'align-items',
+  'justify-items',
+  'align-content',
+  'justify-content',
+  'flex',
+  'flex-direction',
+  'flex-wrap',
+  'flex-grow',
+  'flex-shrink',
+  'flex-basis',
+  'font-family',
+  'font-size',
+  'font-weight',
+  'font-style',
+  'line-height',
+  'letter-spacing',
+  'text-transform',
+  'text-align',
+  'text-decoration',
+  'white-space',
+  'color',
+  'background',
+  'background-color',
+  'background-image',
+  'background-size',
+  'background-position',
+  'background-repeat',
+  'border',
+  'border-top',
+  'border-right',
+  'border-bottom',
+  'border-left',
+  'border-radius',
+  'outline',
+  'box-shadow',
+  'opacity',
+  'mix-blend-mode',
+  'filter',
+  'backdrop-filter',
+  'transform',
+  'transform-origin',
+  'overflow',
+  'overflow-x',
+  'overflow-y',
+] as const;
+
 export type VisionDesignSystemPreviewComponentMeta = {
   name: string;
   selector: string;
@@ -35,11 +112,42 @@ export function normalizeVisionResourceBaseName(input: string): string {
   return cleaned || 'Vision';
 }
 
+function isHtmlElement(node: Element): node is HTMLElement {
+  return typeof HTMLElement !== 'undefined' && node instanceof HTMLElement;
+}
+
+export function buildBakedPreviewHtmlFromRoot(root: HTMLElement | null): string {
+  if (!root || typeof window === 'undefined') return '';
+  const clone = root.cloneNode(true);
+  if (!(clone instanceof HTMLElement)) return '';
+
+  const sourceNodes = [root, ...Array.from(root.querySelectorAll('*')).filter(isHtmlElement)];
+  const cloneNodes = [clone, ...Array.from(clone.querySelectorAll('*')).filter(isHtmlElement)];
+  const len = Math.min(sourceNodes.length, cloneNodes.length);
+
+  for (let i = 0; i < len; i++) {
+    const src = sourceNodes[i];
+    const dst = cloneNodes[i];
+    const computed = window.getComputedStyle(src);
+    const bakedStyle = BAKED_STYLE_PROPS.map((prop) => {
+      const val = computed.getPropertyValue(prop).trim();
+      return val ? `${prop}: ${val};` : '';
+    })
+      .filter(Boolean)
+      .join(' ');
+    if (bakedStyle) dst.setAttribute('style', bakedStyle);
+    else dst.removeAttribute('style');
+  }
+
+  return clone.outerHTML.replace(/></g, '>\n<').trim();
+}
+
 export function buildVisionDesignSystemComponentsResourceMarkdown(input: {
   visionFileId: string;
   visionFileName: string;
   designSystem: VisionDesignSystemV1;
   previewMeta: VisionDesignSystemPreviewPublishMetadata | null;
+  bakedPreviewHtml: string | null;
   publishedAtIso: string;
 }): string {
   const readout = buildVisionDesignSystemReadout(input.designSystem);
@@ -52,9 +160,14 @@ export function buildVisionDesignSystemComponentsResourceMarkdown(input: {
   lines.push(`- Preview captured at: ${input.previewMeta?.capturedAtIso || 'n/a'}`);
   lines.push(`- Preview theme: ${input.previewMeta?.previewTheme || 'light'}`);
   lines.push('');
-  lines.push('## React Preview Components');
+  lines.push('## Full Baked Preview HTML');
+  lines.push('```html');
+  lines.push((input.bakedPreviewHtml || '').trim() || '<!-- preview html unavailable -->');
+  lines.push('```');
+  lines.push('');
+  lines.push('## Component Anchors');
   if (!components.length) {
-    lines.push('- No preview component metadata captured.');
+    lines.push('- No component anchor metadata captured.');
   } else {
     for (const cmp of components) {
       lines.push(`- \`${cmp.name}\``);
