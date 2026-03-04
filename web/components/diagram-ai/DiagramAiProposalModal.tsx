@@ -35,6 +35,7 @@ import {
 import { upsertDimensionDescription } from '@/lib/dimension-descriptions';
 import { serializeTableToMarkdown } from '@/lib/table-serialization';
 import type { TableColumn, TableRow } from '@/components/DimensionTableEditor';
+import type { ImportValidationIssue } from '@/lib/markdown-import-validator';
 
 function asRecord(input: unknown): Record<string, unknown> | null {
   return input && typeof input === 'object' ? (input as Record<string, unknown>) : null;
@@ -48,6 +49,34 @@ function parseProposal(job: AsyncTrackedJob | null): DiagramAssistProposal | nul
   const action = String(proposal.action || '').trim();
   if (action !== 'node_structure' && action !== 'data_object_attributes' && action !== 'status_descriptions') return null;
   return proposal as DiagramAssistProposal;
+}
+
+function parseValidationIssueText(raw: string): ImportValidationIssue {
+  const text = String(raw || '').trim();
+  const sep = text.indexOf(':');
+  if (sep <= 0) {
+    return {
+      severity: 'error',
+      code: 'VALIDATION_ERROR',
+      message: text || 'Validation failed.',
+    };
+  }
+  return {
+    severity: 'error',
+    code: text.slice(0, sep).trim() || 'VALIDATION_ERROR',
+    message: text.slice(sep + 1).trim() || 'Validation failed.',
+  };
+}
+
+function formatValidationIssueForUser(issue: ImportValidationIssue): string {
+  const code = String(issue.code || '').trim();
+  if (code === 'UNCLOSED_CODE_BLOCK') {
+    return `AI output has an unfinished code block fence (\`\`\`). No changes were applied. ${issue.message}`;
+  }
+  if (code === 'PARSE_FAILED' || code === 'NO_NODES') {
+    return `AI output could not be parsed as a valid diagram subtree. No changes were applied. ${issue.message}`;
+  }
+  return `AI output failed validation (${code || 'VALIDATION_ERROR'}). No changes were applied. ${issue.message}`;
 }
 
 function normalizeIdentity(name: string, type: 'text' | 'status'): string {
@@ -209,7 +238,9 @@ export function DiagramAiProposalModal({
     const validation = validateNexusMarkdownImport(replaced.markdown);
     if (validation.errors.length) {
       const first = validation.errors[0];
-      throw new Error(`Proposal did not pass validator: ${first.code}: ${first.message}`);
+      const detail = formatValidationIssueForUser(first);
+      const more = validation.errors.length > 1 ? ` (${validation.errors.length - 1} more validation error(s))` : '';
+      throw new Error(`${detail}${more} Please run AI Structure Review again.`);
     }
 
     const yText = doc.getText('nexus');
@@ -390,6 +421,10 @@ export function DiagramAiProposalModal({
     setSuccess(null);
     try {
       if (proposal.action === 'node_structure') {
+        if (proposal.validationReport?.errors?.length) {
+          const firstIssue = parseValidationIssueText(proposal.validationReport.errors[0]);
+          throw new Error(`${formatValidationIssueForUser(firstIssue)} Please run AI Structure Review again.`);
+        }
         await applyNodeStructure(proposal);
       } else if (proposal.action === 'data_object_attributes') {
         await applyDataObjectAttributes(proposal);
@@ -405,6 +440,8 @@ export function DiagramAiProposalModal({
   }, [applyDataObjectAttributes, applyNodeStructure, applyStatusDescriptions, proposal]);
 
   if (!job) return null;
+  const hasBlockingValidationErrors =
+    proposal?.action === 'node_structure' && (proposal.validationReport?.errors?.length || 0) > 0;
 
   return (
     <div className="fixed inset-0 z-[1400] bg-black/45 flex items-center justify-center p-4">
@@ -459,6 +496,33 @@ export function DiagramAiProposalModal({
                   <div className="font-semibold">Validation Preview</div>
                   <div className="mt-1">Errors: {proposal.validationReport.errors.length}</div>
                   <div>Warnings: {proposal.validationReport.warnings.length}</div>
+                  {proposal.validationReport.errors.length ? (
+                    <div className="mt-2">
+                      <div className="font-medium text-red-700">Blocking issues</div>
+                      <ul className="mt-1 list-disc pl-5 text-red-700">
+                        {proposal.validationReport.errors.slice(0, 3).map((raw, idx) => {
+                          const issue = parseValidationIssueText(raw);
+                          return <li key={`ve-${idx}`}>{formatValidationIssueForUser(issue)}</li>;
+                        })}
+                      </ul>
+                      {proposal.validationReport.errors.length > 3 ? (
+                        <div className="mt-1 text-red-700">
+                          +{proposal.validationReport.errors.length - 3} more blocking issue(s)
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  {proposal.validationReport.warnings.length ? (
+                    <div className="mt-2">
+                      <div className="font-medium">Warnings</div>
+                      <ul className="mt-1 list-disc pl-5">
+                        {proposal.validationReport.warnings.slice(0, 3).map((w, idx) => <li key={`vw-${idx}`}>{w}</li>)}
+                      </ul>
+                      {proposal.validationReport.warnings.length > 3 ? (
+                        <div className="mt-1">+{proposal.validationReport.warnings.length - 3} more warning(s)</div>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
             </div>
@@ -560,7 +624,8 @@ export function DiagramAiProposalModal({
             <button
               type="button"
               className="mac-btn mac-btn--primary"
-              disabled={!proposal || busy}
+              disabled={!proposal || busy || hasBlockingValidationErrors}
+              title={hasBlockingValidationErrors ? 'Cannot apply this proposal until validation errors are fixed. Re-run AI Structure Review.' : undefined}
               onClick={onApply}
             >
               {busy ? 'Applying…' : 'Apply Proposal'}

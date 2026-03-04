@@ -31,6 +31,9 @@ const MAX_STATUS_VALUES = 24;
 const MAX_TRANSITIONS = 120;
 const MAX_TABLE_ROWS = 140;
 const MAX_FLOW_LINES = 180;
+const MAX_MODEL_REPAIR_ATTEMPTS = 6;
+const MAX_REPAIR_FEEDBACK_ERRORS = 8;
+const MAX_PREVIOUS_RESPONSE_CHARS = 5000;
 const FLOW_NODE_TYPES = [
   'step',
   'time',
@@ -719,6 +722,43 @@ async function ensureNotCancelled(jobId: string) {
   }
 }
 
+function buildRepairUserPrompt(input: {
+  baseUserPrompt: string;
+  action: DiagramAssistAction;
+  attempt: number;
+  failureReason: string;
+  validationErrors?: string[];
+  previousResponse?: string;
+}): string {
+  const chunks: string[] = [];
+  chunks.push(input.baseUserPrompt);
+  chunks.push('');
+  chunks.push(`Revision attempt: ${input.attempt}`);
+  chunks.push(`Previous attempt failed: ${input.failureReason}`);
+
+  if (input.validationErrors && input.validationErrors.length > 0) {
+    chunks.push('');
+    chunks.push('Validation errors to fix exactly:');
+    input.validationErrors.slice(0, MAX_REPAIR_FEEDBACK_ERRORS).forEach((e, idx) => {
+      chunks.push(`${idx + 1}. ${e}`);
+    });
+  }
+
+  if (input.previousResponse) {
+    chunks.push('');
+    chunks.push('Previous model response (for correction):');
+    chunks.push(input.previousResponse.slice(0, MAX_PREVIOUS_RESPONSE_CHARS));
+  }
+
+  chunks.push('');
+  chunks.push('Return STRICT JSON only. Do not include markdown fences. Ensure the output is valid and complete.');
+  if (input.action === 'node_structure') {
+    chunks.push('For node_structure: output must produce replacement subtree markdown that passes validation with no errors.');
+  }
+
+  return chunks.join('\n');
+}
+
 export async function runAiDiagramAssistJob(job: AsyncJobRow): Promise<Record<string, unknown>> {
   const inputRaw = (job.input || {}) as Record<string, unknown>;
   const action = normalizeText(inputRaw.action) as DiagramAssistAction;
@@ -849,66 +889,210 @@ export async function runAiDiagramAssistJob(job: AsyncJobRow): Promise<Record<st
     userPrompt = p.user;
   }
 
-  const responseText = await runOpenAIResponsesText(
-    [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: userPrompt },
-    ],
-    {
-      apiKey: openaiApiKey,
-      model: chatModel,
-      withWebSearch: true,
-    },
-  );
-
-  await ensureNotCancelled(job.id);
-  await updateAsyncJob(job.id, {
-    step: 'validating_proposal',
-    progress_pct: 84,
-    state: {
-      ...(job.state || {}),
-      action,
-      kbMatches: kb.matches.length,
-    },
-  });
-
-  const parsed = extractJsonObject(responseText);
   let proposal: DiagramAssistProposal;
+  let modelAttemptsUsed = 0;
 
   if (action === 'node_structure') {
     const selectionNode = selection as DiagramAssistNodeStructureSelection;
-    const simulated = replaceSubtreeAtLine({
-      markdown: fileContent,
-      lineIndex: selectionNode.lineIndex,
-      subtreeReplacementMarkdown: normalizeNewlines(parsed.subtreeReplacementMarkdown || selectionNode.subtreeMarkdown),
+    let lastFailureReason = 'No valid response received';
+    let lastValidationErrors: string[] = [];
+    let lastResponseText = '';
+    let acceptedParsed: Record<string, unknown> | null = null;
+    let acceptedSimulated: { nextMarkdown: string; originalSubtreeMarkdown: string } | null = null;
+    let acceptedValidationWarnings: string[] = [];
+
+    for (let attempt = 1; attempt <= MAX_MODEL_REPAIR_ATTEMPTS; attempt += 1) {
+      await ensureNotCancelled(job.id);
+      modelAttemptsUsed = attempt;
+      if (attempt > 1) {
+        await updateAsyncJob(job.id, {
+          step: 'repairing_proposal',
+          progress_pct: Math.min(92, 58 + attempt * 6),
+          state: {
+            ...(job.state || {}),
+            action,
+            kbMatches: kb.matches.length,
+            repairAttempt: attempt,
+            previousFailure: lastFailureReason.slice(0, 300),
+          },
+        });
+      }
+
+      const userPromptForAttempt =
+        attempt === 1
+          ? userPrompt
+          : buildRepairUserPrompt({
+              baseUserPrompt: userPrompt,
+              action,
+              attempt,
+              failureReason: lastFailureReason,
+              validationErrors: lastValidationErrors,
+              previousResponse: lastResponseText,
+            });
+
+      const responseText = await runOpenAIResponsesText(
+        [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPromptForAttempt },
+        ],
+        {
+          apiKey: openaiApiKey,
+          model: chatModel,
+          withWebSearch: true,
+        },
+      );
+      lastResponseText = responseText;
+
+      let parsed: Record<string, unknown>;
+      try {
+        parsed = extractJsonObject(responseText);
+      } catch (e) {
+        lastFailureReason = `Invalid JSON output: ${e instanceof Error ? e.message : String(e)}`;
+        lastValidationErrors = [];
+        continue;
+      }
+
+      let simulated: { nextMarkdown: string; originalSubtreeMarkdown: string };
+      try {
+        simulated = replaceSubtreeAtLine({
+          markdown: fileContent,
+          lineIndex: selectionNode.lineIndex,
+          subtreeReplacementMarkdown: normalizeNewlines(parsed.subtreeReplacementMarkdown || selectionNode.subtreeMarkdown),
+        });
+      } catch (e) {
+        lastFailureReason = `Invalid subtree replacement: ${e instanceof Error ? e.message : String(e)}`;
+        lastValidationErrors = [];
+        continue;
+      }
+
+      const validation = validateNexusMarkdownImport(simulated.nextMarkdown);
+      if (validation.errors.length > 0) {
+        lastValidationErrors = validation.errors.map((err) => `${err.code}: ${err.message}`).slice(0, 60);
+        lastFailureReason = `Validation failed with ${validation.errors.length} error(s)`;
+        continue;
+      }
+
+      acceptedParsed = parsed;
+      acceptedSimulated = simulated;
+      acceptedValidationWarnings = validation.warnings.map((w) => `${w.code}: ${w.message}`).slice(0, 120);
+      break;
+    }
+
+    if (!acceptedParsed || !acceptedSimulated) {
+      const firstValidationIssue = lastValidationErrors[0] ? ` First issue: ${lastValidationErrors[0]}.` : '';
+      throw new Error(
+        `Unable to produce a valid node structure proposal after ${MAX_MODEL_REPAIR_ATTEMPTS} attempts.${firstValidationIssue} Please re-run analysis.`,
+      );
+    }
+
+    await ensureNotCancelled(job.id);
+    await updateAsyncJob(job.id, {
+      step: 'validating_proposal',
+      progress_pct: 92,
+      state: {
+        ...(job.state || {}),
+        action,
+        kbMatches: kb.matches.length,
+        modelAttempts: modelAttemptsUsed,
+      },
     });
 
     const nodeProposal = sanitizeNodeStructureProposal({
       selection: selectionNode,
-      parsed,
+      parsed: acceptedParsed,
       baseFileHash: currentHash,
-      originalSubtreeMarkdown: simulated.originalSubtreeMarkdown,
+      originalSubtreeMarkdown: acceptedSimulated.originalSubtreeMarkdown,
     });
 
-    const validation = validateNexusMarkdownImport(simulated.nextMarkdown);
     nodeProposal.validationReport = {
-      errors: validation.errors.map((e) => `${e.code}: ${e.message}`).slice(0, 60),
-      warnings: validation.warnings.map((w) => `${w.code}: ${w.message}`).slice(0, 120),
-      notes: clampArray(parsed.validationNotes, { maxItems: 40, maxChars: 260 }),
+      errors: [],
+      warnings: acceptedValidationWarnings,
+      notes: clampArray(acceptedParsed.validationNotes, { maxItems: 40, maxChars: 260 }),
     };
     proposal = nodeProposal;
-  } else if (action === 'data_object_attributes') {
-    proposal = sanitizeDataObjectAttributesProposal({
-      parsed,
-      selection: selection as DiagramAssistDataObjectAttributesSelection,
-      baseFileHash: currentHash,
-    });
   } else {
-    proposal = sanitizeStatusDescriptionsProposal({
-      parsed,
-      selection: selection as DiagramAssistStatusDescriptionsSelection,
-      baseFileHash: currentHash,
+    let parsed: Record<string, unknown> | null = null;
+    let lastFailureReason = 'No valid response received';
+    let lastResponseText = '';
+
+    for (let attempt = 1; attempt <= MAX_MODEL_REPAIR_ATTEMPTS; attempt += 1) {
+      await ensureNotCancelled(job.id);
+      modelAttemptsUsed = attempt;
+      if (attempt > 1) {
+        await updateAsyncJob(job.id, {
+          step: 'repairing_proposal',
+          progress_pct: Math.min(90, 58 + attempt * 6),
+          state: {
+            ...(job.state || {}),
+            action,
+            kbMatches: kb.matches.length,
+            repairAttempt: attempt,
+            previousFailure: lastFailureReason.slice(0, 300),
+          },
+        });
+      }
+
+      const userPromptForAttempt =
+        attempt === 1
+          ? userPrompt
+          : buildRepairUserPrompt({
+              baseUserPrompt: userPrompt,
+              action,
+              attempt,
+              failureReason: lastFailureReason,
+              previousResponse: lastResponseText,
+            });
+
+      const responseText = await runOpenAIResponsesText(
+        [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPromptForAttempt },
+        ],
+        {
+          apiKey: openaiApiKey,
+          model: chatModel,
+          withWebSearch: true,
+        },
+      );
+      lastResponseText = responseText;
+
+      try {
+        parsed = extractJsonObject(responseText);
+        break;
+      } catch (e) {
+        lastFailureReason = `Invalid JSON output: ${e instanceof Error ? e.message : String(e)}`;
+      }
+    }
+
+    if (!parsed) {
+      throw new Error(`Unable to produce a valid AI proposal after ${MAX_MODEL_REPAIR_ATTEMPTS} attempts. Please re-run analysis.`);
+    }
+
+    await ensureNotCancelled(job.id);
+    await updateAsyncJob(job.id, {
+      step: 'validating_proposal',
+      progress_pct: 90,
+      state: {
+        ...(job.state || {}),
+        action,
+        kbMatches: kb.matches.length,
+        modelAttempts: modelAttemptsUsed,
+      },
     });
+
+    if (action === 'data_object_attributes') {
+      proposal = sanitizeDataObjectAttributesProposal({
+        parsed,
+        selection: selection as DiagramAssistDataObjectAttributesSelection,
+        baseFileHash: currentHash,
+      });
+    } else {
+      proposal = sanitizeStatusDescriptionsProposal({
+        parsed,
+        selection: selection as DiagramAssistStatusDescriptionsSelection,
+        baseFileHash: currentHash,
+      });
+    }
   }
 
   return {
@@ -925,6 +1109,7 @@ export async function runAiDiagramAssistJob(job: AsyncJobRow): Promise<Record<st
     context: {
       ragMatches: kb.matches.length,
       withWebSearch: true,
+      modelAttempts: modelAttemptsUsed,
     },
   };
 }
