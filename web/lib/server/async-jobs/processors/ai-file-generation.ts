@@ -370,10 +370,16 @@ function mergeFoundationsWithDefaults(
   incoming: unknown,
 ): VisionDesignSystemV1['foundations'] {
   const src = incoming && typeof incoming === 'object' ? (incoming as Record<string, unknown>) : {};
-  const merged = {
-    ...base,
-    ...(src as Partial<VisionDesignSystemV1['foundations']>),
-  } as VisionDesignSystemV1['foundations'];
+  const merged = { ...base } as VisionDesignSystemV1['foundations'];
+  const fontFamily = normalizeText(src.fontFamily);
+  const headingFontFamily = normalizeText(src.headingFontFamily);
+  const decorativeFontFamily = normalizeText(src.decorativeFontFamily);
+  if (fontFamily) merged.fontFamily = fontFamily;
+  if (headingFontFamily) merged.headingFontFamily = headingFontFamily;
+  if (decorativeFontFamily) merged.decorativeFontFamily = decorativeFontFamily;
+  if (Array.isArray((src as { imageProfiles?: unknown }).imageProfiles)) {
+    merged.imageProfiles = (src as { imageProfiles?: VisionDesignSystemV1['foundations']['imageProfiles'] }).imageProfiles || [];
+  }
   if (!Array.isArray((src as { imageProfiles?: unknown }).imageProfiles)) {
     merged.imageProfiles = base.imageProfiles;
   }
@@ -509,6 +515,170 @@ function isBarebonesDesignSystem(spec: VisionDesignSystemV1): boolean {
   return zeroCount >= 12 || (zeroCount >= 9 && !hasPairings);
 }
 
+type VisionStyleAnchors = {
+  fontFamily?: string;
+  headingFontFamily?: string;
+  decorativeFontFamily?: string;
+  spacingTone?: 'compact' | 'balanced' | 'spacious';
+  roundnessTone?: 'sharp' | 'balanced' | 'rounded' | 'pill';
+  spacing?: {
+    pattern?: number;
+    density?: number;
+    aroundVsInside?: number;
+  };
+  softness?: number;
+};
+
+function parseVisionStyleAnchors(parsed: Record<string, unknown> | null): VisionStyleAnchors | null {
+  if (!parsed) return null;
+  const spacing = parsed.spacing && typeof parsed.spacing === 'object' ? (parsed.spacing as Record<string, unknown>) : {};
+  const spacingToneRaw = normalizeText(parsed.spacingTone).toLowerCase();
+  const roundnessToneRaw = normalizeText(parsed.roundnessTone).toLowerCase();
+  const spacingTone =
+    spacingToneRaw === 'compact' || spacingToneRaw === 'spacious' || spacingToneRaw === 'balanced'
+      ? (spacingToneRaw as VisionStyleAnchors['spacingTone'])
+      : undefined;
+  const roundnessTone =
+    roundnessToneRaw === 'sharp' || roundnessToneRaw === 'rounded' || roundnessToneRaw === 'pill' || roundnessToneRaw === 'balanced'
+      ? (roundnessToneRaw as VisionStyleAnchors['roundnessTone'])
+      : undefined;
+  const anchors: VisionStyleAnchors = {
+    fontFamily: normalizeText(parsed.fontFamily) || undefined,
+    headingFontFamily: normalizeText(parsed.headingFontFamily) || undefined,
+    decorativeFontFamily: normalizeText(parsed.decorativeFontFamily) || undefined,
+    spacingTone,
+    roundnessTone,
+    spacing: {
+      pattern: Number.isFinite(Number(spacing.pattern)) ? Math.max(0, Math.min(100, Math.round(Number(spacing.pattern)))) : undefined,
+      density: Number.isFinite(Number(spacing.density)) ? Math.max(0, Math.min(100, Math.round(Number(spacing.density)))) : undefined,
+      aroundVsInside: Number.isFinite(Number(spacing.aroundVsInside))
+        ? Math.max(0, Math.min(100, Math.round(Number(spacing.aroundVsInside))))
+        : undefined,
+    },
+    softness: Number.isFinite(Number(parsed.softness)) ? Math.max(0, Math.min(100, Math.round(Number(parsed.softness)))) : undefined,
+  };
+  const hasValue =
+    Boolean(anchors.fontFamily) ||
+    Boolean(anchors.headingFontFamily) ||
+    Boolean(anchors.decorativeFontFamily) ||
+    Boolean(anchors.spacingTone) ||
+    Boolean(anchors.roundnessTone) ||
+    Number.isFinite(anchors.spacing?.pattern) ||
+    Number.isFinite(anchors.spacing?.density) ||
+    Number.isFinite(anchors.spacing?.aroundVsInside) ||
+    Number.isFinite(anchors.softness);
+  return hasValue ? anchors : null;
+}
+
+function spacingFromTone(tone: VisionStyleAnchors['spacingTone']): { pattern: number; density: number; aroundVsInside: number } | null {
+  if (tone === 'compact') return { pattern: 24, density: 72, aroundVsInside: 40 };
+  if (tone === 'spacious') return { pattern: 58, density: 28, aroundVsInside: 70 };
+  if (tone === 'balanced') return { pattern: 38, density: 46, aroundVsInside: 56 };
+  return null;
+}
+
+function softnessFromTone(tone: VisionStyleAnchors['roundnessTone']): number | null {
+  if (tone === 'sharp') return 12;
+  if (tone === 'balanced') return 38;
+  if (tone === 'rounded') return 64;
+  if (tone === 'pill') return 88;
+  return null;
+}
+
+function applyVisionStyleAnchors(
+  spec: VisionDesignSystemV1,
+  anchors: VisionStyleAnchors | null,
+  opts?: { hasArtifacts?: boolean },
+): VisionDesignSystemV1 {
+  if (!anchors) return normalizeVisionDesignSystem(spec);
+  const hasArtifacts = Boolean(opts?.hasArtifacts);
+  const baseDefault = defaultVisionDesignSystem();
+  const draft = JSON.parse(JSON.stringify(normalizeVisionDesignSystem(spec))) as VisionDesignSystemV1;
+
+  const hasFontHints = Boolean(anchors.fontFamily || anchors.headingFontFamily || anchors.decorativeFontFamily);
+  if (hasFontHints || hasArtifacts) {
+    if (anchors.fontFamily) draft.foundations.fontFamily = anchors.fontFamily;
+    if (anchors.headingFontFamily) draft.foundations.headingFontFamily = anchors.headingFontFamily;
+    if (anchors.decorativeFontFamily) draft.foundations.decorativeFontFamily = anchors.decorativeFontFamily;
+  }
+
+  const spacingToneValues = spacingFromTone(anchors.spacingTone);
+  const spacingPattern = Number.isFinite(anchors.spacing?.pattern) ? Number(anchors.spacing?.pattern) : spacingToneValues?.pattern;
+  const spacingDensity = Number.isFinite(anchors.spacing?.density) ? Number(anchors.spacing?.density) : spacingToneValues?.density;
+  const spacingAroundVsInside = Number.isFinite(anchors.spacing?.aroundVsInside)
+    ? Number(anchors.spacing?.aroundVsInside)
+    : spacingToneValues?.aroundVsInside;
+
+  const spacingLooksDefault =
+    Math.abs(draft.controls.spacing.pattern - baseDefault.controls.spacing.pattern) <= 4 &&
+    Math.abs(draft.controls.spacing.density - baseDefault.controls.spacing.density) <= 4 &&
+    Math.abs(draft.controls.spacing.aroundVsInside - baseDefault.controls.spacing.aroundVsInside) <= 4;
+
+  if (spacingLooksDefault || hasArtifacts) {
+    if (Number.isFinite(spacingPattern)) draft.controls.spacing.pattern = Math.max(0, Math.min(100, Math.round(spacingPattern || 0)));
+    if (Number.isFinite(spacingDensity)) draft.controls.spacing.density = Math.max(0, Math.min(100, Math.round(spacingDensity || 0)));
+    if (Number.isFinite(spacingAroundVsInside)) {
+      draft.controls.spacing.aroundVsInside = Math.max(0, Math.min(100, Math.round(spacingAroundVsInside || 0)));
+    }
+  }
+
+  const softFromTone = softnessFromTone(anchors.roundnessTone);
+  const softValue = Number.isFinite(anchors.softness) ? Number(anchors.softness) : softFromTone;
+  const softnessLooksDefault = Math.abs(draft.controls.softness - baseDefault.controls.softness) <= 4;
+  if ((softnessLooksDefault || hasArtifacts) && Number.isFinite(softValue)) {
+    draft.controls.softness = Math.max(0, Math.min(100, Math.round(softValue || 0)));
+  }
+
+  return normalizeVisionDesignSystem(draft);
+}
+
+async function extractVisionStyleAnchors(input: {
+  prompt: string;
+  contextText: string;
+  artifactContext: string;
+  artifactImages: Array<{ name: string; dataUrl: string }>;
+  apiKey: string;
+  chatModel?: string;
+}): Promise<VisionStyleAnchors | null> {
+  const imageNotes = input.artifactImages.map((img, idx) => `${idx + 1}. ${img.name}`).join('\n');
+  const userContent: Array<{ type: 'input_text'; text: string } | { type: 'input_image'; image_url: string; detail?: 'low' | 'high' | 'auto' }> = [
+    {
+      type: 'input_text',
+      text: [
+        `Goal prompt:\n${input.prompt || '(none)'}`,
+        `\nProject KB context:\n${clipText(input.contextText || '(none)', 10000)}`,
+        `\nArtifacts:\n${clipText(input.artifactContext || '(none)', 18000)}`,
+        `\nUploaded images:\n${imageNotes || '(none)'}`,
+      ].join('\n'),
+    },
+    ...input.artifactImages.map((img) => ({
+      type: 'input_image' as const,
+      image_url: img.dataUrl,
+      detail: 'low' as const,
+    })),
+  ];
+  const text = await runOpenAIResponsesText(
+    [
+      {
+        role: 'system',
+        content: [
+          'Return ONLY JSON, no markdown.',
+          'Extract style anchors for typography, spacing rhythm, and roundness.',
+          'Format:',
+          '{"fontFamily":"...","headingFontFamily":"...","decorativeFontFamily":"...","spacingTone":"compact|balanced|spacious","roundnessTone":"sharp|balanced|rounded|pill","spacing":{"pattern":0-100,"density":0-100,"aroundVsInside":0-100},"softness":0-100}',
+          'If uncertain, omit fields instead of guessing aggressively.',
+        ].join('\n'),
+      },
+      {
+        role: 'user',
+        content: userContent,
+      },
+    ],
+    { apiKey: input.apiKey, model: input.chatModel, withWebSearch: false },
+  );
+  return parseVisionStyleAnchors(parseJsonObject(text));
+}
+
 async function generateVisionDesignSystem(input: {
   prompt: string;
   contextText: string;
@@ -517,6 +687,40 @@ async function generateVisionDesignSystem(input: {
   apiKey: string;
   chatModel?: string;
 }): Promise<VisionDesignSystemV1> {
+  const hasArtifacts = Boolean(normalizeText(input.artifactContext)) || input.artifactImages.length > 0;
+  let styleAnchors: VisionStyleAnchors | null = null;
+  try {
+    styleAnchors = await extractVisionStyleAnchors({
+      prompt: input.prompt,
+      contextText: input.contextText,
+      artifactContext: input.artifactContext,
+      artifactImages: input.artifactImages,
+      apiKey: input.apiKey,
+      chatModel: input.chatModel,
+    });
+  } catch {
+    styleAnchors = null;
+  }
+
+  const anchorHint =
+    styleAnchors && hasArtifacts
+      ? [
+          'STYLE ANCHORS (extracted from artifacts):',
+          styleAnchors.fontFamily ? `- fontFamily: ${styleAnchors.fontFamily}` : '',
+          styleAnchors.headingFontFamily ? `- headingFontFamily: ${styleAnchors.headingFontFamily}` : '',
+          styleAnchors.decorativeFontFamily ? `- decorativeFontFamily: ${styleAnchors.decorativeFontFamily}` : '',
+          styleAnchors.spacingTone ? `- spacingTone: ${styleAnchors.spacingTone}` : '',
+          styleAnchors.roundnessTone ? `- roundnessTone: ${styleAnchors.roundnessTone}` : '',
+          Number.isFinite(styleAnchors.spacing?.pattern) ? `- spacing.pattern: ${styleAnchors.spacing?.pattern}` : '',
+          Number.isFinite(styleAnchors.spacing?.density) ? `- spacing.density: ${styleAnchors.spacing?.density}` : '',
+          Number.isFinite(styleAnchors.spacing?.aroundVsInside) ? `- spacing.aroundVsInside: ${styleAnchors.spacing?.aroundVsInside}` : '',
+          Number.isFinite(styleAnchors.softness) ? `- softness: ${styleAnchors.softness}` : '',
+          'Reflect these anchors unless there is clear contradictory evidence in artifacts.',
+        ]
+          .filter(Boolean)
+          .join('\n')
+      : '';
+
   const primitiveIds = primitiveIdAllowlistText();
   const systemLines = [
     'Return ONLY JSON. No markdown fences.',
@@ -543,6 +747,14 @@ async function generateVisionDesignSystem(input: {
     '- Keep UI ratio totals coherent (neutral vs primary vs accent) and non-random.',
     '- Avoid contradictory combinations (e.g., high wireframeFeeling with heavy skeuomorphic gloss unless artifacts justify it).',
     '- Prefer one coherent scenario ("base") over multiple weak scenarios.',
+    'EXPLICIT CONTROLS REQUIREMENT:',
+    '- Do not omit control keys. Include explicit values for every slider-related field.',
+    '- Required numeric slider fields: typography.sizeGrowth, typography.weightGrowth, typography.contrast, spacing.pattern, spacing.density, spacing.aroundVsInside, flatness, zoning, softness, surfaceSaturation, itemSaturation, colorVariance, colorBleed, colorBleedText, wireframeFeeling, visualRange, skeuomorphism, negativeZoneStyle, boldness.',
+    '- Also include explicit typography.baseSizePx and typography.baseWeight values.',
+    '- Include explicit enum fields: fontVariance, skeuomorphismStyle, colorBleedTone, boldTypographyStyle, boldGradientSource.',
+    '- Include explicit gradient colors: boldGradientFrom, boldGradientMid, boldGradientTo.',
+    '- Include explicit dark mode block with values for showPreview, useOverrides, canvasBg, surfaceBg, panelBg, separator, textPrimary, textSecondary, textMuted, primary, accent, buttonBg.',
+    '- Include explicit foundation fonts: fontFamily, headingFontFamily, decorativeFontFamily.',
     'Controls are integers 0..100 where applicable.',
     'If unsure, keep values conservative and coherent.',
   ];
@@ -575,13 +787,15 @@ async function generateVisionDesignSystem(input: {
       : userContent;
     const messages: Array<{ role: 'system' | 'user'; content: string | typeof userContent }> = [
       { role: 'system', content: systemLines.join('\n') },
+      ...(anchorHint ? [{ role: 'system' as const, content: anchorHint }] : []),
       ...(extraSystem ? [{ role: 'system' as const, content: extraSystem }] : []),
       { role: 'user', content: retryUserContent },
     ];
     const output = await runOpenAIResponsesText(messages, { apiKey: input.apiKey, model: input.chatModel, withWebSearch: false });
     const parsed = parseJsonObject(output);
     const extracted = extractVisionDesignSystemCandidate(parsed);
-    return { output, extracted };
+    const adjusted = extracted ? applyVisionStyleAnchors(extracted, styleAnchors, { hasArtifacts }) : null;
+    return { output, extracted: adjusted };
   };
 
   const first = await runAttempt();
