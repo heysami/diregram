@@ -37,7 +37,7 @@ const STANDARD_BLOCKING_LINE = 'If any required input is missing, stop and ask t
 const generationSkillName = 'diregram-generation-checklist';
 const generationSkillMd = `---
 name: ${generationSkillName}
-description: Generate and validate Diregram Diagram and Vision outputs with a strict, non-skippable checklist sequence. Use when users need generation guidance, verification order enforcement, and explicit blocker handling. Always follow this SKILL.md plus references/verification-order.md and references/checklists/*.md as the required guide/checklist files.
+description: Generate and validate Diregram Diagram and Vision outputs with a strict, non-skippable checklist sequence. Use when users need generation guidance, verification-order enforcement, and explicit blocker handling. Follow SKILL.md as the runbook: read references/verification-order.md first; for Diagram, generate with references/diagram-guidance.md then run references/checklists/09-data-relationship.md, references/checklists/02-ia.md, references/checklists/10-swimlane.md, and references/checklists/07-tech-flow.md in order, using references/checklists/00-post-generation-all.md and references/checklists/11-completeness.md as coverage gates; for Vision, use references/vision-guidance.md then run references/checklists/12-vision-importability.md and references/checklists/13-vision-component-library.md.
 ---
 
 # Diregram Generation Checklist
@@ -53,7 +53,7 @@ ${STANDARD_RULE_LINE}
 4. Expected output format and acceptance criteria.
 ${STANDARD_BLOCKING_LINE}
 
-## Plan (Strict Sequence — Must Follow In Order)
+## Plan (Strict Sequence - Must Follow In Order)
 1. Validate inputs and resource readiness.
 2. Choose execution mode (Diagram or Vision) and lock scope.
 3. Generate outputs from provided resources only.
@@ -62,29 +62,35 @@ ${STANDARD_BLOCKING_LINE}
    2. IA + Expanded
    3. Swimlane
    4. Tech Flow
-5. Record failures, gaps, and missing context.
-6. Ask the user for missing information and pause.
-7. Re-run verification after updates.
-8. Produce the final structured report.
+5. Record exact failed checks, evidence lines, and root-cause hypotheses.
+6. Revise artifacts immediately to fix failed checks without waiting for user "continue" prompts.
+7. Re-run the full verification sequence after each revision.
+8. Repeat steps 5-7 until every required check passes or a real blocker is hit.
+9. Produce the final structured report.
 
 ## Blockers and Ask-User Rules
 1. If source material is incomplete, ask for the missing resource before generation.
-2. If verification fails, report exact failed checks and request targeted fixes.
-3. If requested scope conflicts with resources, ask for scope clarification before continuing.
-4. If a step fails, do not continue to the next step.
+2. If verification fails and the fix is feasible from current inputs, revise proactively and re-run verification until pass.
+3. Ask the user only when verification cannot be resolved without new source material, missing constraints, or scope decisions.
+4. If a step fails, do not continue to the next step; fix and re-run the failed step first.
+5. Never "shrink to pass" by deleting required scope; follow checklist remediation patterns such as re-link, merge, and re-index.
+6. If requested scope conflicts with resources, ask for scope clarification before continuing.
 
 ## Output Contract
 1. Mode used: Diagram, Vision, or both.
 2. Generation summary tied to provided resources.
 3. Verification results in the fixed order with pass/fail per stage.
-4. Missing-context questions, if any.
-5. Final status: complete or blocked.
+4. Revision loop summary (iteration count + what changed each pass).
+5. Missing-context questions, if any.
+6. Final status: complete or blocked.
 
 ## Guardrails
 1. Never skip or reorder plan steps.
 2. Never generate content from unstated assumptions when blocked inputs are missing.
 3. Never mark completion if any verification stage failed.
 4. Keep recommendations tied to explicit resource evidence.
+5. Do not ask the user to "continue" after each failed pass; own the revise/re-run loop until pass or real blocker.
+6. Do not delete scope merely to satisfy validation; repair structure and linkage instead.
 
 ## Completion Criteria
 1. All required inputs are present.
@@ -96,7 +102,7 @@ ${STANDARD_BLOCKING_LINE}
 const generationOpenAiYaml = `interface:
   display_name: "Diregram Generation Checklist"
   short_description: "Guide/checklist-driven Diagram + Vision generation"
-  default_prompt: "Use $${generationSkillName} to generate and verify Diagram and Vision outputs in strict sequence."
+  default_prompt: "Use $${generationSkillName} to generate and verify Diagram and Vision outputs in strict sequence, revising proactively until all required checks pass."
 `;
 
 const generationReferencesDiagram = [
@@ -153,6 +159,10 @@ const generationVerificationOrder = [
   '3. Swimlane',
   '4. Tech Flow',
   '',
+  'If a stage fails, revise artifacts immediately and re-run from stage 1 until all stages pass.',
+  'Do not ask the user to continue between iterations unless a required input is missing.',
+  'Do not shrink scope to pass; repair via relink/merge/reindex based on failed checks.',
+  '',
   STANDARD_RULE_LINE,
   STANDARD_BLOCKING_LINE,
   '',
@@ -195,7 +205,7 @@ const generationClaudePrompt = [
 const mcpSkillName = 'diregram-mcp-rag-operator';
 const mcpSkillMd = `---
 name: ${mcpSkillName}
-description: Operate Diregram RAG via MCP tools using a strict decision tree. Use when selecting projects, setting keys, running scoped RAG queries, and handling missing context without tool drift. Always follow this SKILL.md plus references/mcp-tool-contract.md and references/error-recovery.md as the required guide/checklist files.
+description: Operate Diregram RAG via MCP tools using a strict decision tree. Use when selecting projects, setting keys, running scoped RAG queries, and handling missing context without tool drift. Follow SKILL.md as the runbook, use references/mcp-tool-contract.md for tool order, use references/rag-coverage-and-limits.md for scope constraints, and use references/error-recovery.md for failure handling.
 ---
 
 # Diregram MCP RAG Operator
@@ -211,7 +221,7 @@ ${STANDARD_RULE_LINE}
 4. Project target when token scope is account.
 ${STANDARD_BLOCKING_LINE}
 
-## Plan (Strict Sequence — Must Follow In Order)
+## Plan (Strict Sequence - Must Follow In Order)
 1. Identify token scope (account vs project).
 2. Ensure OpenAI key is available via diregram_set_openai_key or user-provided key.
 3. If token is account-scoped, run diregram_list_projects.
@@ -334,7 +344,7 @@ const mcpClaudePrompt = [
 const uiContentSignalAuditSkillName = 'diregram-ui-content-signal-audit';
 const uiContentSignalAuditSkillMd = `---
 name: ${uiContentSignalAuditSkillName}
-description: Audit and rewrite UI text for signal-to-noise, task clarity, and discoverability using screenshot-first evidence and strict action ordering. Always follow this SKILL.md plus references/rubric.md and references/templates.md as the required guide/checklist files.
+description: Audit and rewrite UI text for signal-to-noise, task clarity, and discoverability using screenshot-first evidence and strict action ordering. Follow SKILL.md as the runbook, use references/rubric.md for scoring/action gates, and use references/templates.md for output checklist rows and handoff packets.
 ---
 
 # Diregram UI Content Signal Audit
@@ -350,7 +360,7 @@ ${STANDARD_RULE_LINE}
 4. Discoverability baseline (which controls/actions are visible in scoped UI states).
 ${STANDARD_BLOCKING_LINE}
 
-## Plan (Strict Sequence — Must Follow In Order)
+## Plan (Strict Sequence - Must Follow In Order)
 1. Validate evidence coverage (screens + overlays + state variants).
 2. Build whole-screen scan-flow model before local string edits.
 3. Inventory strings with screenshot anchors and hierarchy context.
@@ -447,7 +457,7 @@ const uiContentSignalAuditClaudePrompt = [
 const uiManagerLoopSkillName = 'diregram-ui-manager-loop';
 const uiManagerLoopSkillMd = `---
 name: ${uiManagerLoopSkillName}
-description: Evaluate UI/UX with original manager-loop metrics plus mandatory Diregram design-system match gates for MCP-generated app outputs. Always follow this SKILL.md plus references/framework.md and references/templates.md as the required guide/checklist files.
+description: Evaluate UI/UX with original manager-loop metrics plus mandatory Diregram design-system match gates for MCP-generated app outputs. Follow SKILL.md as the runbook, use references/framework.md for metric/gate definitions, and use references/templates.md for scorecards, required-control tables, and proposal outputs.
 ---
 
 # Diregram UI Manager Loop
@@ -464,7 +474,7 @@ ${STANDARD_RULE_LINE}
 4. Required control families and explicit waiver policy.
 ${STANDARD_BLOCKING_LINE}
 
-## Plan (Strict Sequence — Must Follow In Order)
+## Plan (Strict Sequence - Must Follow In Order)
 1. Confirm intake and tradeoff order.
 2. Gather rendered evidence and design-system source evidence.
 3. Run baseline manager metrics (Visual Fidelity, Cognitive Load, Interaction Fidelity, Style Direction, UX Flow, System Interaction).

@@ -73,6 +73,13 @@ function includesAllRequiredSections(markdown: string): string[] {
       if (!/^#\s+.+/m.test(markdown)) missing.push('# <Skill Title>');
       continue;
     }
+    if (heading === '## Plan (Strict Sequence — Must Follow In Order)') {
+      const asciiVariant = '## Plan (Strict Sequence - Must Follow In Order)';
+      if (!markdown.includes(heading) && !markdown.includes(asciiVariant)) {
+        missing.push(heading);
+      }
+      continue;
+    }
     if (!markdown.includes(heading)) missing.push(heading);
   }
   return missing;

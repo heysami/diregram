@@ -409,6 +409,25 @@ export function validateNexusMarkdownImport(markdown: string): ImportValidationR
     });
   }
 
+  // Data objects + do: references
+  // Keep this above expanded-* checks because those validations need data-object linkage.
+  const dataObjects = getSingleJsonBlock('data-objects');
+  const dataObjectIds = new Set<string>();
+  const dataObjectAttrIdsByObjectId = new Map<string, Set<string>>();
+  let warnedMissingDataObjects = false;
+  if (dataObjects) {
+    const objs = Array.isArray(dataObjects.json?.objects) ? dataObjects.json.objects : [];
+    objs.forEach((o: any) => {
+      if (typeof o?.id === 'string') {
+        dataObjectIds.add(o.id);
+        const attrs = loadDataObjectAttributes(o?.data);
+        const set = new Set<string>(attrs.map((a) => a.id));
+        set.add(OBJECT_NAME_ATTR_ID);
+        dataObjectAttrIdsByObjectId.set(o.id, set);
+      }
+    });
+  }
+
   // Expanded-grid-* blocks must correspond to an expid or a legacy node id
   const expandedGridBlocks: Array<{ key: string; block: FencedBlock }> = [];
   fenced.blocks.forEach((b) => {
@@ -558,24 +577,6 @@ export function validateNexusMarkdownImport(markdown: string): ImportValidationR
       tagIdsByGroupId.get(t.groupId)!.add(t.id);
       if (!groupIds.has(t.groupId)) {
         add(warnings, 'warning', 'UNKNOWN_TAG_GROUP', `tag "${t.id}" references missing group "${t.groupId}".`);
-      }
-    });
-  }
-
-  // Data objects + do: references
-  const dataObjects = getSingleJsonBlock('data-objects');
-  const dataObjectIds = new Set<string>();
-  const dataObjectAttrIdsByObjectId = new Map<string, Set<string>>();
-  let warnedMissingDataObjects = false;
-  if (dataObjects) {
-    const objs = Array.isArray(dataObjects.json?.objects) ? dataObjects.json.objects : [];
-    objs.forEach((o: any) => {
-      if (typeof o?.id === 'string') {
-        dataObjectIds.add(o.id);
-        const attrs = loadDataObjectAttributes(o?.data);
-        const set = new Set<string>(attrs.map((a) => a.id));
-        set.add(OBJECT_NAME_ATTR_ID);
-        dataObjectAttrIdsByObjectId.set(o.id, set);
       }
     });
   }
