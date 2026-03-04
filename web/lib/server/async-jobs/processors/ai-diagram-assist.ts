@@ -8,6 +8,7 @@ import {
 } from '@/lib/server/openai-responses';
 import { getAdminSupabaseClient } from '@/lib/server/supabase-admin';
 import { validateNexusMarkdownImport } from '@/lib/markdown-import-validator';
+import type { ImportValidationIssue } from '@/lib/markdown-import-validator';
 import type {
   DiagramAssistAction,
   DiagramAssistAttributeSuggestion,
@@ -47,6 +48,7 @@ const FLOW_NODE_TYPES = [
 ] as const;
 type FlowNodeTypeValue = (typeof FLOW_NODE_TYPES)[number];
 const NON_RETRYABLE_PREFIX = 'NON_RETRYABLE:';
+const MAX_ERROR_SUMMARY_ITEMS = 12;
 
 function coerceFlowNodeType(input: unknown): FlowNodeTypeValue | null {
   const v = normalizeText(input);
@@ -59,6 +61,50 @@ function normalizeText(input: unknown): string {
 
 function normalizeNewlines(input: unknown): string {
   return String(input || '').replace(/\r\n?/g, '\n');
+}
+
+function sanitizeNodeStructureSubtreeReplacement(input: {
+  subtreeReplacementMarkdown: unknown;
+  fallbackSubtreeMarkdown: string;
+}): { subtreeReplacementMarkdown: string; repairNotes: string[] } {
+  let text = normalizeNewlines(input.subtreeReplacementMarkdown || '').slice(0, MAX_INPUT_SUBTREE_CHARS);
+  const fallback = normalizeNewlines(input.fallbackSubtreeMarkdown || '').slice(0, MAX_INPUT_SUBTREE_CHARS);
+  const repairNotes: string[] = [];
+
+  if (!text.trim()) text = fallback;
+
+  let unwrappedCount = 0;
+  while (unwrappedCount < 2) {
+    const m = text.match(/^\s*```[^\n]*\n([\s\S]*?)\n```\s*$/);
+    if (!m?.[1]) break;
+    text = normalizeNewlines(m[1]);
+    unwrappedCount += 1;
+  }
+  if (unwrappedCount > 0) {
+    repairNotes.push(
+      `Removed ${unwrappedCount} outer fenced wrapper${unwrappedCount === 1 ? '' : 's'} from subtree replacement.`,
+    );
+  }
+
+  const lines = text.split('\n');
+  const filtered = lines.filter((line) => !line.trimStart().startsWith('```'));
+  const removedFenceLines = lines.length - filtered.length;
+  if (removedFenceLines > 0) {
+    repairNotes.push(
+      `Removed ${removedFenceLines} standalone fence marker line${removedFenceLines === 1 ? '' : 's'} from subtree replacement.`,
+    );
+  }
+  text = filtered.join('\n').trimEnd();
+
+  if (!text.trim()) {
+    text = fallback;
+    repairNotes.push('Sanitized subtree became empty; reverted to original subtree.');
+  }
+
+  return {
+    subtreeReplacementMarkdown: text.slice(0, MAX_INPUT_SUBTREE_CHARS),
+    repairNotes: repairNotes.slice(0, 8),
+  };
 }
 
 function hashMarkdown(text: string): string {
@@ -103,6 +149,112 @@ function findSubtreeRange(lines: string[], lineIndex: number): { start: number; 
     end = i;
   }
   return { start: lineIndex, end, baseIndent };
+}
+
+function extractUnclosedFenceStartLine(message: string): number | null {
+  const m = normalizeText(message).match(/starting at line\s+(\d+)/i);
+  if (!m?.[1]) return null;
+  const n = Number.parseInt(m[1], 10);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function extractIssueLineNumber(message: string): number | null {
+  const normalized = normalizeText(message);
+  const patterns = [/starting at line\s+(\d+)/i, /\bline\s+(\d+)\b/i];
+  for (const re of patterns) {
+    const m = normalized.match(re);
+    if (!m?.[1]) continue;
+    const n = Number.parseInt(m[1], 10);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return null;
+}
+
+function isIssueInsideSubtree(issue: ImportValidationIssue, subtreeRange: { start: number; end: number } | null): boolean {
+  if (!subtreeRange) return false;
+  const line = extractIssueLineNumber(issue.message || '');
+  if (!line) return false;
+  const zeroBased = line - 1;
+  return zeroBased >= subtreeRange.start && zeroBased <= subtreeRange.end;
+}
+
+function findBlockingBaselineErrors(input: {
+  errors: ImportValidationIssue[];
+  subtreeRange: { start: number; end: number } | null;
+}): ImportValidationIssue[] {
+  if (!input.subtreeRange) return input.errors.slice(0, 80);
+  const out: ImportValidationIssue[] = [];
+  for (const err of input.errors) {
+    if (!isIssueInsideSubtree(err, input.subtreeRange)) out.push(err);
+  }
+  return out.slice(0, 80);
+}
+
+function humanizeValidationIssue(issue: ImportValidationIssue): string {
+  const message = normalizeText(issue.message);
+  switch (issue.code) {
+    case 'UNCLOSED_CODE_BLOCK': {
+      const line = extractUnclosedFenceStartLine(message);
+      return line
+        ? `A code block starts on line ${line} but is never closed. Add a matching closing triple backtick (\`\`\`).`
+        : 'A code block starts but is never closed. Add a matching closing triple backtick (``` ).';
+    }
+    case 'PARSE_FAILED':
+      return 'The diagram node structure could not be parsed. Check indentation and node hierarchy formatting.';
+    case 'NO_NODES':
+      return 'No diagram nodes were found. Add at least one node line before the metadata separator.';
+    case 'INVALID_JSON':
+      return 'One of the metadata JSON blocks is invalid. Fix JSON syntax (quotes, commas, brackets).';
+    case 'DUPLICATE_BLOCK':
+      return 'A metadata fenced block appears more than once. Keep only one block for that type.';
+    case 'DOATTRS_WITHOUT_DO':
+      return 'A line or metadata entry sets data object attributes without a matching data object id.';
+    case 'MISSING_TAG_STORE':
+      return 'Tags are referenced but the `tag-store` block is missing.';
+    default:
+      return `${issue.code.replace(/_/g, ' ').toLowerCase()}: ${message}`;
+  }
+}
+
+function formatValidationIssuesHuman(issues: ImportValidationIssue[], maxItems = MAX_ERROR_SUMMARY_ITEMS): string {
+  if (!issues.length) return 'No validator errors were captured.';
+  const limited = issues.slice(0, maxItems);
+  const lines = limited.map((issue, idx) => `${idx + 1}. ${humanizeValidationIssue(issue)}`);
+  if (issues.length > limited.length) lines.push(`...and ${issues.length - limited.length} more issue(s).`);
+  return lines.join('\n');
+}
+
+function formatValidationIssuesTechnical(issues: ImportValidationIssue[], maxItems = MAX_ERROR_SUMMARY_ITEMS): string {
+  if (!issues.length) return '';
+  const limited = issues.slice(0, maxItems);
+  const lines = limited.map((issue, idx) => `${idx + 1}. ${issue.code}: ${normalizeText(issue.message)}`);
+  if (issues.length > limited.length) lines.push(`...and ${issues.length - limited.length} more issue(s).`);
+  return lines.join('\n');
+}
+
+function fixInstructionForValidationIssue(issue: ImportValidationIssue): string {
+  switch (issue.code) {
+    case 'UNCLOSED_CODE_BLOCK':
+      return 'Do not output any triple-backtick fence lines in subtreeReplacementMarkdown. Keep only plain node lines and ensure any opened fence is closed.';
+    case 'PARSE_FAILED':
+      return 'Keep valid hierarchical diagram lines with consistent indentation (2 spaces per level). Avoid malformed node syntax.';
+    case 'NO_NODES':
+      return 'Ensure subtreeReplacementMarkdown contains at least one valid non-empty node line.';
+    case 'INVALID_JSON':
+      return 'Output strict JSON only: use double quotes, no comments, and no trailing commas.';
+    case 'DUPLICATE_BLOCK':
+      return 'Do not create duplicate fenced metadata blocks. Keep only one block per metadata type.';
+    case 'DOATTRS_WITHOUT_DO':
+      return 'If a line has doattrs metadata, ensure it also has a matching do metadata on the same line or remove doattrs.';
+    case 'MISSING_TAG_STORE':
+      return 'Do not introduce tag references unless a tag-store block exists and contains those tag ids.';
+    case 'FLOW_NODE_BAD_LINE':
+    case 'DIM_DESC_BAD_LINE':
+    case 'HUB_NOTE_BAD_LINE':
+      return 'Line-index metadata must reference valid existing node lines. Update references to current line positions.';
+    default:
+      return 'Resolve this issue exactly while keeping edits limited to the selected subtree and required metadata operations only.';
+  }
 }
 
 function normalizeReplacementLines(subtreeMarkdown: string, baseIndent: number): string[] {
@@ -246,6 +398,7 @@ function buildNodeStructurePrompt(input: {
   const system = [
     'You are a diagram structure analyst.',
     'Return strictly valid JSON only (no markdown).',
+    'For subtreeReplacementMarkdown: output plain diagram subtree lines only; never include fenced code blocks or triple backticks.',
     'Primary goals:',
     '1) Evaluate whether selected subtree should be process flow, conditional hub, branch split, or grouped single-screen process segment.',
     '2) Keep edits partial-scope: ONLY selected subtree and necessary process metadata operations.',
@@ -729,6 +882,7 @@ function buildRepairUserPrompt(input: {
   attempt: number;
   failureReason: string;
   validationErrors?: string[];
+  validationIssues?: ImportValidationIssue[];
   previousResponse?: string;
 }): string {
   const chunks: string[] = [];
@@ -745,6 +899,15 @@ function buildRepairUserPrompt(input: {
     });
   }
 
+  if (input.validationIssues && input.validationIssues.length > 0) {
+    chunks.push('');
+    chunks.push('Required fixes per validation issue (apply all):');
+    input.validationIssues.slice(0, MAX_REPAIR_FEEDBACK_ERRORS).forEach((issue, idx) => {
+      chunks.push(`${idx + 1}. [${issue.code}] ${normalizeText(issue.message)}`);
+      chunks.push(`   Fix: ${fixInstructionForValidationIssue(issue)}`);
+    });
+  }
+
   if (input.previousResponse) {
     chunks.push('');
     chunks.push('Previous model response (for correction):');
@@ -754,6 +917,7 @@ function buildRepairUserPrompt(input: {
   chunks.push('');
   chunks.push('Return STRICT JSON only. Do not include markdown fences. Ensure the output is valid and complete.');
   if (input.action === 'node_structure') {
+    chunks.push('For node_structure: subtreeReplacementMarkdown must not include any triple backticks or fenced code blocks.');
     chunks.push('For node_structure: output must produce replacement subtree markdown that passes validation with no errors.');
   }
 
@@ -821,6 +985,24 @@ export async function runAiDiagramAssistJob(job: AsyncJobRow): Promise<Record<st
   }
   if (selection.baseUpdatedAt && fileUpdatedAt && normalizeText(selection.baseUpdatedAt) !== fileUpdatedAt) {
     throw new Error('File updated timestamp changed since analysis snapshot. Re-analyze required.');
+  }
+
+  if (action === 'node_structure') {
+    const nodeSelection = selection as DiagramAssistNodeStructureSelection;
+    const fileLines = fileContent.split('\n');
+    const subtreeRange = findSubtreeRange(fileLines, nodeSelection.lineIndex);
+    const baselineValidation = validateNexusMarkdownImport(fileContent);
+    const blockingErrors = findBlockingBaselineErrors({
+      errors: baselineValidation.errors,
+      subtreeRange,
+    });
+    if (blockingErrors.length > 0) {
+      const human = formatValidationIssuesHuman(blockingErrors, 8);
+      const technical = formatValidationIssuesTechnical(blockingErrors, 8);
+      throw new Error(
+        `${NON_RETRYABLE_PREFIX} File already has markdown validation errors outside the selected subtree. Fix these first, then re-run analysis.\nHuman-readable issues:\n${human}${technical ? `\nTechnical issues:\n${technical}` : ''}`,
+      );
+    }
   }
 
   await ensureNotCancelled(job.id);
@@ -897,10 +1079,12 @@ export async function runAiDiagramAssistJob(job: AsyncJobRow): Promise<Record<st
     const selectionNode = selection as DiagramAssistNodeStructureSelection;
     let lastFailureReason = 'No valid response received';
     let lastValidationErrors: string[] = [];
+    let lastValidationIssues: ImportValidationIssue[] = [];
     let lastResponseText = '';
     let acceptedParsed: Record<string, unknown> | null = null;
     let acceptedSimulated: { nextMarkdown: string; originalSubtreeMarkdown: string } | null = null;
     let acceptedValidationWarnings: string[] = [];
+    let acceptedSanitizerNotes: string[] = [];
 
     for (let attempt = 1; attempt <= MAX_MODEL_REPAIR_ATTEMPTS; attempt += 1) {
       await ensureNotCancelled(job.id);
@@ -928,6 +1112,7 @@ export async function runAiDiagramAssistJob(job: AsyncJobRow): Promise<Record<st
               attempt,
               failureReason: lastFailureReason,
               validationErrors: lastValidationErrors,
+              validationIssues: lastValidationIssues,
               previousResponse: lastResponseText,
             });
 
@@ -953,12 +1138,18 @@ export async function runAiDiagramAssistJob(job: AsyncJobRow): Promise<Record<st
         continue;
       }
 
+      const sanitizedSubtree = sanitizeNodeStructureSubtreeReplacement({
+        subtreeReplacementMarkdown: parsed.subtreeReplacementMarkdown,
+        fallbackSubtreeMarkdown: selectionNode.subtreeMarkdown,
+      });
+      parsed.subtreeReplacementMarkdown = sanitizedSubtree.subtreeReplacementMarkdown;
+
       let simulated: { nextMarkdown: string; originalSubtreeMarkdown: string };
       try {
         simulated = replaceSubtreeAtLine({
           markdown: fileContent,
           lineIndex: selectionNode.lineIndex,
-          subtreeReplacementMarkdown: normalizeNewlines(parsed.subtreeReplacementMarkdown || selectionNode.subtreeMarkdown),
+          subtreeReplacementMarkdown: sanitizedSubtree.subtreeReplacementMarkdown,
         });
       } catch (e) {
         lastFailureReason = `Invalid subtree replacement: ${e instanceof Error ? e.message : String(e)}`;
@@ -968,7 +1159,8 @@ export async function runAiDiagramAssistJob(job: AsyncJobRow): Promise<Record<st
 
       const validation = validateNexusMarkdownImport(simulated.nextMarkdown);
       if (validation.errors.length > 0) {
-        lastValidationErrors = validation.errors.map((err) => `${err.code}: ${err.message}`).slice(0, 60);
+        lastValidationIssues = validation.errors.slice(0, 60);
+        lastValidationErrors = lastValidationIssues.map((err) => `${err.code}: ${err.message}`).slice(0, 60);
         lastFailureReason = `Validation failed with ${validation.errors.length} error(s)`;
         continue;
       }
@@ -976,13 +1168,15 @@ export async function runAiDiagramAssistJob(job: AsyncJobRow): Promise<Record<st
       acceptedParsed = parsed;
       acceptedSimulated = simulated;
       acceptedValidationWarnings = validation.warnings.map((w) => `${w.code}: ${w.message}`).slice(0, 120);
+      acceptedSanitizerNotes = sanitizedSubtree.repairNotes;
       break;
     }
 
     if (!acceptedParsed || !acceptedSimulated) {
-      const firstValidationIssue = lastValidationErrors[0] ? ` First issue: ${lastValidationErrors[0]}.` : '';
+      const human = formatValidationIssuesHuman(lastValidationIssues, 10);
+      const technical = formatValidationIssuesTechnical(lastValidationIssues, 10);
       throw new Error(
-        `${NON_RETRYABLE_PREFIX} Unable to produce a valid node structure proposal after ${MAX_MODEL_REPAIR_ATTEMPTS} repair attempts.${firstValidationIssue} Auto-repair stopped; re-run analysis manually.`,
+        `${NON_RETRYABLE_PREFIX} Unable to produce a valid node structure proposal after ${MAX_MODEL_REPAIR_ATTEMPTS} repair attempts. Auto-repair stopped.\nHuman-readable issues:\n${human}${technical ? `\nTechnical issues:\n${technical}` : ''}\nRe-run analysis manually after fixing the issues above.`,
       );
     }
 
@@ -1008,7 +1202,9 @@ export async function runAiDiagramAssistJob(job: AsyncJobRow): Promise<Record<st
     nodeProposal.validationReport = {
       errors: [],
       warnings: acceptedValidationWarnings,
-      notes: clampArray(acceptedParsed.validationNotes, { maxItems: 40, maxChars: 260 }),
+      notes: acceptedSanitizerNotes
+        .concat(clampArray(acceptedParsed.validationNotes, { maxItems: 40, maxChars: 260 }))
+        .slice(0, 40),
     };
     proposal = nodeProposal;
   } else {
