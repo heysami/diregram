@@ -85,6 +85,10 @@ function MultiplicityGlyph({ at, angleDeg, kind }: { at: { x: number; y: number 
 export function DataObjectsCanvas({
   doc,
   roots,
+  fileId,
+  projectFolderId,
+  aiFeaturesEnabled = false,
+  onTrackAsyncJob,
   activeTool,
   onOpenComments,
   showComments = true,
@@ -94,6 +98,10 @@ export function DataObjectsCanvas({
 }: {
   doc: Y.Doc;
   roots: NexusNode[];
+  fileId?: string | null;
+  projectFolderId?: string | null;
+  aiFeaturesEnabled?: boolean;
+  onTrackAsyncJob?: (input: { id: string; kind: string; title?: string }) => void;
   activeTool?: ToolType;
   onOpenComments?: (info: { targetKey: string; targetLabel?: string; scrollToThreadId?: string }) => void;
   showComments?: boolean;
@@ -525,6 +533,10 @@ export function DataObjectsCanvas({
       {selectedId ? (
         <DataObjectInspectorPanel
           doc={doc}
+          fileId={fileId || null}
+          projectFolderId={projectFolderId || null}
+          aiFeaturesEnabled={aiFeaturesEnabled}
+          onTrackAsyncJob={onTrackAsyncJob}
           graph={graph}
           store={dataStore}
           selectedId={selectedId}

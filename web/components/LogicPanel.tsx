@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import * as Y from 'yjs';
 import { NexusNode } from '@/types/nexus';
-import { X, Plus, ChevronDown, ChevronRight } from 'lucide-react';
+import { X, Plus, ChevronDown, ChevronRight, Save, LayoutTemplate } from 'lucide-react';
 import { useNexusStructure } from '@/hooks/use-nexus-structure';
 import { buildConditionMatrixScenarios } from '@/lib/condition-matrix';
 import { ConditionMatrixOverlay } from '@/components/ConditionMatrixOverlay';
@@ -24,6 +24,12 @@ import { upsertTemplateHeader, type NexusTemplateHeader } from '@/lib/nexus-temp
 import { InsertFromTemplateModal, type WorkspaceFileLite as TemplateWorkspaceFileLite } from '@/components/templates/InsertFromTemplateModal';
 import { SaveTemplateModal } from '@/components/templates/SaveTemplateModal';
 import { buildTemplateFlowMetaForSubtree } from '@/lib/template-flow-meta';
+import { ensureOpenAiApiKeyWithPrompt } from '@/lib/openai-key-browser';
+import {
+  buildNodeParentPathFingerprint,
+  extractSubtreeMarkdownFromLineIndex,
+  sha256Hex,
+} from '@/lib/diagram-ai-assist-client';
 
 // Simple toast state
 let toastMessage: string | null = null;
@@ -55,6 +61,10 @@ const useToast = () => {
 interface Props {
   node: NexusNode; // VISUAL node (Primary/Hub)
   doc: Y.Doc;
+  fileId?: string | null;
+  projectFolderId?: string | null;
+  aiFeaturesEnabled?: boolean;
+  onTrackAsyncJob?: (input: { id: string; kind: string; title?: string }) => void;
   activeVariantId: string | null; // Pass down active variant ID
   roots: NexusNode[]; // Full tree to build node map for parent traversal
   expandedNodes: Set<string>;
@@ -76,6 +86,10 @@ interface Props {
 export function LogicPanel({
   node,
   doc,
+  fileId,
+  projectFolderId,
+  aiFeaturesEnabled = false,
+  onTrackAsyncJob,
   activeVariantId,
   roots,
   expandedNodes,
@@ -256,6 +270,142 @@ export function LogicPanel({
     removeLockedStatusDimension,
   } = linkedStatus;
   const dimensionDesc = useConditionDimensionDescriptionModals({ doc, node, nodeMap, effectiveKeyValues });
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+
+  const queueDiagramAssist = async (input: {
+    action: 'node_structure' | 'data_object_attributes' | 'status_descriptions';
+    selection: Record<string, unknown>;
+    title: string;
+  }) => {
+    if (!aiFeaturesEnabled || !fileId || !projectFolderId) {
+      setAiError('Diagram AI is available only for synced Supabase projects.');
+      showToast('Diagram AI is available only for synced Supabase projects.');
+      return;
+    }
+    setAiBusy(true);
+    setAiError(null);
+    try {
+      const openaiApiKey = await ensureOpenAiApiKeyWithPrompt();
+      if (!openaiApiKey) {
+        setAiError('Missing OpenAI API key.');
+        return;
+      }
+      const res = await fetch('/api/ai/diagram-assist/execute', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-openai-api-key': openaiApiKey,
+        },
+        body: JSON.stringify({
+          projectFolderId,
+          fileId,
+          action: input.action,
+          selection: input.selection,
+        }),
+      });
+      const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+      if (!res.ok) {
+        setAiError(String(json.error || `Failed (${res.status})`));
+        return;
+      }
+      const jobId = String(json.jobId || '').trim();
+      if (!jobId) {
+        setAiError('Missing async job id');
+        return;
+      }
+      onTrackAsyncJob?.({ id: jobId, kind: 'ai_diagram_assist', title: input.title });
+      showToast('Diagram AI job queued');
+    } catch (e) {
+      setAiError(e instanceof Error ? e.message : 'Failed to queue Diagram AI job');
+    } finally {
+      setAiBusy(false);
+    }
+  };
+
+  const queueNodeStructureReview = async () => {
+    const markdown = doc.getText('nexus').toString();
+    const baseFileHash = await sha256Hex(markdown);
+    const subtree = extractSubtreeMarkdownFromLineIndex(markdown, node.lineIndex);
+    if (!subtree) {
+      setAiError('Unable to extract selected subtree for analysis.');
+      return;
+    }
+    await queueDiagramAssist({
+      action: 'node_structure',
+      title: `Diagram AI: node structure (${node.content})`,
+      selection: {
+        baseFileHash,
+        nodeId: node.id,
+        lineIndex: node.lineIndex,
+        parentPathFingerprint: buildNodeParentPathFingerprint(node, nodeMap),
+        selectedNodeContent: node.content,
+        subtreeMarkdown: subtree,
+      },
+    });
+  };
+
+  const queueLinkedObjectAttributeResearch = async (targetObjectId: string, targetObjectName: string) => {
+    const markdown = doc.getText('nexus').toString();
+    const baseFileHash = await sha256Hex(markdown);
+    await queueDiagramAssist({
+      action: 'data_object_attributes',
+      title: `Diagram AI: attributes (${targetObjectName || targetObjectId})`,
+      selection: {
+        baseFileHash,
+        targetObjectId,
+        targetObjectName: targetObjectName || targetObjectId,
+        triggerSource: 'logic_panel_linked_object',
+        nodeContext: { nodeId: node.id, nodeLabel: node.content },
+      },
+    });
+  };
+
+  const queueStatusGenerateBothForDataObjectAttr = async (input: {
+    doId: string;
+    doName: string;
+    attrId: string;
+    attrName: string;
+    statusValues: string[];
+  }) => {
+    const markdown = doc.getText('nexus').toString();
+    const baseFileHash = await sha256Hex(markdown);
+    await queueDiagramAssist({
+      action: 'status_descriptions',
+      title: `Diagram AI: status (${input.doName} / ${input.attrName})`,
+      selection: {
+        baseFileHash,
+        target: {
+          kind: 'data_object_status',
+          doId: input.doId,
+          doName: input.doName,
+          attrId: input.attrId,
+          attrName: input.attrName,
+          statusValues: input.statusValues || [],
+        },
+      },
+    });
+  };
+
+  const queueStatusGenerateBothForDimension = async (dimensionKey: string, values: string[]) => {
+    const markdown = doc.getText('nexus').toString();
+    const baseFileHash = await sha256Hex(markdown);
+    await queueDiagramAssist({
+      action: 'status_descriptions',
+      title: `Diagram AI: dimension status (${node.content} / ${dimensionKey})`,
+      selection: {
+        baseFileHash,
+        target: {
+          kind: 'condition_dimension_status',
+          nodeId: node.id,
+          nodeLineIndex: node.lineIndex,
+          hubLabel: node.content,
+          dimensionKey,
+          statusValues: values || [],
+        },
+      },
+    });
+  };
 
   // Initialize keyValues from dimensionMap - only when node changes
   useEffect(() => {
@@ -941,6 +1091,18 @@ export function LogicPanel({
     structure.toggleCommonNode(node, activeVariantId);
   };
 
+  const saveTemplateTitle = !onSaveTemplateFile
+    ? 'Template actions are not available in this context.'
+    : 'Save this node (and its subtree) as a reusable template.';
+
+  const insertTemplateTitle = !templateFiles || !loadTemplateMarkdown || (templateFiles || []).length === 0
+    ? 'No templates found for this project yet.'
+    : 'Insert a saved template as a child of this node.';
+
+  const isCommonInContext = hubNode.isHub && activeVariantId
+    ? (hubNode.variants?.find((v) => v.id === activeVariantId)?.isCommon ?? false)
+    : node.isCommon;
+
   return (
     <div className="w-80 h-full flex flex-col overflow-hidden relative mac-window">
       <div className="mac-titlebar">
@@ -966,6 +1128,19 @@ export function LogicPanel({
         </div>
       )}
 
+      <div className="mb-4">
+        <button
+          type="button"
+          className="mac-btn w-full text-[11px]"
+          disabled={!aiFeaturesEnabled || !fileId || !projectFolderId || aiBusy}
+          title={!aiFeaturesEnabled || !fileId || !projectFolderId ? 'Available only in synced Supabase projects.' : 'Analyze this node + children and propose structure revisions.'}
+          onClick={() => void queueNodeStructureReview()}
+        >
+          {aiBusy ? 'Queueing…' : 'AI Structure Review'}
+        </button>
+        {aiError ? <div className="mt-1 text-[11px] text-red-700">{aiError}</div> : null}
+      </div>
+
       <div className="mb-6">
         <label className="block text-xs font-medium text-gray-700 mb-1">Content</label>
         <div className="p-2 border border-gray-200 rounded-md text-sm bg-white text-gray-500 select-none">
@@ -973,15 +1148,15 @@ export function LogicPanel({
         </div>
       </div>
 
-      <div className="mb-6">
-        <div className="rounded-md border border-gray-200 bg-white p-3">
-          <div className="text-[11px] font-semibold text-gray-700 mb-2">Templates</div>
-          <div className="flex flex-col gap-2">
+      <div className="mb-4">
+        <div className="flex items-center gap-2">
+          <div className="relative group" title={saveTemplateTitle}>
             <button
               type="button"
-              className="mac-btn h-8 text-[11px]"
+              className="mac-btn mac-btn--icon-sm"
               disabled={!onSaveTemplateFile}
-              title={!onSaveTemplateFile ? 'Template actions are not available in this context.' : 'Save this node (and its subtree) as a reusable template.'}
+              aria-label="Save template"
+              title={saveTemplateTitle}
               onClick={async () => {
                 if (!onSaveTemplateFile) return;
                 const rawName = String(node.content || '').trim();
@@ -1002,67 +1177,184 @@ export function LogicPanel({
                 setSaveTemplateOpen(true);
               }}
             >
-              Save node subtree as template
+              <Save size={14} />
             </button>
+            <span className="mac-tooltip absolute left-1/2 top-[calc(100%+6px)] -translate-x-1/2 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">
+              Save template
+            </span>
+          </div>
+          <div className="relative group" title={insertTemplateTitle}>
             <button
               type="button"
-              className="mac-btn h-8 text-[11px]"
+              className="mac-btn mac-btn--icon-sm"
               disabled={!templateFiles || !loadTemplateMarkdown || (templateFiles || []).length === 0}
-              title={!templateFiles || (templateFiles || []).length === 0 ? 'No templates found for this project yet.' : 'Insert a saved template as a child of this node.'}
+              aria-label="Insert template"
+              title={insertTemplateTitle}
               onClick={() => setInsertFromTemplateOpen(true)}
             >
-              Insert from template…
+              <LayoutTemplate size={14} />
             </button>
-          </div>
-          <div className="mt-2 text-[10px] text-gray-500">
-            Templates are created from your existing content (no manual markdown).
+            <span className="mac-tooltip absolute left-1/2 top-[calc(100%+6px)] -translate-x-1/2 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">
+              Insert template
+            </span>
           </div>
         </div>
       </div>
 
-      <div className="mb-6">
-        <label className="block text-xs font-medium text-gray-700 mb-1">Icon (emoji / ascii)</label>
-        <div className="flex items-center gap-2">
-          <div className="w-10 h-10 rounded-md border border-gray-200 bg-white flex items-center justify-center shrink-0">
-            <div className="text-xl leading-none select-none">
-              {(iconInput || '').trim() ? (iconInput || '').trim() : '—'}
-            </div>
-          </div>
-          <input
-            type="text"
-            value={iconInput}
-            onChange={(e) => setIconInput(e.target.value)}
-            onBlur={() => {
-              const next = iconInput.trim();
-              structure.setNodeIcon(node, next.length ? next : null);
-            }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.currentTarget.blur();
-              } else if (e.key === 'Escape') {
-                setIconInput(node.icon || '');
-                e.currentTarget.blur();
-              }
-            }}
-            placeholder="e.g. 🙂 or [*]"
-            className="flex-1 text-xs border border-gray-300 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white"
-          />
+      <div className="mb-4">
+        <label className="block text-xs font-medium text-gray-700 mb-1">Icon</label>
+        <input
+          type="text"
+          value={iconInput}
+          maxLength={5}
+          onChange={(e) => setIconInput(e.target.value.slice(0, 5))}
+          onBlur={() => {
+            const next = iconInput.trim().slice(0, 5);
+            setIconInput(next);
+            structure.setNodeIcon(node, next.length ? next : null);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.currentTarget.blur();
+            } else if (e.key === 'Escape') {
+              setIconInput((node.icon || '').slice(0, 5));
+              e.currentTarget.blur();
+            }
+          }}
+          placeholder="🙂 or [*]"
+          className="w-full text-xs border border-gray-300 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white"
+        />
+      </div>
+
+      <div className="sticky top-0 z-10 -mx-4 mb-4 border-y border-gray-200 bg-white px-4 py-2">
+        <div className="flex flex-wrap gap-2">
           <button
             type="button"
+            aria-pressed={expandedNodes.has(node.id)}
+            aria-label="Expand node"
+            className={`mac-btn h-7 px-2 text-[10px] ${expandedNodes.has(node.id) ? 'mac-btn--primary' : ''}`}
             onClick={() => {
-              setIconInput('');
-              structure.setNodeIcon(node, null);
+              onExpandedNodesChange((prev) => {
+                const next = new Set(prev);
+                if (next.has(node.id)) {
+                  next.delete(node.id);
+                } else {
+                  next.add(node.id);
+                }
+                return next;
+              });
             }}
-            className="text-[11px] px-2 py-1.5 rounded-md border border-gray-200 text-gray-600 hover:bg-gray-100"
-            title="Clear icon"
           >
-            Clear
+            Expand
           </button>
-        </div>
-        <div className="mt-1 text-[10px] text-gray-500">
-          Renders above the node label, centered, at <span className="font-medium">3×</span> the label font size.
+
+          {!isChildOfProcessNode && node.children.length === 0 && (
+            <button
+              type="button"
+              aria-pressed={node.isFlowNode}
+              aria-label="Process node"
+              className={`mac-btn h-7 px-2 text-[10px] ${node.isFlowNode ? 'mac-btn--primary' : ''}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                structure.toggleFlowNode(node);
+                if (!node.isFlowNode && onProcessFlowModeNodesChange) {
+                  onProcessFlowModeNodesChange((prev) => {
+                    const next = new Set(prev || []);
+                    next.add(node.id);
+                    return next;
+                  });
+                }
+              }}
+            >
+              Process
+            </button>
+          )}
+
+          {isRootProcessNode && node.isFlowNode && onProcessFlowModeNodesChange && (
+            <button
+              type="button"
+              aria-pressed={processFlowModeNodes?.has(node.id)}
+              aria-label="Show flow"
+              className={`mac-btn h-7 px-2 text-[10px] ${processFlowModeNodes?.has(node.id) ? 'mac-btn--primary' : ''}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                onProcessFlowModeNodesChange((prev) => {
+                  const next = new Set(prev || []);
+                  if (next.has(node.id)) {
+                    next.delete(node.id);
+                  } else {
+                    next.add(node.id);
+                  }
+                  return next;
+                });
+              }}
+            >
+              Flow
+            </button>
+          )}
+
+          {isInsideVariant && (
+            <button
+              type="button"
+              aria-pressed={isCommonInContext}
+              aria-label="Common across variants"
+              className={`mac-btn h-7 px-2 text-[10px] ${isCommonInContext ? 'mac-btn--primary' : ''}`}
+              onClick={toggleCommonFromPanel}
+            >
+              Common
+            </button>
+          )}
         </div>
       </div>
+
+      {expandedNodes.has(node.id) && (() => {
+        const runningNumber = getRunningNumber(node.id);
+        if (runningNumber === undefined) return null;
+
+        const metadata = loadExpandedNodeMetadata(doc, runningNumber);
+        return (
+          <div className="mb-4">
+            <label className="block text-xs font-medium text-gray-700 mb-2">Grid Size</label>
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-gray-600 w-12">Width:</span>
+                <input
+                  type="number"
+                  min="2"
+                  max="10"
+                  value={metadata.gridWidth || metadata.gridSize || 4}
+                  onChange={(e) => {
+                    const newWidth = Math.max(2, Math.min(10, parseInt(e.target.value) || 4));
+                    saveExpandedNodeMetadata(doc, runningNumber, { ...metadata, gridWidth: newWidth });
+                  }}
+                  className="w-16 text-xs border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-gray-600 w-12">Height:</span>
+                <input
+                  type="number"
+                  min="2"
+                  max="10"
+                  value={metadata.gridHeight || metadata.gridSize || 4}
+                  onChange={(e) => {
+                    const newHeight = Math.max(2, Math.min(10, parseInt(e.target.value) || 4));
+                    saveExpandedNodeMetadata(doc, runningNumber, { ...metadata, gridHeight: newHeight });
+                  }}
+                  className="w-16 text-xs border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {node.isFlowNode && !isRootProcessNode && (
+        <div className="mb-4 text-xs text-gray-500 italic">
+          Part of process flow (type can be changed when parent is expanded)
+        </div>
+      )}
 
       {/* Data object link for ANY node (not only expanded) */}
       <div className="mb-6">
@@ -1087,6 +1379,22 @@ export function LogicPanel({
             onChange={(next) => structure.setNodeDataObjectAttributeIds(node, next)}
             label="Linked attributes"
           />
+        ) : null}
+        {node.dataObjectId ? (
+          <div className="mt-2">
+            <button
+              type="button"
+              className="mac-btn h-7 text-[11px]"
+              disabled={!aiFeaturesEnabled || !fileId || !projectFolderId || aiBusy}
+              title={!aiFeaturesEnabled || !fileId || !projectFolderId ? 'Available only in synced Supabase projects.' : 'Research attributes with ownership-aware suggestions.'}
+              onClick={() => {
+                const linked = dataObjectStore.objects.find((o) => o.id === node.dataObjectId) || null;
+                void queueLinkedObjectAttributeResearch(node.dataObjectId!, linked?.name || node.dataObjectId!);
+              }}
+            >
+              {aiBusy ? 'Queueing…' : 'AI Attribute Research'}
+            </button>
+          </div>
         ) : null}
         <div className="mt-2 flex items-center gap-2">
           <input
@@ -1264,6 +1572,22 @@ export function LogicPanel({
                 label="Linked attributes (main)"
               />
             ) : null}
+            {metadata.dataObjectId ? (
+              <div className="mt-2">
+                <button
+                  type="button"
+                  className="mac-btn h-7 text-[11px]"
+                  disabled={!aiFeaturesEnabled || !fileId || !projectFolderId || aiBusy}
+                  title={!aiFeaturesEnabled || !fileId || !projectFolderId ? 'Available only in synced Supabase projects.' : 'Research attributes with ownership-aware suggestions.'}
+                  onClick={() => {
+                    const linked = dataObjectStore.objects.find((o) => o.id === metadata.dataObjectId) || null;
+                    void queueLinkedObjectAttributeResearch(metadata.dataObjectId!, linked?.name || metadata.dataObjectId!);
+                  }}
+                >
+                  {aiBusy ? 'Queueing…' : 'AI Attribute Research'}
+                </button>
+              </div>
+            ) : null}
 
             <div className="mt-2 flex items-center gap-2">
               <input
@@ -1296,191 +1620,6 @@ export function LogicPanel({
           </div>
         );
       })()}
-      
-      {/* Expand Toggle */}
-      <div className="mb-4 flex items-center justify-between">
-        <span className="text-xs font-medium text-gray-700">Expand node</span>
-        <button
-          type="button"
-          onClick={() => {
-            onExpandedNodesChange(prev => {
-              const next = new Set(prev);
-              if (next.has(node.id)) {
-                next.delete(node.id);
-              } else {
-                next.add(node.id);
-              }
-              return next;
-            });
-          }}
-          className={`relative inline-flex h-4 w-8 items-center rounded-full border transition-colors ${
-            expandedNodes.has(node.id)
-              ? 'bg-blue-500 border-blue-500' 
-              : 'bg-gray-200 border-gray-300'
-          }`}
-        >
-          <span
-            className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${
-              expandedNodes.has(node.id)
-                ? 'translate-x-4' 
-                : 'translate-x-1'
-            }`}
-          />
-        </button>
-      </div>
-
-      {/* Grid Size Control (only show when expanded) */}
-      {expandedNodes.has(node.id) && (() => {
-        const runningNumber = getRunningNumber(node.id);
-        if (runningNumber === undefined) return null;
-        
-        const metadata = loadExpandedNodeMetadata(doc, runningNumber);
-        return (
-          <div className="mb-4">
-            <label className="block text-xs font-medium text-gray-700 mb-2">Grid Size</label>
-            <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-gray-600 w-12">Width:</span>
-                <input
-                  type="number"
-                  min="2"
-                  max="10"
-                  value={metadata.gridWidth || metadata.gridSize || 4}
-                  onChange={(e) => {
-                    const newWidth = Math.max(2, Math.min(10, parseInt(e.target.value) || 4));
-                    saveExpandedNodeMetadata(doc, runningNumber, { ...metadata, gridWidth: newWidth });
-                  }}
-                  className="w-16 text-xs border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                />
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-gray-600 w-12">Height:</span>
-                <input
-                  type="number"
-                  min="2"
-                  max="10"
-                  value={metadata.gridHeight || metadata.gridSize || 4}
-                  onChange={(e) => {
-                    const newHeight = Math.max(2, Math.min(10, parseInt(e.target.value) || 4));
-                    saveExpandedNodeMetadata(doc, runningNumber, { ...metadata, gridHeight: newHeight });
-                  }}
-                  className="w-16 text-xs border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                />
-              </div>
-            </div>
-          </div>
-        );
-      })()}
-
-      {/* Process Node Toggle - Show only when it can be toggled */}
-      {/* Hide if: child of process node, or has children (can't toggle ON/OFF) */}
-      {!isChildOfProcessNode && node.children.length === 0 && (
-        <div className="mb-4 flex items-center justify-between">
-          <span className="text-xs font-medium text-gray-700">Process node</span>
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              e.preventDefault();
-              
-              structure.toggleFlowNode(node);
-              
-              // Rule 2: First time toggle ON, also toggle process flow mode ON
-              if (!node.isFlowNode && onProcessFlowModeNodesChange) {
-                onProcessFlowModeNodesChange(prev => {
-                  const next = new Set(prev || []);
-                  next.add(node.id);
-                  return next;
-                });
-              }
-            }}
-            className={`relative inline-flex h-4 w-8 items-center rounded-full border transition-colors ${
-              node.isFlowNode
-                ? 'bg-blue-500 border-blue-500' 
-                : 'bg-gray-200 border-gray-300'
-            }`}
-          >
-            <span
-              className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${
-                node.isFlowNode
-                  ? 'translate-x-4' 
-                  : 'translate-x-1'
-              }`}
-            />
-          </button>
-        </div>
-      )}
-
-      {/* Show Flow Toggle - Only show for root process nodes */}
-      {/* This enables/disables flow features (type switcher, connector labels) - separate from regular expand mode */}
-      {isRootProcessNode && node.isFlowNode && onProcessFlowModeNodesChange && (
-        <div className="mb-4 flex items-center justify-between">
-          <span className="text-xs font-medium text-gray-700">Show flow</span>
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onProcessFlowModeNodesChange(prev => {
-                const next = new Set(prev || []);
-                if (next.has(node.id)) {
-                  next.delete(node.id);
-                } else {
-                  next.add(node.id);
-                }
-                return next;
-              });
-            }}
-            className={`relative inline-flex h-4 w-8 items-center rounded-full border transition-colors ${
-              processFlowModeNodes?.has(node.id)
-                ? 'bg-blue-500 border-blue-500' 
-                : 'bg-gray-200 border-gray-300'
-            }`}
-          >
-            <span
-              className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${
-                processFlowModeNodes?.has(node.id)
-                  ? 'translate-x-4' 
-                  : 'translate-x-1'
-              }`}
-            />
-          </button>
-        </div>
-      )}
-      
-      {/* Info message for child process nodes */}
-      {node.isFlowNode && !isRootProcessNode && (
-        <div className="mb-4 text-xs text-gray-500 italic">
-          Part of process flow (type can be changed when parent is expanded)
-        </div>
-      )}
-
-      {/* Common Toggle - Only show when node is inside a variant */}
-      {isInsideVariant && (
-      <div className="mb-4 flex items-center justify-between">
-        <span className="text-xs font-medium text-gray-700">Common across variants</span>
-        <button
-          type="button"
-          onClick={toggleCommonFromPanel}
-          className={`relative inline-flex h-4 w-8 items-center rounded-full border transition-colors ${
-            (hubNode.isHub && activeVariantId 
-              ? hubNode.variants?.find(v => v.id === activeVariantId)?.isCommon 
-              : node.isCommon) 
-              ? 'bg-blue-500 border-blue-500' 
-              : 'bg-gray-200 border-gray-300'
-          }`}
-        >
-          <span
-            className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${
-              (hubNode.isHub && activeVariantId 
-                ? hubNode.variants?.find(v => v.id === activeVariantId)?.isCommon 
-                : node.isCommon)
-                ? 'translate-x-4' 
-                : 'translate-x-1'
-            }`}
-          />
-        </button>
-      </div>
-      )}
       
       {/* Collapsible Key-Value Management */}
       <div className="mb-6 border-b pb-6">
@@ -1614,6 +1753,24 @@ export function LogicPanel({
                         </div>
                         <div className="mt-2 flex items-center gap-2">
                           <span className="text-[10px] text-gray-500">Describe this dimension:</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (!locked) return;
+                              void queueStatusGenerateBothForDataObjectAttr({
+                                doId: locked.objectId,
+                                doName: locked.objectName,
+                                attrId: locked.attrId,
+                                attrName: locked.attrName,
+                                statusValues: locked.values || [],
+                              });
+                            }}
+                            disabled={!aiFeaturesEnabled || !fileId || !projectFolderId || aiBusy}
+                            className="mac-btn px-2 py-1 text-[10px]"
+                            title={!aiFeaturesEnabled || !fileId || !projectFolderId ? 'Available only in synced Supabase projects.' : 'Generate both flow and table with AI.'}
+                          >
+                            Generate both
+                          </button>
                           <button
                             type="button"
                             onClick={() =>
@@ -1750,6 +1907,15 @@ export function LogicPanel({
                           <span className="text-[10px] text-gray-500">Describe this dimension:</span>
                           <button
                             type="button"
+                            onClick={() => void queueStatusGenerateBothForDimension(key, values)}
+                            disabled={!aiFeaturesEnabled || !fileId || !projectFolderId || aiBusy}
+                            className="mac-btn px-2 py-1 text-[10px]"
+                            title={!aiFeaturesEnabled || !fileId || !projectFolderId ? 'Available only in synced Supabase projects.' : 'Generate both flow and table with AI.'}
+                          >
+                            Generate both
+                          </button>
+                          <button
+                            type="button"
                             onClick={() => dimensionDesc.openTable(key)}
                             className="mac-btn px-2 py-1 text-[10px]"
                           >
@@ -1808,7 +1974,11 @@ export function LogicPanel({
                   { id: 'account', label: 'Account' },
                   ...(globalTemplatesEnabled ? [{ id: 'global', label: 'Global' }] : []),
                 ],
-                onChange: (next) => onTemplateScopeChange(next as any),
+                onChange: (next) => {
+                  if (next === 'project' || next === 'account' || next === 'global') {
+                    onTemplateScopeChange(next);
+                  }
+                },
               }
             : undefined
         }

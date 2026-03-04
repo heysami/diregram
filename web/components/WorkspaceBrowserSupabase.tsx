@@ -1213,44 +1213,6 @@ export function WorkspaceBrowserSupabase() {
                 }}
                 ragStatus={ragBuilding ? 'building' : ragReady == null ? 'loading' : ragReady ? 'ready' : 'not_built'}
                 ragStatusText={ragBuildStatusText}
-                onCopyMcpAccountUrl={async () => {
-                  try {
-                    showToast('Creating MCP account link…');
-                    const res = await fetch('/api/rag/mcp-account', { method: 'POST' });
-                    const raw = await res.text().catch(() => '');
-                    const json = (() => {
-                      try {
-                        return raw ? JSON.parse(raw) : {};
-                      } catch {
-                        return {};
-                      }
-                    })();
-                    if (!res.ok) {
-                      const msg =
-                        (json as any)?.error
-                          ? String((json as any).error)
-                          : raw.trim()
-                            ? raw.trim().slice(0, 400)
-                            : `Failed (HTTP ${res.status})`;
-                      showToast(msg);
-                      return;
-                    }
-                    const url = String((json as any)?.mcpUrl || '').trim();
-                    const token = String((json as any)?.token || '').trim();
-                    if (url) {
-                      await copyText(url);
-                      return;
-                    }
-                    if (token) {
-                      await copyText(token);
-                      showToast('Copied token (set MCP server URL in env)');
-                      return;
-                    }
-                    showToast('Created, but nothing to copy');
-                  } catch (e) {
-                    showToast(e instanceof Error ? e.message : 'Failed');
-                  }
-                }}
                 onCopyProjectLink={async () => {
                   const origin = typeof window !== 'undefined' ? window.location.origin : '';
                   if (!origin) return;

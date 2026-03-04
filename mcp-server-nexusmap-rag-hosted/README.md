@@ -113,10 +113,10 @@ Recommended `MCP_SSH_FORCED_COMMAND` on the web app:
 ### How you generate the token (admin workflow)
 
 In the Diregram web app:
-- open any project
-- **Project → Copy MCP URL (account)**
+- open **Account**
+- use **MCP SSH Setup** to generate account-scoped MCP setup (or project-scoped if selected)
 
-This creates an **account-scoped** token. Users add it once, then choose projects via MCP tools.
+By default this creates an **account-scoped** token (or project-scoped when a default project is selected). Users can add it once, then choose projects via MCP tools when account-scoped.
 
 ### Deploy notes
 

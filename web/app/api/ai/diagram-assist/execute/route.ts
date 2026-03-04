@@ -94,12 +94,15 @@ function coerceDataObjectAttributesSelection(raw: Record<string, unknown>): Diag
     existingAttributes: existingRaw
       .map((item) => (item && typeof item === 'object' ? (item as Record<string, unknown>) : null))
       .filter((x): x is Record<string, unknown> => x !== null)
-      .map((item) => ({
-        name: clampText(item.name, 120),
-        type: item.type === 'status' ? 'status' : 'text',
-        sample: clampText(item.sample, 300),
-        values: clampArray(item.values, { maxItems: 20, maxChars: 80 }),
-      }))
+      .map((item) => {
+        const type: 'status' | 'text' = item.type === 'status' ? 'status' : 'text';
+        return {
+          name: clampText(item.name, 120),
+          type,
+          sample: clampText(item.sample, 300),
+          values: clampArray(item.values, { maxItems: 20, maxChars: 80 }),
+        };
+      })
       .filter((x) => Boolean(x.name))
       .slice(0, 120),
     nodeContext:
@@ -297,9 +300,6 @@ export async function POST(request: Request) {
         dedupeKey: buildDedupeKey(fileId, action, selection),
         input: {
           authMode: 'cookie_user',
-          ownerId,
-          projectFolderId,
-          requestedBy: user.id,
           ...input,
         },
       },

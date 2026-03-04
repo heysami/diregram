@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 export type AsyncTrackedJobKind =
   | 'ai_file_generation'
   | 'ai_grid_rule'
+  | 'ai_diagram_assist'
   | 'rag_ingest'
   | 'rag_ingest_jwt'
   | 'docling_convert';
@@ -111,6 +112,7 @@ function normalizeTitle(kind: string, title?: string) {
   if (title && title.trim()) return title.trim();
   if (kind === 'ai_file_generation') return 'AI file generation';
   if (kind === 'ai_grid_rule') return 'Grid AI rule';
+  if (kind === 'ai_diagram_assist') return 'Diagram AI assist';
   if (kind === 'rag_ingest' || kind === 'rag_ingest_jwt') return 'Knowledge base build';
   if (kind === 'docling_convert') return 'Docling conversion';
   return 'Async job';

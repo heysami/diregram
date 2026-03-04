@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { AppWindow, ChevronDown, Copy, Download, Eye, FileCode, FileText, FlaskConical, Network, Package, Pencil, Plus, Share2, Table } from 'lucide-react';
+import { AppWindow, ChevronDown, Copy, Eye, FileCode, FileText, FlaskConical, Network, Package, Pencil, Plus, Share2, Table } from 'lucide-react';
 import { AiUsageHelpModal } from '@/components/workspace/AiUsageHelpModal';
 
 type MenuItem = {
@@ -96,7 +96,6 @@ export function ProjectActionMenus({
   onBuildKnowledgeBase,
   ragStatus,
   ragStatusText,
-  onCopyMcpAccountUrl,
   onCopyProjectLink,
   onAiGenerateFiles,
   onExportBundle,
@@ -115,7 +114,6 @@ export function ProjectActionMenus({
   onBuildKnowledgeBase?: () => void | Promise<void>;
   ragStatus?: 'ready' | 'not_built' | 'loading' | 'building' | null;
   ragStatusText?: string | null;
-  onCopyMcpAccountUrl?: () => void | Promise<void>;
   onCopyProjectLink?: () => void | Promise<void>;
   onAiGenerateFiles?: () => void | Promise<void>;
   onExportBundle: () => void | Promise<void>;
@@ -145,6 +143,79 @@ export function ProjectActionMenus({
       </span>
     ) : null;
 
+  const newItems: MenuItem[] = [
+    { id: 'new-map', label: 'Map', icon: <Network size={14} />, onClick: onNewMap },
+    { id: 'new-from-template', label: 'From template…', icon: <Copy size={14} />, onClick: onNewFromTemplate },
+    { id: 'import-mermaid', label: 'Import Mermaid diagram…', icon: <FileCode size={14} />, onClick: onImportMermaidDiagram },
+    ...(onAiGenerateFiles
+      ? [
+          {
+            id: 'ai-generate-files',
+            label: 'AI generate files…',
+            icon: <FileText size={14} />,
+            title: 'Generate notes and user-story grids asynchronously',
+            onClick: onAiGenerateFiles,
+          } satisfies MenuItem,
+        ]
+      : []),
+    { id: 'sep-1', label: '────────', disabled: true, onClick: () => {} },
+    { id: 'new-grid', label: 'Grid', icon: <Table size={14} />, onClick: onNewGrid },
+    { id: 'new-note', label: 'Note', icon: <FileText size={14} />, onClick: onNewNote },
+    { id: 'new-vision', label: 'Vision', icon: <Eye size={14} />, onClick: onNewVision },
+    { id: 'new-test', label: 'Test', icon: <FlaskConical size={14} />, onClick: onNewTest },
+  ];
+
+  const ragItems: MenuItem[] = [
+    ...(onBuildKnowledgeBase
+      ? [
+          {
+            id: 'build-kb',
+            label: (
+              <span className="flex-1 flex items-center justify-between gap-2">
+                <span>Build knowledge base (RAG)</span>
+                {ragPill}
+              </span>
+            ),
+            icon: <Share2 size={14} />,
+            title: 'Generate embeddings + semantic KG for this project',
+            onClick: onBuildKnowledgeBase,
+          } satisfies MenuItem,
+        ]
+      : []),
+    { id: 'export-kg', label: 'Export semantic KG', icon: <Share2 size={14} />, onClick: onExportKg },
+    ...(onBuildKnowledgeBase
+      ? [
+          {
+            id: 'open-account-mcp-setup',
+            label: 'Open Account MCP setup',
+            icon: <AppWindow size={14} />,
+            title: 'Open /account#mcp-ssh-setup (MCP generation stays in Account)',
+            onClick: async () => {
+              if (typeof window === 'undefined') return;
+              window.location.assign('/account#mcp-ssh-setup');
+            },
+          } satisfies MenuItem,
+        ]
+      : []),
+  ];
+
+  const projectItems: MenuItem[] = [
+    ...(onCopyProjectLink
+      ? [
+          {
+            id: 'copy-project-link',
+            label: 'Copy project link',
+            icon: <Copy size={14} />,
+            title: 'Copy a link that opens this project in the Workspace',
+            onClick: onCopyProjectLink,
+          } satisfies MenuItem,
+        ]
+      : []),
+    { id: 'export-bundle', label: 'Export bundle (.zip)', icon: <Package size={14} />, onClick: onExportBundle },
+    { id: 'sep-2', label: '────────', disabled: true, onClick: () => {} },
+    { id: 'edit-project', label: 'Edit project', icon: <Pencil size={14} />, disabled: !canEdit, title: !canEdit ? 'No edit access' : undefined, onClick: onEditProject },
+  ];
+
   return (
     <div className="flex items-center gap-2">
       <button
@@ -163,113 +234,17 @@ export function ProjectActionMenus({
         }
         disabled={newDisabled}
         title={newTitle}
-        items={[
-          { id: 'new-map', label: 'Map', icon: <Network size={14} />, onClick: onNewMap },
-          { id: 'new-from-template', label: 'From template…', icon: <Copy size={14} />, onClick: onNewFromTemplate },
-          { id: 'import-mermaid', label: 'Import Mermaid diagram…', icon: <FileCode size={14} />, onClick: onImportMermaidDiagram },
-          { id: 'sep-1', label: '────────', disabled: true, onClick: () => {} },
-          { id: 'new-grid', label: 'Grid', icon: <Table size={14} />, onClick: onNewGrid },
-          { id: 'new-note', label: 'Note', icon: <FileText size={14} />, onClick: onNewNote },
-          { id: 'new-vision', label: 'Vision', icon: <Eye size={14} />, onClick: onNewVision },
-          { id: 'new-test', label: 'Test', icon: <FlaskConical size={14} />, onClick: onNewTest },
-        ]}
+        items={newItems}
+      />
+
+      <DropdownMenu
+        label={<>RAG</>}
+        items={ragItems}
       />
 
       <DropdownMenu
         label={<>Project</>}
-        items={[
-          {
-            id: 'build-kb',
-            label: (
-              <span className="flex-1 flex items-center justify-between gap-2">
-                <span>Build knowledge base (RAG)</span>
-                {ragPill}
-              </span>
-            ),
-            icon: <Share2 size={14} />,
-            disabled: !onBuildKnowledgeBase,
-            title: onBuildKnowledgeBase ? 'Generate embeddings + semantic KG for this project' : 'RAG ingestion is only available in Supabase mode',
-            onClick: onBuildKnowledgeBase || (() => {}),
-          },
-          {
-            id: 'download-agent-skill-generation',
-            label: 'Download Agent Skill (Strict Plan): Generation + Checklist',
-            icon: <Download size={14} />,
-            title: 'Downloads strict-plan skill ZIP for generation + verification',
-            onClick: async () => {
-              const mod = await import('@/lib/ai-guides/download-agent-skills');
-              mod.downloadGenerationChecklistAgentSkillBundle();
-            },
-          },
-          {
-            id: 'download-agent-skill-mcp',
-            label: 'Download Agent Skill (Strict Plan): MCP RAG Operator',
-            icon: <Download size={14} />,
-            title: 'Downloads strict-plan skill ZIP for MCP project/key/query flow',
-            onClick: async () => {
-              const mod = await import('@/lib/ai-guides/download-agent-skills');
-              mod.downloadMcpRagOperatorAgentSkillBundle();
-            },
-          },
-          {
-            id: 'open-account-mcp-setup',
-            label: 'Open Account MCP setup',
-            icon: <AppWindow size={14} />,
-            title: 'Open /account#mcp-ssh-setup (MCP generation stays in Account)',
-            onClick: async () => {
-              if (typeof window === 'undefined') return;
-              window.location.assign('/account#mcp-ssh-setup');
-            },
-          },
-          {
-            id: 'download-guides-diagram',
-            label: 'Download diagram guides + checklists (legacy .md)',
-            icon: <FileText size={14} />,
-            title: 'Downloads a single .md bundle (AI prompt + checklists)',
-            onClick: async () => {
-              const mod = await import('@/lib/ai-guides/download-guides-and-checklists');
-              mod.downloadDiagramGuidesAndChecklistsBundle();
-            },
-          },
-          {
-            id: 'download-guides-vision',
-            label: 'Download Vision guides + checklists (legacy .md)',
-            icon: <Eye size={14} />,
-            title: 'Downloads a single .md bundle (AI prompts + checklists)',
-            onClick: async () => {
-              const mod = await import('@/lib/ai-guides/download-guides-and-checklists');
-              mod.downloadVisionGuidesAndChecklistsBundle();
-            },
-          },
-          {
-            id: 'copy-mcp-account',
-            label: 'Copy MCP URL (account)',
-            icon: <Copy size={14} />,
-            disabled: !onCopyMcpAccountUrl,
-            title: onCopyMcpAccountUrl ? 'Copy a single MCP URL that can access multiple projects (selection happens in tools)' : 'MCP sharing is only available in Supabase mode',
-            onClick: onCopyMcpAccountUrl || (() => {}),
-          },
-          {
-            id: 'copy-project-link',
-            label: 'Copy project link',
-            icon: <Copy size={14} />,
-            disabled: !onCopyProjectLink,
-            title: onCopyProjectLink ? 'Copy a link that opens this project in the Workspace' : undefined,
-            onClick: onCopyProjectLink || (() => {}),
-          },
-          {
-            id: 'ai-generate-files',
-            label: 'AI generate files…',
-            icon: <FileText size={14} />,
-            disabled: !onAiGenerateFiles,
-            title: onAiGenerateFiles ? 'Generate notes and user-story grids asynchronously' : 'Available in Supabase mode only',
-            onClick: onAiGenerateFiles || (() => {}),
-          },
-          { id: 'export-bundle', label: 'Export bundle (.zip)', icon: <Package size={14} />, onClick: onExportBundle },
-          { id: 'export-kg', label: 'Export semantic KG', icon: <Share2 size={14} />, onClick: onExportKg },
-          { id: 'sep-2', label: '────────', disabled: true, onClick: () => {} },
-          { id: 'edit-project', label: 'Edit project', icon: <Pencil size={14} />, disabled: !canEdit, title: !canEdit ? 'No edit access' : undefined, onClick: onEditProject },
-        ]}
+        items={projectItems}
       />
 
       <AiUsageHelpModal open={aiHelpOpen} onClose={() => setAiHelpOpen(false)} />

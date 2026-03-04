@@ -139,9 +139,9 @@ export function resolveNodeByRelativePath(root: NexusNode, path: string[]): Nexu
 
   while (current && idx < cleaned.length) {
     const expected = cleaned[idx];
-    const next = (current.children || []).find((c) => normalizeNodePathLabel(c.content) === expected) || null;
-    if (!next) return null;
-    current = next;
+    const nextNode: NexusNode | null = (current.children || []).find((c) => normalizeNodePathLabel(c.content) === expected) || null;
+    if (!nextNode) return null;
+    current = nextNode;
     idx += 1;
   }
 

@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import * as Y from 'yjs';
 import { X, Plus, Trash2 } from 'lucide-react';
 import type { DataObjectEdge, DataObjectGraph } from '@/lib/data-object-graph';
@@ -15,6 +15,8 @@ import {
 } from '@/lib/data-object-attributes';
 import { StatusValuesEditor } from '@/components/data-objects/StatusValuesEditor';
 import { useDataObjectAttributeDescriptionModals } from '@/hooks/use-data-object-attribute-description-modals';
+import { ensureOpenAiApiKeyWithPrompt } from '@/lib/openai-key-browser';
+import { sha256Hex } from '@/lib/diagram-ai-assist-client';
 
 function edgeLabel(e: DataObjectEdge): string {
   if (e.kind === 'attribute') return 'attribute (1:1)';
@@ -27,6 +29,10 @@ function edgeLabel(e: DataObjectEdge): string {
 
 export function DataObjectInspectorPanel({
   doc,
+  fileId,
+  projectFolderId,
+  aiFeaturesEnabled = false,
+  onTrackAsyncJob,
   graph,
   store,
   selectedId,
@@ -36,6 +42,10 @@ export function DataObjectInspectorPanel({
   onDelete,
 }: {
   doc: Y.Doc;
+  fileId?: string | null;
+  projectFolderId?: string | null;
+  aiFeaturesEnabled?: boolean;
+  onTrackAsyncJob?: (input: { id: string; kind: string; title?: string }) => void;
   graph: DataObjectGraph;
   store: NexusDataObjectStore;
   selectedId: string;
@@ -49,6 +59,10 @@ export function DataObjectInspectorPanel({
     <DataObjectInspectorPanelInner
       key={selectedId}
       doc={doc}
+      fileId={fileId || null}
+      projectFolderId={projectFolderId || null}
+      aiFeaturesEnabled={aiFeaturesEnabled}
+      onTrackAsyncJob={onTrackAsyncJob}
       graph={graph}
       store={store}
       selectedId={selectedId}
@@ -62,6 +76,10 @@ export function DataObjectInspectorPanel({
 
 function DataObjectInspectorPanelInner({
   doc,
+  fileId,
+  projectFolderId,
+  aiFeaturesEnabled,
+  onTrackAsyncJob,
   graph,
   store,
   selectedId,
@@ -71,6 +89,10 @@ function DataObjectInspectorPanelInner({
   onDelete,
 }: {
   doc: Y.Doc;
+  fileId: string | null;
+  projectFolderId: string | null;
+  aiFeaturesEnabled: boolean;
+  onTrackAsyncJob?: (input: { id: string; kind: string; title?: string }) => void;
   graph: DataObjectGraph;
   store: NexusDataObjectStore;
   selectedId: string;
@@ -124,6 +146,102 @@ function DataObjectInspectorPanelInner({
   };
 
   const objLabel = (existing?.name || graphNode?.name || nameDraft || selectedId).trim() || selectedId;
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+
+  const queueDiagramAssist = useCallback(
+    async (input: { action: 'data_object_attributes' | 'status_descriptions'; selection: Record<string, unknown>; title: string }) => {
+      if (!aiFeaturesEnabled || !fileId || !projectFolderId) {
+        setAiError('Diagram AI is available only for synced Supabase projects.');
+        return;
+      }
+      setAiBusy(true);
+      setAiError(null);
+      try {
+        const openaiApiKey = await ensureOpenAiApiKeyWithPrompt();
+        if (!openaiApiKey) {
+          setAiError('Missing OpenAI API key.');
+          return;
+        }
+        const res = await fetch('/api/ai/diagram-assist/execute', {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-openai-api-key': openaiApiKey,
+          },
+          body: JSON.stringify({
+            projectFolderId,
+            fileId,
+            action: input.action,
+            selection: input.selection,
+          }),
+        });
+        const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+        if (!res.ok) {
+          setAiError(String(json.error || `Failed (${res.status})`));
+          return;
+        }
+        const jobId = String(json.jobId || '').trim();
+        if (!jobId) {
+          setAiError('Missing async job id');
+          return;
+        }
+        onTrackAsyncJob?.({ id: jobId, kind: 'ai_diagram_assist', title: input.title });
+      } catch (e) {
+        setAiError(e instanceof Error ? e.message : 'Failed to queue Diagram AI job');
+      } finally {
+        setAiBusy(false);
+      }
+    },
+    [aiFeaturesEnabled, fileId, onTrackAsyncJob, projectFolderId],
+  );
+
+  const queueAttributeResearch = useCallback(async () => {
+    const markdown = doc.getText('nexus').toString();
+    const baseFileHash = await sha256Hex(markdown);
+    await queueDiagramAssist({
+      action: 'data_object_attributes',
+      title: `Diagram AI: attributes (${objLabel})`,
+      selection: {
+        baseFileHash,
+        targetObjectId: selectedId,
+        targetObjectName: objLabel,
+        triggerSource: 'data_object_inspector',
+        linkedObjectIds: linkedIds,
+        linkedObjectNames: linkedIds.map((id) => linkedById.get(id)?.name || id),
+        existingAttributes: attrsDraft.map((a) => ({
+          name: a.name,
+          type: a.type === 'status' ? 'status' : 'text',
+          sample: a.sample || '',
+          values: a.type === 'status' ? a.values || [] : [],
+        })),
+      },
+    });
+  }, [attrsDraft, doc, linkedById, linkedIds, objLabel, queueDiagramAssist, selectedId]);
+
+  const queueStatusGenerateBoth = useCallback(
+    async (attr: DataObjectAttribute) => {
+      if (attr.type !== 'status') return;
+      const markdown = doc.getText('nexus').toString();
+      const baseFileHash = await sha256Hex(markdown);
+      await queueDiagramAssist({
+        action: 'status_descriptions',
+        title: `Diagram AI: status (${objLabel} / ${attr.name})`,
+        selection: {
+          baseFileHash,
+          target: {
+            kind: 'data_object_status',
+            doId: selectedId,
+            doName: objLabel,
+            attrId: attr.id,
+            attrName: attr.name,
+            statusValues: attr.values || [],
+          },
+        },
+      });
+    },
+    [doc, objLabel, queueDiagramAssist, selectedId],
+  );
 
   return (
     <div
@@ -211,19 +329,31 @@ function DataObjectInspectorPanelInner({
         <div className="px-4 py-3">
           <div className="flex items-center justify-between">
             <div className="text-[11px] text-gray-500">Attributes</div>
-            <button
-              type="button"
-              className="mac-btn h-7 px-2 inline-flex items-center gap-1"
-              onClick={() => {
-                const next = [...attrsDraft, { id: newDataObjectAttributeId(), name: 'NewAttribute', sample: '' }];
-                setAttrsDraft(next);
-                commitAttrs(next);
-              }}
-            >
-              <Plus size={14} />
-              Add
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                className="mac-btn h-7 px-2"
+                disabled={!aiFeaturesEnabled || !fileId || !projectFolderId || aiBusy}
+                title={!aiFeaturesEnabled || !fileId || !projectFolderId ? 'Available only in synced Supabase projects.' : 'Research required attributes with RAG + web.'}
+                onClick={() => void queueAttributeResearch()}
+              >
+                {aiBusy ? 'Queueing…' : 'AI Research'}
+              </button>
+              <button
+                type="button"
+                className="mac-btn h-7 px-2 inline-flex items-center gap-1"
+                onClick={() => {
+                  const next = [...attrsDraft, { id: newDataObjectAttributeId(), name: 'NewAttribute', sample: '' }];
+                  setAttrsDraft(next);
+                  commitAttrs(next);
+                }}
+              >
+                <Plus size={14} />
+                Add
+              </button>
+            </div>
           </div>
+          {aiError ? <div className="mt-2 text-[11px] text-red-700">{aiError}</div> : null}
 
           {attrsDraft.length ? (
             <div className="mt-2 space-y-2">
@@ -323,6 +453,15 @@ function DataObjectInspectorPanelInner({
                     />
                     <div className="mt-2 flex items-center gap-2">
                       <span className="text-[10px] text-gray-500">Describe this status:</span>
+                      <button
+                        type="button"
+                        className="mac-btn px-2 py-1 text-[10px]"
+                        disabled={!aiFeaturesEnabled || !fileId || !projectFolderId || aiBusy}
+                        title={!aiFeaturesEnabled || !fileId || !projectFolderId ? 'Available only in synced Supabase projects.' : 'Generate both flow and table with AI.'}
+                        onClick={() => void queueStatusGenerateBoth(a)}
+                      >
+                        Generate both
+                      </button>
                       <button
                         type="button"
                         className="mac-btn px-2 py-1 text-[10px]"

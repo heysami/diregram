@@ -1,0 +1,930 @@
+import crypto from 'node:crypto';
+import { decryptOpenAiApiKey } from '@/lib/server/async-jobs/crypto';
+import { isAsyncJobCancelRequested, updateAsyncJob } from '@/lib/server/async-jobs/repo';
+import type { AsyncJobRow } from '@/lib/server/async-jobs/types';
+import {
+  queryProjectKbContext,
+  runOpenAIResponsesText,
+} from '@/lib/server/openai-responses';
+import { getAdminSupabaseClient } from '@/lib/server/supabase-admin';
+import { validateNexusMarkdownImport } from '@/lib/markdown-import-validator';
+import type {
+  DiagramAssistAction,
+  DiagramAssistAttributeSuggestion,
+  DiagramAssistConnectorLabelOp,
+  DiagramAssistDataObjectAttributesProposal,
+  DiagramAssistDataObjectAttributesSelection,
+  DiagramAssistNodeTypeOp,
+  DiagramAssistNodeStructureProposal,
+  DiagramAssistNodeStructureSelection,
+  DiagramAssistProposal,
+  DiagramAssistSelection,
+  DiagramAssistSingleScreenOp,
+  DiagramAssistStatusDescriptionsProposal,
+  DiagramAssistStatusDescriptionsSelection,
+} from '@/lib/diagram-ai-assist-types';
+
+const MAX_INPUT_SUBTREE_CHARS = 14_000;
+const MAX_RECOMMENDATIONS = 14;
+const MAX_ATTRIBUTES = 30;
+const MAX_STATUS_VALUES = 24;
+const MAX_TRANSITIONS = 120;
+const MAX_TABLE_ROWS = 140;
+const MAX_FLOW_LINES = 180;
+const FLOW_NODE_TYPES = [
+  'step',
+  'time',
+  'loop',
+  'action',
+  'validation',
+  'branch',
+  'end',
+  'goto',
+  'single_screen_steps',
+] as const;
+type FlowNodeTypeValue = (typeof FLOW_NODE_TYPES)[number];
+
+function coerceFlowNodeType(input: unknown): FlowNodeTypeValue | null {
+  const v = normalizeText(input);
+  return (FLOW_NODE_TYPES as readonly string[]).includes(v) ? (v as FlowNodeTypeValue) : null;
+}
+
+function normalizeText(input: unknown): string {
+  return String(input || '').trim();
+}
+
+function normalizeNewlines(input: unknown): string {
+  return String(input || '').replace(/\r\n?/g, '\n');
+}
+
+function hashMarkdown(text: string): string {
+  return crypto.createHash('sha256').update(normalizeNewlines(text), 'utf8').digest('hex');
+}
+
+function getIndent(line: string): number {
+  const m = String(line || '').match(/^(\s*)/);
+  return m ? m[1].length : 0;
+}
+
+function findSeparatorIndexOutsideFences(lines: string[]): number {
+  let inFence = false;
+  for (let i = 0; i < lines.length; i += 1) {
+    const trimmed = lines[i]?.trim() || '';
+    if (/^```/.test(trimmed)) {
+      inFence = !inFence;
+      continue;
+    }
+    if (!inFence && trimmed === '---') return i;
+  }
+  return -1;
+}
+
+function findSubtreeRange(lines: string[], lineIndex: number): { start: number; end: number; baseIndent: number } | null {
+  if (lineIndex < 0 || lineIndex >= lines.length) return null;
+  const startLine = String(lines[lineIndex] || '');
+  if (!startLine.trim()) return null;
+  const separator = findSeparatorIndexOutsideFences(lines);
+  const sectionEnd = separator === -1 ? lines.length : separator;
+  if (lineIndex >= sectionEnd) return null;
+
+  const baseIndent = getIndent(startLine);
+  let end = lineIndex;
+  for (let i = lineIndex + 1; i < sectionEnd; i += 1) {
+    const line = String(lines[i] || '');
+    if (!line.trim()) {
+      end = i;
+      continue;
+    }
+    if (getIndent(line) <= baseIndent) break;
+    end = i;
+  }
+  return { start: lineIndex, end, baseIndent };
+}
+
+function normalizeReplacementLines(subtreeMarkdown: string, baseIndent: number): string[] {
+  const lines = normalizeNewlines(subtreeMarkdown).split('\n');
+  while (lines.length > 0 && !lines[0]?.trim()) lines.shift();
+  while (lines.length > 0 && !lines[lines.length - 1]?.trim()) lines.pop();
+
+  const nonEmpty = lines.filter((l) => l.trim().length > 0);
+  const minIndent = nonEmpty.length
+    ? nonEmpty.reduce((acc, l) => Math.min(acc, getIndent(l)), Number.POSITIVE_INFINITY)
+    : 0;
+
+  return lines.map((line) => {
+    if (!line.trim()) return '';
+    const strip = Math.max(0, Math.min(getIndent(line), Number.isFinite(minIndent) ? minIndent : 0));
+    const dedented = line.slice(strip);
+    return `${' '.repeat(Math.max(0, baseIndent))}${dedented}`;
+  });
+}
+
+function replaceSubtreeAtLine(input: {
+  markdown: string;
+  lineIndex: number;
+  subtreeReplacementMarkdown: string;
+}): { nextMarkdown: string; originalSubtreeMarkdown: string } {
+  const lines = normalizeNewlines(input.markdown).split('\n');
+  const range = findSubtreeRange(lines, input.lineIndex);
+  if (!range) throw new Error('Selected subtree anchor is no longer valid.');
+
+  const replacement = normalizeReplacementLines(input.subtreeReplacementMarkdown, range.baseIndent);
+  if (!replacement.length || !replacement.some((l) => l.trim())) {
+    throw new Error('Proposal returned an empty subtree replacement.');
+  }
+
+  const original = lines.slice(range.start, range.end + 1).join('\n').trimEnd();
+  const nextLines = lines.slice(0, range.start).concat(replacement, lines.slice(range.end + 1));
+  return {
+    nextMarkdown: nextLines.join('\n'),
+    originalSubtreeMarkdown: original,
+  };
+}
+
+function extractJsonObject(text: string): Record<string, unknown> {
+  const raw = String(text || '').trim();
+  if (!raw) throw new Error('Empty model response');
+
+  const tryParse = (candidate: string): Record<string, unknown> | null => {
+    try {
+      const parsed = JSON.parse(candidate);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  };
+
+  const direct = tryParse(raw);
+  if (direct) return direct;
+
+  const fenced = raw.match(/```(?:json)?\n([\s\S]*?)\n```/i);
+  if (fenced?.[1]) {
+    const parsed = tryParse(fenced[1]);
+    if (parsed) return parsed;
+  }
+
+  const firstBrace = raw.indexOf('{');
+  const lastBrace = raw.lastIndexOf('}');
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    const sliced = raw.slice(firstBrace, lastBrace + 1);
+    const parsed = tryParse(sliced);
+    if (parsed) return parsed;
+  }
+
+  throw new Error('Model did not return valid JSON');
+}
+
+function clampArray(input: unknown, opts: { maxItems: number; maxChars?: number }): string[] {
+  if (!Array.isArray(input)) return [];
+  const maxChars = Number.isFinite(opts.maxChars) ? Number(opts.maxChars) : 1000;
+  return (input as unknown[])
+    .map((x) => normalizeText(x).slice(0, maxChars))
+    .filter(Boolean)
+    .slice(0, opts.maxItems);
+}
+
+function safeNumber(input: unknown, fallback: number): number {
+  const n = Number(input);
+  if (!Number.isFinite(n)) return fallback;
+  return n;
+}
+
+function parseDataObjectsFromMarkdown(markdown: string): Array<{ id: string; name: string; attributes: Array<{ name: string; type: 'text' | 'status' }> }> {
+  const m = normalizeNewlines(markdown).match(/```data-objects\n([\s\S]*?)\n```/);
+  if (!m?.[1]) return [];
+  try {
+    const parsed = JSON.parse(m[1]);
+    const rawObjects = Array.isArray(parsed?.objects) ? (parsed.objects as unknown[]) : [];
+    return rawObjects
+      .map((o) => (o && typeof o === 'object' ? (o as Record<string, unknown>) : null))
+      .filter((x): x is Record<string, unknown> => x !== null)
+      .map((o) => {
+        const id = normalizeText(o.id).slice(0, 120);
+        const name = normalizeText(o.name).slice(0, 200);
+        const attrsRaw = o.data && typeof o.data === 'object' ? (o.data as Record<string, unknown>).attributes : null;
+        const attributes = Array.isArray(attrsRaw)
+          ? (attrsRaw as unknown[])
+              .map((a) => (a && typeof a === 'object' ? (a as Record<string, unknown>) : null))
+              .filter((x): x is Record<string, unknown> => x !== null)
+              .map((a) => {
+                const type: 'status' | 'text' = a.type === 'status' ? 'status' : 'text';
+                return {
+                  name: normalizeText(a.name).slice(0, 120),
+                  type,
+                };
+              })
+              .filter((a) => Boolean(a.name))
+          : [];
+        return { id, name: name || id, attributes };
+      })
+      .filter((o) => Boolean(o.id));
+  } catch {
+    return [];
+  }
+}
+
+function buildNodeStructurePrompt(input: {
+  selection: DiagramAssistNodeStructureSelection;
+  markdown: string;
+  dataObjects: Array<{ id: string; name: string; attributes: Array<{ name: string; type: 'text' | 'status' }> }>;
+  kbContext: string;
+}): { system: string; user: string } {
+  const lines = normalizeNewlines(input.markdown).split('\n').slice(0, 220);
+  const fileHead = lines.join('\n').slice(0, 7000);
+  const objectsSummary = input.dataObjects
+    .slice(0, 20)
+    .map((o) => `- ${o.id} (${o.name}) attrs: ${o.attributes.slice(0, 8).map((a) => `${a.name}:${a.type}`).join(', ')}`)
+    .join('\n');
+
+  const system = [
+    'You are a diagram structure analyst.',
+    'Return strictly valid JSON only (no markdown).',
+    'Primary goals:',
+    '1) Evaluate whether selected subtree should be process flow, conditional hub, branch split, or grouped single-screen process segment.',
+    '2) Keep edits partial-scope: ONLY selected subtree and necessary process metadata operations.',
+    '3) State-machine / flow coherence first; avoid broad file rewrites.',
+    'JSON contract:',
+    '{',
+    '  "diagnosis": "string",',
+    '  "recommendations": ["string"],',
+    '  "subtreeReplacementMarkdown": "string",',
+    '  "metadataOps": {',
+    '    "processNodeTypes": [{"nodePath": ["Root","Child"], "type": "step|time|loop|action|validation|branch|end|goto|single_screen_steps", "reason": "string"}],',
+    '    "singleScreenLastSteps": [{"startPath": ["..."], "lastPath": ["..."], "reason": "string"}],',
+    '    "connectorLabels": [{"fromPath": ["..."], "toPath": ["..."], "label": "string", "color": "#000000"}]',
+    '  },',
+    '  "validationNotes": ["string"]',
+    '}',
+  ].join('\n');
+
+  const user = [
+    `Selected node id: ${input.selection.nodeId}`,
+    `Selected line index: ${input.selection.lineIndex}`,
+    `Parent path fingerprint: ${input.selection.parentPathFingerprint.join(' > ') || '(root)'}`,
+    `Selected node content: ${input.selection.selectedNodeContent || '(unknown)'}`,
+    '',
+    'Selected subtree markdown:',
+    input.selection.subtreeMarkdown.slice(0, MAX_INPUT_SUBTREE_CHARS),
+    '',
+    'File head snapshot (partial):',
+    fileHead,
+    '',
+    'Data object summary:',
+    objectsSummary || '(none)',
+    '',
+    'Project RAG context:',
+    input.kbContext || '(none)',
+    '',
+    'Use the project context and web best practices. Prioritize precise, minimal subtree revision.',
+  ].join('\n');
+
+  return { system, user };
+}
+
+function buildDataObjectAttributesPrompt(input: {
+  selection: DiagramAssistDataObjectAttributesSelection;
+  markdown: string;
+  dataObjects: Array<{ id: string; name: string; attributes: Array<{ name: string; type: 'text' | 'status' }> }>;
+  kbContext: string;
+}): { system: string; user: string } {
+  const fileHead = normalizeNewlines(input.markdown).split('\n').slice(0, 240).join('\n').slice(0, 7000);
+  const objectsSummary = input.dataObjects
+    .slice(0, 30)
+    .map((o) => `- ${o.id} (${o.name}) attrs: ${o.attributes.slice(0, 10).map((a) => `${a.name}:${a.type}`).join(', ')}`)
+    .join('\n');
+  const existingSummary = (input.selection.existingAttributes || [])
+    .map((a) => `- ${a.name} (${a.type})${a.sample ? ` sample=${a.sample}` : ''}`)
+    .join('\n');
+
+  const system = [
+    'You are a data-object modeling assistant.',
+    'Return strictly valid JSON only.',
+    'Emphasize ownership-aware attributes: attribute may belong to another data object.',
+    'Never assume ownership equals selected object.',
+    'Use project context and web research heuristics for typical scenarios.',
+    'JSON contract:',
+    '{',
+    '  "summary": "string",',
+    '  "attributes": [',
+    '    {',
+    '      "name": "string",',
+    '      "type": "text|status",',
+    '      "sample": "string",',
+    '      "statusValues": ["string"],',
+    '      "ownerObjectId": "string",',
+    '      "ownerObjectName": "string",',
+    '      "ownerConfidence": 0.0,',
+    '      "ownerReason": "string",',
+    '      "evidenceSnippets": ["string"]',
+    '    }',
+    '  ]',
+    '}',
+  ].join('\n');
+
+  const user = [
+    `Target object: ${input.selection.targetObjectId} (${input.selection.targetObjectName})`,
+    `Trigger source: ${input.selection.triggerSource}`,
+    `Linked objects: ${(input.selection.linkedObjectIds || []).join(', ') || '(none)'}`,
+    '',
+    'Current attributes:',
+    existingSummary || '(none)',
+    '',
+    'Project objects snapshot:',
+    objectsSummary || '(none)',
+    '',
+    'File head snapshot (partial):',
+    fileHead,
+    '',
+    'Project RAG context:',
+    input.kbContext || '(none)',
+    '',
+    'Generate practical attributes and include ownership suggestions with confidence and reasoning.',
+  ].join('\n');
+
+  return { system, user };
+}
+
+function buildStatusPrompt(input: {
+  selection: DiagramAssistStatusDescriptionsSelection;
+  markdown: string;
+  kbContext: string;
+}): { system: string; user: string } {
+  const fileHead = normalizeNewlines(input.markdown).split('\n').slice(0, 220).join('\n').slice(0, 7000);
+
+  const targetSummary = (() => {
+    if (input.selection.target.kind === 'data_object_status') {
+      const t = input.selection.target;
+      return [
+        `Target kind: data_object_status`,
+        `Data object: ${t.doId} (${t.doName})`,
+        `Attribute: ${t.attrId} (${t.attrName})`,
+        `Status values: ${(t.statusValues || []).join(', ') || '(none)'}`,
+      ].join('\n');
+    }
+    const t = input.selection.target;
+    return [
+      `Target kind: condition_dimension_status`,
+      `Hub node: ${t.nodeId} (${t.hubLabel})`,
+      `Dimension key: ${t.dimensionKey}`,
+      `Status values: ${(t.statusValues || []).join(', ') || '(none)'}`,
+    ].join('\n');
+  })();
+
+  const system = [
+    'You are a state-machine and access-policy modeling assistant.',
+    'Return strictly valid JSON only.',
+    'Always generate BOTH: flow-oriented state machine and role/field-access table.',
+    'Focus on realistic transitions, guards, and permissions by role.',
+    'JSON contract:',
+    '{',
+    '  "summary": "string",',
+    '  "stateMachine": {',
+    '    "states": ["string"],',
+    '    "transitions": [{"from":"string","to":"string","guard":"string","actor":"string","notes":"string"}]',
+    '  },',
+    '  "flowMarkdownLines": ["string"],',
+    '  "table": {',
+    '    "columns": ["Role","Status","Actions","Field access"],',
+    '    "rows": [{"role":"string","status":"string","actions":"string","fieldAccess":"string"}]',
+    '  }',
+    '}',
+  ].join('\n');
+
+  const user = [
+    targetSummary,
+    '',
+    'File head snapshot (partial):',
+    fileHead,
+    '',
+    'Project RAG context:',
+    input.kbContext || '(none)',
+  ].join('\n');
+
+  return { system, user };
+}
+
+function sanitizeNodeStructureProposal(input: {
+  selection: DiagramAssistNodeStructureSelection;
+  parsed: Record<string, unknown>;
+  baseFileHash: string;
+  originalSubtreeMarkdown: string;
+}): DiagramAssistNodeStructureProposal {
+  const recommendations = clampArray(input.parsed.recommendations, { maxItems: MAX_RECOMMENDATIONS, maxChars: 240 });
+  const subtreeReplacementMarkdown =
+    normalizeNewlines(input.parsed.subtreeReplacementMarkdown || '').slice(0, MAX_INPUT_SUBTREE_CHARS) ||
+    input.selection.subtreeMarkdown;
+
+  const metadataOpsRaw =
+    input.parsed.metadataOps && typeof input.parsed.metadataOps === 'object'
+      ? (input.parsed.metadataOps as Record<string, unknown>)
+      : {};
+
+  const processNodeTypes: DiagramAssistNodeTypeOp[] = [];
+  if (Array.isArray(metadataOpsRaw.processNodeTypes)) {
+    for (const raw of metadataOpsRaw.processNodeTypes as unknown[]) {
+      if (!raw || typeof raw !== 'object') continue;
+      const obj = raw as Record<string, unknown>;
+      const nodePath = clampArray(obj.nodePath, { maxItems: 20, maxChars: 160 });
+      const type = coerceFlowNodeType(obj.type);
+      if (!nodePath.length || !type) continue;
+      const reason = normalizeText(obj.reason).slice(0, 240) || undefined;
+      processNodeTypes.push({
+        nodePath,
+        type,
+        ...(reason ? { reason } : {}),
+      });
+      if (processNodeTypes.length >= 120) break;
+    }
+  }
+
+  const singleScreenLastSteps: DiagramAssistSingleScreenOp[] = [];
+  if (Array.isArray(metadataOpsRaw.singleScreenLastSteps)) {
+    for (const raw of metadataOpsRaw.singleScreenLastSteps as unknown[]) {
+      if (!raw || typeof raw !== 'object') continue;
+      const obj = raw as Record<string, unknown>;
+      const startPath = clampArray(obj.startPath, { maxItems: 20, maxChars: 160 });
+      const lastPath = clampArray(obj.lastPath, { maxItems: 20, maxChars: 160 });
+      if (!startPath.length || !lastPath.length) continue;
+      const reason = normalizeText(obj.reason).slice(0, 240) || undefined;
+      singleScreenLastSteps.push({
+        startPath,
+        lastPath,
+        ...(reason ? { reason } : {}),
+      });
+      if (singleScreenLastSteps.length >= 100) break;
+    }
+  }
+
+  const connectorLabels: DiagramAssistConnectorLabelOp[] = [];
+  if (Array.isArray(metadataOpsRaw.connectorLabels)) {
+    for (const raw of metadataOpsRaw.connectorLabels as unknown[]) {
+      if (!raw || typeof raw !== 'object') continue;
+      const obj = raw as Record<string, unknown>;
+      const fromPath = clampArray(obj.fromPath, { maxItems: 20, maxChars: 160 });
+      const toPath = clampArray(obj.toPath, { maxItems: 20, maxChars: 160 });
+      const label = normalizeText(obj.label).slice(0, 120);
+      if (!fromPath.length || !toPath.length || !label) continue;
+      const color = normalizeText(obj.color).slice(0, 20) || undefined;
+      connectorLabels.push({
+        fromPath,
+        toPath,
+        label,
+        ...(color ? { color } : {}),
+      });
+      if (connectorLabels.length >= 150) break;
+    }
+  }
+
+  return {
+    action: 'node_structure',
+    baseFileHash: input.baseFileHash,
+    diagnosis: normalizeText(input.parsed.diagnosis).slice(0, 5000) || 'No diagnosis was returned.',
+    recommendations,
+    subtreeReplacementMarkdown,
+    metadataOps:
+      processNodeTypes.length || singleScreenLastSteps.length || connectorLabels.length
+        ? {
+            ...(processNodeTypes.length ? { processNodeTypes } : {}),
+            ...(singleScreenLastSteps.length ? { singleScreenLastSteps } : {}),
+            ...(connectorLabels.length ? { connectorLabels } : {}),
+          }
+        : undefined,
+    validationReport: {
+      errors: [],
+      warnings: clampArray(input.parsed.validationNotes, { maxItems: 30, maxChars: 260 }),
+    },
+    preview: {
+      lineIndex: input.selection.lineIndex,
+      originalSubtreeMarkdown: input.originalSubtreeMarkdown,
+      proposedSubtreeMarkdown: subtreeReplacementMarkdown,
+    },
+  };
+}
+
+function sanitizeAttributeSuggestion(raw: Record<string, unknown>): DiagramAssistAttributeSuggestion | null {
+  const name = normalizeText(raw.name).slice(0, 120);
+  if (!name) return null;
+  const type = normalizeText(raw.type) === 'status' ? 'status' : 'text';
+  return {
+    name,
+    type,
+    sample: normalizeText(raw.sample).slice(0, 300) || undefined,
+    statusValues: clampArray(raw.statusValues, { maxItems: MAX_STATUS_VALUES, maxChars: 80 }),
+    ownerObjectId: normalizeText(raw.ownerObjectId).slice(0, 120) || undefined,
+    ownerObjectName: normalizeText(raw.ownerObjectName).slice(0, 180) || undefined,
+    ownerConfidence: Math.max(0, Math.min(1, safeNumber(raw.ownerConfidence, 0))),
+    ownerReason: normalizeText(raw.ownerReason).slice(0, 500) || undefined,
+    evidenceSnippets: clampArray(raw.evidenceSnippets, { maxItems: 8, maxChars: 220 }),
+  };
+}
+
+function sanitizeDataObjectAttributesProposal(input: {
+  parsed: Record<string, unknown>;
+  selection: DiagramAssistDataObjectAttributesSelection;
+  baseFileHash: string;
+}): DiagramAssistDataObjectAttributesProposal {
+  const attrsRaw = Array.isArray(input.parsed.attributes) ? (input.parsed.attributes as unknown[]) : [];
+  const attributes = attrsRaw
+    .map((x) => (x && typeof x === 'object' ? sanitizeAttributeSuggestion(x as Record<string, unknown>) : null))
+    .filter((x): x is DiagramAssistAttributeSuggestion => x !== null)
+    .slice(0, MAX_ATTRIBUTES);
+
+  return {
+    action: 'data_object_attributes',
+    baseFileHash: input.baseFileHash,
+    targetObjectId: input.selection.targetObjectId,
+    targetObjectName: input.selection.targetObjectName,
+    summary: normalizeText(input.parsed.summary).slice(0, 5000) || 'No summary was returned.',
+    attributes,
+  };
+}
+
+function sanitizeStatusDescriptionsProposal(input: {
+  parsed: Record<string, unknown>;
+  selection: DiagramAssistStatusDescriptionsSelection;
+  baseFileHash: string;
+}): DiagramAssistStatusDescriptionsProposal {
+  const smRaw = input.parsed.stateMachine && typeof input.parsed.stateMachine === 'object'
+    ? (input.parsed.stateMachine as Record<string, unknown>)
+    : {};
+
+  const states = clampArray(smRaw.states, { maxItems: 80, maxChars: 80 });
+  const transitionsRaw = Array.isArray(smRaw.transitions) ? (smRaw.transitions as unknown[]) : [];
+  const transitions = transitionsRaw
+    .map((x) => (x && typeof x === 'object' ? (x as Record<string, unknown>) : null))
+    .filter((x): x is Record<string, unknown> => x !== null)
+    .map((x) => ({
+      from: normalizeText(x.from).slice(0, 80),
+      to: normalizeText(x.to).slice(0, 80),
+      guard: normalizeText(x.guard).slice(0, 220) || undefined,
+      actor: normalizeText(x.actor).slice(0, 120) || undefined,
+      notes: normalizeText(x.notes).slice(0, 260) || undefined,
+    }))
+    .filter((x) => Boolean(x.from) && Boolean(x.to))
+    .slice(0, MAX_TRANSITIONS);
+
+  const flowMarkdownLines = clampArray(input.parsed.flowMarkdownLines, { maxItems: MAX_FLOW_LINES, maxChars: 400 });
+
+  const tableRaw = input.parsed.table && typeof input.parsed.table === 'object'
+    ? (input.parsed.table as Record<string, unknown>)
+    : {};
+  const columns = clampArray(tableRaw.columns, { maxItems: 10, maxChars: 80 });
+  const rowsRaw = Array.isArray(tableRaw.rows) ? (tableRaw.rows as unknown[]) : [];
+  const rows = rowsRaw
+    .map((x) => (x && typeof x === 'object' ? (x as Record<string, unknown>) : null))
+    .filter((x): x is Record<string, unknown> => x !== null)
+    .map((x) => ({
+      role: normalizeText(x.role).slice(0, 120),
+      status: normalizeText(x.status).slice(0, 120),
+      actions: normalizeText(x.actions).slice(0, 400),
+      fieldAccess: normalizeText(x.fieldAccess).slice(0, 400),
+    }))
+    .filter((x) => Boolean(x.role) && Boolean(x.status))
+    .slice(0, MAX_TABLE_ROWS);
+
+  return {
+    action: 'status_descriptions',
+    baseFileHash: input.baseFileHash,
+    target: input.selection.target,
+    summary: normalizeText(input.parsed.summary).slice(0, 5000) || 'No summary was returned.',
+    stateMachine: {
+      states: states.length ? states : input.selection.target.statusValues.slice(0, MAX_STATUS_VALUES),
+      transitions,
+    },
+    flowMarkdownLines,
+    table: {
+      columns: columns.length ? columns : ['Role', 'Status', 'Actions', 'Field access'],
+      rows,
+    },
+  };
+}
+
+function coerceSelection(action: DiagramAssistAction, raw: unknown): DiagramAssistSelection {
+  if (!raw || typeof raw !== 'object') throw new Error('Missing selection payload');
+  const selection = raw as DiagramAssistSelection;
+  if (!selection.baseFileHash) throw new Error('Missing baseFileHash');
+
+  if (action === 'node_structure') {
+    const s = selection as DiagramAssistNodeStructureSelection;
+    if (!s.nodeId) throw new Error('Missing node id');
+    if (!s.subtreeMarkdown) throw new Error('Missing subtree markdown');
+    return {
+      ...s,
+      subtreeMarkdown: normalizeNewlines(s.subtreeMarkdown).slice(0, MAX_INPUT_SUBTREE_CHARS),
+      parentPathFingerprint: (s.parentPathFingerprint || []).slice(0, 40).map((x) => normalizeText(x).slice(0, 240)).filter(Boolean),
+      selectedNodeContent: normalizeText(s.selectedNodeContent).slice(0, 500),
+    } satisfies DiagramAssistNodeStructureSelection;
+  }
+
+  if (action === 'data_object_attributes') {
+    const s = selection as DiagramAssistDataObjectAttributesSelection;
+    if (!s.targetObjectId) throw new Error('Missing targetObjectId');
+    return {
+      ...s,
+      targetObjectId: normalizeText(s.targetObjectId).slice(0, 120),
+      targetObjectName: normalizeText(s.targetObjectName).slice(0, 180),
+      linkedObjectIds: (s.linkedObjectIds || []).slice(0, 60).map((x) => normalizeText(x).slice(0, 120)).filter(Boolean),
+      linkedObjectNames: (s.linkedObjectNames || []).slice(0, 60).map((x) => normalizeText(x).slice(0, 180)).filter(Boolean),
+      existingAttributes: (s.existingAttributes || []).slice(0, 120).map((a) => ({
+        name: normalizeText(a.name).slice(0, 120),
+        type: a.type === 'status' ? 'status' : 'text',
+        sample: normalizeText(a.sample).slice(0, 200) || undefined,
+        values: (a.values || []).slice(0, MAX_STATUS_VALUES).map((v) => normalizeText(v).slice(0, 80)).filter(Boolean),
+      })),
+      nodeContext: s.nodeContext
+        ? {
+            nodeId: normalizeText(s.nodeContext.nodeId).slice(0, 120) || undefined,
+            nodeLabel: normalizeText(s.nodeContext.nodeLabel).slice(0, 240) || undefined,
+          }
+        : undefined,
+    } satisfies DiagramAssistDataObjectAttributesSelection;
+  }
+
+  const s = selection as DiagramAssistStatusDescriptionsSelection;
+  if (s.target.kind === 'data_object_status') {
+    if (!s.target.doId || !s.target.attrId) throw new Error('Missing data-object status target');
+    return {
+      ...s,
+      target: {
+        ...s.target,
+        doId: normalizeText(s.target.doId).slice(0, 120),
+        doName: normalizeText(s.target.doName).slice(0, 180),
+        attrId: normalizeText(s.target.attrId).slice(0, 120),
+        attrName: normalizeText(s.target.attrName).slice(0, 180),
+        statusValues: (s.target.statusValues || []).slice(0, MAX_STATUS_VALUES).map((x) => normalizeText(x).slice(0, 80)).filter(Boolean),
+      },
+    } satisfies DiagramAssistStatusDescriptionsSelection;
+  }
+
+  if (!s.target.nodeId || !s.target.dimensionKey) throw new Error('Missing condition-dimension status target');
+  return {
+    ...s,
+    target: {
+      ...s.target,
+      nodeId: normalizeText(s.target.nodeId).slice(0, 120),
+      nodeLineIndex: Math.max(0, Math.floor(Number(s.target.nodeLineIndex || 0))),
+      hubLabel: normalizeText(s.target.hubLabel).slice(0, 240),
+      dimensionKey: normalizeText(s.target.dimensionKey).slice(0, 160),
+      statusValues: (s.target.statusValues || []).slice(0, MAX_STATUS_VALUES).map((x) => normalizeText(x).slice(0, 80)).filter(Boolean),
+    },
+  } satisfies DiagramAssistStatusDescriptionsSelection;
+}
+
+function buildKbQuery(action: DiagramAssistAction, selection: DiagramAssistSelection): string {
+  if (action === 'node_structure') {
+    const s = selection as DiagramAssistNodeStructureSelection;
+    return [
+      'Diagram node structure review',
+      `Node: ${s.selectedNodeContent || s.nodeId}`,
+      `Subtree:\n${s.subtreeMarkdown.slice(0, 2600)}`,
+      'Need recommendations for process flow, conditional hub, branching, and single-screen grouping.',
+    ].join('\n\n');
+  }
+
+  if (action === 'data_object_attributes') {
+    const s = selection as DiagramAssistDataObjectAttributesSelection;
+    return [
+      'Data object attribute research',
+      `Target object: ${s.targetObjectId} (${s.targetObjectName})`,
+      `Linked objects: ${(s.linkedObjectNames || s.linkedObjectIds || []).join(', ') || '(none)'}`,
+      'Need ownership-aware attribute recommendations and cross-object attribution guidance.',
+    ].join('\n\n');
+  }
+
+  const s = selection as DiagramAssistStatusDescriptionsSelection;
+  if (s.target.kind === 'data_object_status') {
+    return [
+      'Data object status modeling',
+      `Object: ${s.target.doName} (${s.target.doId})`,
+      `Attribute: ${s.target.attrName} (${s.target.attrId})`,
+      `Statuses: ${(s.target.statusValues || []).join(', ') || '(none)'}`,
+      'Need state-machine transitions and role/field access table.',
+    ].join('\n\n');
+  }
+  return [
+    'Condition dimension status modeling',
+    `Hub: ${s.target.hubLabel} (${s.target.nodeId})`,
+    `Dimension: ${s.target.dimensionKey}`,
+    `Values: ${(s.target.statusValues || []).join(', ') || '(none)'}`,
+    'Need state-machine transitions and role/field access table.',
+  ].join('\n\n');
+}
+
+async function ensureNotCancelled(jobId: string) {
+  if (await isAsyncJobCancelRequested(jobId)) {
+    throw new Error('Job cancelled');
+  }
+}
+
+export async function runAiDiagramAssistJob(job: AsyncJobRow): Promise<Record<string, unknown>> {
+  const inputRaw = (job.input || {}) as Record<string, unknown>;
+  const action = normalizeText(inputRaw.action) as DiagramAssistAction;
+  if (action !== 'node_structure' && action !== 'data_object_attributes' && action !== 'status_descriptions') {
+    throw new Error('Invalid diagram assist action');
+  }
+
+  const ownerId = normalizeText(inputRaw.ownerId || job.owner_id);
+  const projectFolderId = normalizeText(inputRaw.projectFolderId || job.project_folder_id);
+  const fileId = normalizeText(inputRaw.fileId);
+  const chatModel = normalizeText(inputRaw.chatModel) || undefined;
+  const embeddingModel = normalizeText(inputRaw.embeddingModel) || undefined;
+  if (!ownerId) throw new Error('Missing ownerId');
+  if (!projectFolderId) throw new Error('Missing projectFolderId');
+  if (!fileId) throw new Error('Missing fileId');
+
+  const selection = coerceSelection(action, inputRaw.selection);
+
+  const openaiApiKey = decryptOpenAiApiKey(job.secret_payload) || String(process.env.OPENAI_API_KEY || '').trim();
+  if (!openaiApiKey) throw new Error('Missing OpenAI API key');
+
+  await ensureNotCancelled(job.id);
+  await updateAsyncJob(job.id, {
+    step: 'loading_file_snapshot',
+    progress_pct: 8,
+    state: {
+      ...(job.state || {}),
+      action,
+      fileId,
+    },
+  });
+
+  const admin = getAdminSupabaseClient();
+  const { data: fileRowRaw, error: fileErr } = await admin
+    .from('files')
+    .select('id,content,updated_at,kind,folder_id')
+    .eq('id', fileId)
+    .maybeSingle();
+  if (fileErr) throw new Error(fileErr.message);
+  const fileRow = (fileRowRaw || null) as
+    | null
+    | {
+        id?: unknown;
+        content?: unknown;
+        updated_at?: unknown;
+        kind?: unknown;
+        folder_id?: unknown;
+      };
+  if (!fileRow) throw new Error('Diagram file not found');
+  if (normalizeText(fileRow.kind) !== 'diagram') throw new Error('Target file is not a diagram');
+  if (normalizeText(fileRow.folder_id) !== projectFolderId) throw new Error('File does not belong to project');
+
+  const fileContent = normalizeNewlines(fileRow.content || '');
+  const fileUpdatedAt = normalizeText(fileRow.updated_at) || null;
+  const currentHash = hashMarkdown(fileContent);
+
+  if (normalizeText(selection.baseFileHash) !== currentHash) {
+    throw new Error('File changed since analysis snapshot. Re-analyze required.');
+  }
+  if (selection.baseUpdatedAt && fileUpdatedAt && normalizeText(selection.baseUpdatedAt) !== fileUpdatedAt) {
+    throw new Error('File updated timestamp changed since analysis snapshot. Re-analyze required.');
+  }
+
+  await ensureNotCancelled(job.id);
+  await updateAsyncJob(job.id, {
+    step: 'gathering_context',
+    progress_pct: 28,
+    state: {
+      ...(job.state || {}),
+      action,
+      fileId,
+      fileUpdatedAt,
+      baseHash: currentHash,
+    },
+  });
+
+  const kbQuery = buildKbQuery(action, selection);
+  const kb = await queryProjectKbContext({
+    ownerId,
+    projectFolderId,
+    query: kbQuery,
+    topK: 10,
+    apiKey: openaiApiKey,
+    embeddingModel,
+    admin,
+  });
+
+  const dataObjects = parseDataObjectsFromMarkdown(fileContent);
+
+  await ensureNotCancelled(job.id);
+  await updateAsyncJob(job.id, {
+    step: 'generating_proposal',
+    progress_pct: 58,
+    state: {
+      ...(job.state || {}),
+      kbMatches: kb.matches.length,
+      action,
+    },
+  });
+
+  let systemPrompt = '';
+  let userPrompt = '';
+  if (action === 'node_structure') {
+    const p = buildNodeStructurePrompt({
+      selection: selection as DiagramAssistNodeStructureSelection,
+      markdown: fileContent,
+      dataObjects,
+      kbContext: kb.contextText,
+    });
+    systemPrompt = p.system;
+    userPrompt = p.user;
+  } else if (action === 'data_object_attributes') {
+    const p = buildDataObjectAttributesPrompt({
+      selection: selection as DiagramAssistDataObjectAttributesSelection,
+      markdown: fileContent,
+      dataObjects,
+      kbContext: kb.contextText,
+    });
+    systemPrompt = p.system;
+    userPrompt = p.user;
+  } else {
+    const p = buildStatusPrompt({
+      selection: selection as DiagramAssistStatusDescriptionsSelection,
+      markdown: fileContent,
+      kbContext: kb.contextText,
+    });
+    systemPrompt = p.system;
+    userPrompt = p.user;
+  }
+
+  const responseText = await runOpenAIResponsesText(
+    [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt },
+    ],
+    {
+      apiKey: openaiApiKey,
+      model: chatModel,
+      withWebSearch: true,
+    },
+  );
+
+  await ensureNotCancelled(job.id);
+  await updateAsyncJob(job.id, {
+    step: 'validating_proposal',
+    progress_pct: 84,
+    state: {
+      ...(job.state || {}),
+      action,
+      kbMatches: kb.matches.length,
+    },
+  });
+
+  const parsed = extractJsonObject(responseText);
+  let proposal: DiagramAssistProposal;
+
+  if (action === 'node_structure') {
+    const selectionNode = selection as DiagramAssistNodeStructureSelection;
+    const simulated = replaceSubtreeAtLine({
+      markdown: fileContent,
+      lineIndex: selectionNode.lineIndex,
+      subtreeReplacementMarkdown: normalizeNewlines(parsed.subtreeReplacementMarkdown || selectionNode.subtreeMarkdown),
+    });
+
+    const nodeProposal = sanitizeNodeStructureProposal({
+      selection: selectionNode,
+      parsed,
+      baseFileHash: currentHash,
+      originalSubtreeMarkdown: simulated.originalSubtreeMarkdown,
+    });
+
+    const validation = validateNexusMarkdownImport(simulated.nextMarkdown);
+    nodeProposal.validationReport = {
+      errors: validation.errors.map((e) => `${e.code}: ${e.message}`).slice(0, 60),
+      warnings: validation.warnings.map((w) => `${w.code}: ${w.message}`).slice(0, 120),
+      notes: clampArray(parsed.validationNotes, { maxItems: 40, maxChars: 260 }),
+    };
+    proposal = nodeProposal;
+  } else if (action === 'data_object_attributes') {
+    proposal = sanitizeDataObjectAttributesProposal({
+      parsed,
+      selection: selection as DiagramAssistDataObjectAttributesSelection,
+      baseFileHash: currentHash,
+    });
+  } else {
+    proposal = sanitizeStatusDescriptionsProposal({
+      parsed,
+      selection: selection as DiagramAssistStatusDescriptionsSelection,
+      baseFileHash: currentHash,
+    });
+  }
+
+  return {
+    ok: true,
+    action,
+    fileId,
+    projectFolderId,
+    proposal,
+    snapshot: {
+      baseFileHash: currentHash,
+      baseUpdatedAt: fileUpdatedAt,
+      analyzedAt: new Date().toISOString(),
+    },
+    context: {
+      ragMatches: kb.matches.length,
+      withWebSearch: true,
+    },
+  };
+}

@@ -54,7 +54,7 @@ This repo already exports a **semantic KG + “chunks to embed”** from a proje
 - **4) Run the async worker** on Render using:
   - Build command: `npm install`
   - Start command: `npm run worker:async`
-- **5) In the app**: open a project → **Project → Build knowledge base (RAG)**.
+- **5) In the app**: open a project → **RAG → Build knowledge base (RAG)**.
 - **6) Query API**:
   - `POST /api/rag/query` with JSON `{ "query": "..." , "projectFolderId": "<uuid>" }`
 
@@ -75,8 +75,8 @@ If you deploy the hosted MCP server (see `mcp-server-*` folders), you have two i
 Setup:
 
 - Deploy the MCP server and set `NEXT_PUBLIC_MCP_SERVER_URL` in the `web` app (e.g. `https://mcp.yourdomain.com`).
-- In the app: open a project → **Project → Copy MCP server URL**
-- Give that copied URL to users (it includes an opaque token).
+- In the app: go to **Account → MCP SSH Setup**, choose a target client, then generate and copy the provided MCP config (URL/snippet).
+- Share that generated MCP config with users.
 
 Users will still need an embeddings credential to run RAG queries. If you don't want a server-side OpenAI key,
 have users set their own OpenAI key in their MCP client (e.g. Cursor) as a header `x-openai-api-key: sk-...`.
@@ -85,7 +85,7 @@ have users set their own OpenAI key in their MCP client (e.g. Cursor) as a heade
 
 Instead of one MCP URL per project:
 
-- In the app: **Project → Copy MCP URL (account)**
+- In the app: **Account → MCP SSH Setup** (generate account-scoped setup, or pick a default project when needed)
 - Users add that one URL once.
 - Then they can use MCP tools:
   - `diregram_list_projects`

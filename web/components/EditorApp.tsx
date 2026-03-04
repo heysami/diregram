@@ -61,6 +61,9 @@ import { normalizeLayoutDirection, type LayoutDirection } from '@/lib/layout-dir
 import { canEditFromAccess } from '@/lib/access-control';
 import { fetchProfileDefaultLayoutDirection } from '@/lib/layout-direction-supabase';
 import { listGlobalTemplates, loadGlobalTemplateContent } from '@/lib/global-templates';
+import { useAsyncJobQueue, type AsyncTrackedJob } from '@/hooks/use-async-job-queue';
+import { AsyncProcessingDrawer } from '@/components/async-jobs/AsyncProcessingDrawer';
+import { DiagramAiProposalModal } from '@/components/diagram-ai/DiagramAiProposalModal';
 
 const VIEW_SWITCH_FADE_OUT_MS = 120;
 const VIEW_SWITCH_SETTLE_MS = 150;
@@ -166,6 +169,8 @@ export function EditorApp() {
   const [templateFiles, setTemplateFiles] = useState<
     Array<{ id: string; name: string; kind: 'note' | 'diagram' | 'grid' | 'vision' | 'template' }>
   >([]);
+  const asyncQueue = useAsyncJobQueue();
+  const [diagramAssistProposalJob, setDiagramAssistProposalJob] = useState<AsyncTrackedJob | null>(null);
 
   const ensureTemplatesFolderId = useCallback(async (scopeOverride?: 'project' | 'account'): Promise<string | null> => {
     const scope = scopeOverride || (templateScope === 'account' ? 'account' : 'project');
@@ -1689,6 +1694,10 @@ export function EditorApp() {
             <DataObjectsCanvas
               doc={doc}
               roots={roots.filter((r) => !(r.metadata as any)?.flowTab && !(r.metadata as any)?.systemFlow)}
+              fileId={activeFile?.id || null}
+              projectFolderId={activeFile?.folderId || null}
+              aiFeaturesEnabled={supabaseMode}
+              onTrackAsyncJob={asyncQueue.trackJob}
               activeTool={activeTool}
               presence={presence}
               showComments={showComments}
@@ -1952,6 +1961,10 @@ export function EditorApp() {
               <LogicPanel
                 node={selectedNode}
                 doc={doc}
+                fileId={activeFile?.id || null}
+                projectFolderId={activeFile?.folderId || null}
+                aiFeaturesEnabled={supabaseMode}
+                onTrackAsyncJob={asyncQueue.trackJob}
                 activeVariantId={selectedActiveVariantId}
                 roots={roots}
                 expandedNodes={expandedNodes}
@@ -2038,6 +2051,18 @@ export function EditorApp() {
           canRedo={canRedo}
         />
       </div>
+      <AsyncProcessingDrawer
+        jobs={asyncQueue.jobs}
+        onCancelJob={asyncQueue.cancelJob}
+        onRemoveJob={asyncQueue.removeJob}
+        onClearFinished={asyncQueue.clearFinished}
+        onReviewDiagramAssistProposal={(trackedJob) => setDiagramAssistProposalJob(trackedJob)}
+      />
+      <DiagramAiProposalModal
+        job={diagramAssistProposalJob}
+        doc={doc}
+        onClose={() => setDiagramAssistProposalJob(null)}
+      />
       {!screenReady ? <div className="absolute inset-0 z-[120] mac-desktop dg-screen-loading pointer-events-none" aria-hidden="true" /> : null}
     </main>
   );

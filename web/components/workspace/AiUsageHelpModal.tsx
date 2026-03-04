@@ -24,7 +24,7 @@ function buildPlainTextSteps() {
     '',
     'Stage 1 — Prepare inputs (strict skills + resources)',
     '- Download strict-plan agent skills: (1) Generation + Checklist and (2) MCP RAG Operator.',
-    '- Keep legacy markdown bundles only as fallback reference.',
+    '- Keep diagram/vision markdown guide bundles available for guided generation and checks.',
     '- Put them in your Cursor project folder along with your source resources.',
     '- Convert resources to markdown (e.g. via Docling) so the AI can cite them cleanly.',
     '',
@@ -69,8 +69,8 @@ export function AiUsageHelpModal({ open, onClose }: { open: boolean; onClose: ()
           },
           {
             icon: FileText,
-            title: 'Keep markdown bundles as fallback',
-            detail: <>Legacy markdown guide bundles are still available as fallback references.</>,
+            title: 'Keep markdown guide bundles available',
+            detail: <>Diagram and Vision markdown guide bundles are still useful for guided generation and verification.</>,
           },
           {
             icon: Folder,
@@ -251,46 +251,50 @@ export function AiUsageHelpModal({ open, onClose }: { open: boolean; onClose: ()
           </button>
         </div>
 
-        <div className="p-4 flex-1 min-h-0 overflow-auto text-[12px] space-y-4">
-          <div className="text-[11px] text-slate-600">
-            This is the recommended end-to-end sequence for generating, validating, importing, exporting, and turning a Diregram project into a queryable RAG knowledge base.
-          </div>
-
+        <div className="shrink-0 border-b border-slate-200 bg-slate-50 px-4 py-3 space-y-2">
+          <div className="text-[11px] text-slate-700 font-semibold">Quick actions</div>
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
               className="mac-btn h-8 flex items-center gap-2"
               onClick={() => void downloadGenerationSkill()}
-              title="Downloads strict-plan agent skill ZIP"
+              title="Download strict-plan agent skill ZIP"
             >
               <Download size={14} />
-              Download Agent Skill (Strict Plan): Generation + Checklist
+              Download skill: Generation + checklist
             </button>
             <button
               type="button"
               className="mac-btn h-8 flex items-center gap-2"
               onClick={() => void downloadMcpSkill()}
-              title="Downloads strict-plan agent skill ZIP"
+              title="Download strict-plan agent skill ZIP"
             >
               <Download size={14} />
-              Download Agent Skill (Strict Plan): MCP RAG Operator
+              Download skill: MCP RAG operator
             </button>
             <button type="button" className="mac-btn h-8 flex items-center gap-2" onClick={openAccountMcpSetup} title="Open Account MCP setup">
               <AppWindow size={14} />
               Open Account MCP setup
             </button>
-            <button type="button" className="mac-btn h-8 flex items-center gap-2" onClick={() => void downloadDiagram()} title="Downloads legacy .md bundle">
+            <button type="button" className="mac-btn h-8 flex items-center gap-2" onClick={() => void downloadDiagram()} title="Download .md guides bundle">
               <Download size={14} />
-              Download diagram guides bundle (legacy .md)
+              Download diagram guides + checklists (.md)
             </button>
-            <button type="button" className="mac-btn h-8 flex items-center gap-2" onClick={() => void downloadVision()} title="Downloads legacy .md bundle">
+            <button type="button" className="mac-btn h-8 flex items-center gap-2" onClick={() => void downloadVision()} title="Download .md guides bundle">
               <Download size={14} />
-              Download Vision guides bundle (legacy .md)
+              Download Vision guides + checklists (.md)
             </button>
             <button type="button" className="mac-btn h-8 flex items-center gap-2" onClick={() => void copy()} title="Copy the sequence for Cursor/AI">
               <Clipboard size={14} />
               Copy steps
             </button>
+          </div>
+          {copyStatus ? <div className="text-[11px] text-slate-600">{copyStatus}</div> : null}
+        </div>
+
+        <div className="p-4 flex-1 min-h-0 overflow-auto text-[12px] space-y-4">
+          <div className="text-[11px] text-slate-600">
+            This is the recommended end-to-end sequence for generating, validating, importing, exporting, and turning a Diregram project into a queryable RAG knowledge base.
           </div>
 
           <div className="space-y-3">
@@ -324,11 +328,9 @@ export function AiUsageHelpModal({ open, onClose }: { open: boolean; onClose: ()
           </div>
 
           <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-[11px] text-slate-700">
-            Tip: most of the “project-level” actions you’ll need are already under <span className="font-semibold">Project → …</span> in the workspace header (download
-            bundles, download strict agent skills, export semantic KG, build RAG KB, copy MCP URL, and jump to Account MCP setup).
+            Tip: use <span className="font-semibold">+ New</span> for creation and AI generation, <span className="font-semibold">RAG</span> for build/export actions,
+            and this modal’s <span className="font-semibold">Quick actions</span> for skill/guide downloads and copy helpers.
           </div>
-
-          {copyStatus ? <div className="text-[11px] text-slate-600">{copyStatus}</div> : null}
         </div>
       </div>
     </div>

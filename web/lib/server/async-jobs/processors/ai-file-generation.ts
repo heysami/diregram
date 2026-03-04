@@ -662,6 +662,60 @@ function isDefaultLikeColorSystem(spec: VisionDesignSystemV1): boolean {
   return pairingLooksDefault && ratioLooksDefault && controlsLooksDefault;
 }
 
+function cloneVisionDesignSystem(spec: VisionDesignSystemV1): VisionDesignSystemV1 {
+  return JSON.parse(JSON.stringify(normalizeVisionDesignSystem(spec))) as VisionDesignSystemV1;
+}
+
+function mergeColorPassDesignSystem(base: VisionDesignSystemV1, incoming: VisionDesignSystemV1): VisionDesignSystemV1 {
+  const draft = cloneVisionDesignSystem(base);
+  const src = normalizeVisionDesignSystem(incoming);
+  draft.activeScenarioId = src.activeScenarioId;
+  draft.scenarios = src.scenarios;
+  draft.foundations.imageProfiles = src.foundations.imageProfiles;
+  draft.controls.surfaceSaturation = src.controls.surfaceSaturation;
+  draft.controls.itemSaturation = src.controls.itemSaturation;
+  draft.controls.colorVariance = src.controls.colorVariance;
+  draft.controls.colorBleed = src.controls.colorBleed;
+  draft.controls.colorBleedTone = src.controls.colorBleedTone;
+  draft.controls.colorBleedCustom = src.controls.colorBleedCustom;
+  draft.controls.colorBleedText = src.controls.colorBleedText;
+  draft.controls.boldness = src.controls.boldness;
+  draft.controls.boldTypographyStyle = src.controls.boldTypographyStyle;
+  draft.controls.boldGradientSource = src.controls.boldGradientSource;
+  draft.controls.boldGradientFrom = src.controls.boldGradientFrom;
+  draft.controls.boldGradientMid = src.controls.boldGradientMid;
+  draft.controls.boldGradientTo = src.controls.boldGradientTo;
+  draft.controls.darkMode = { ...src.controls.darkMode };
+  return normalizeVisionDesignSystem(draft);
+}
+
+function mergeDensityShapePassDesignSystem(base: VisionDesignSystemV1, incoming: VisionDesignSystemV1): VisionDesignSystemV1 {
+  const draft = cloneVisionDesignSystem(base);
+  const src = normalizeVisionDesignSystem(incoming);
+  draft.controls.pillTargets = [...src.controls.pillTargets];
+  draft.controls.spacing = { ...src.controls.spacing };
+  draft.controls.flatness = src.controls.flatness;
+  draft.controls.zoning = src.controls.zoning;
+  draft.controls.softness = src.controls.softness;
+  draft.controls.wireframeFeeling = src.controls.wireframeFeeling;
+  draft.controls.visualRange = src.controls.visualRange;
+  draft.controls.skeuomorphism = src.controls.skeuomorphism;
+  draft.controls.skeuomorphismStyle = src.controls.skeuomorphismStyle;
+  draft.controls.negativeZoneStyle = src.controls.negativeZoneStyle;
+  return normalizeVisionDesignSystem(draft);
+}
+
+function mergeTypographyPassDesignSystem(base: VisionDesignSystemV1, incoming: VisionDesignSystemV1): VisionDesignSystemV1 {
+  const draft = cloneVisionDesignSystem(base);
+  const src = normalizeVisionDesignSystem(incoming);
+  draft.foundations.fontFamily = src.foundations.fontFamily;
+  draft.foundations.headingFontFamily = src.foundations.headingFontFamily;
+  draft.foundations.decorativeFontFamily = src.foundations.decorativeFontFamily;
+  draft.controls.fontVariance = src.controls.fontVariance;
+  draft.controls.typography = { ...src.controls.typography };
+  return normalizeVisionDesignSystem(draft);
+}
+
 async function extractVisionStyleAnchors(input: {
   prompt: string;
   contextText: string;
@@ -732,7 +786,7 @@ async function generateVisionDesignSystem(input: {
     styleAnchors = null;
   }
 
-  const anchorHint =
+  const anchorHintText =
     styleAnchors && hasArtifacts
       ? [
           'STYLE ANCHORS (extracted from artifacts):',
@@ -752,49 +806,10 @@ async function generateVisionDesignSystem(input: {
       : '';
 
   const primitiveIds = primitiveIdAllowlistText();
-  const systemLines = [
-    'Return ONLY JSON. No markdown fences.',
-    'Task: Generate a Diregram Vision design system object (version:1) that copies style from provided artifacts.',
-    'Required top-level shape: {"version":1,"activeScenarioId":"base","scenarios":[...],"foundations":{...},"controls":{...}}',
-    'Use palette.pairings to specify primitive mapping and overrides.',
-    'Allowed primitive ids:',
-    primitiveIds,
-    'INTERNAL RENDER CONTRACT (not user-visible):',
-    '- Your JSON is inserted into markdown as visionjson.designSystem and mirrored in a vision-design-system block.',
-    '- Diregram then normalizes your object and derives final visual tokens from controls/scenarios/foundations.',
-    '- Therefore, choose property values for visual fidelity, not placeholder defaults.',
-    'PRIORITY ORDER:',
-    '1) Match color palette, color temperature, contrast, and neutral/accent balance from artifacts.',
-    '2) Match structural feel (density, spacing rhythm, roundness/material).',
-    '3) Match typography family/variance.',
-    '- Do not sacrifice color fidelity just to satisfy typography/spacing hints.',
-    'VISUAL MAPPING GUIDE:',
-    '- Typography likeness: foundations.fontFamily, headingFontFamily, decorativeFontFamily, controls.typography.* and controls.fontVariance.',
-    '- Spacing rhythm: controls.spacing.pattern, controls.spacing.density, controls.spacing.aroundVsInside.',
-    '- Shape softness: controls.softness and controls.flatness (affects corner feel and material flatness).',
-    '- Zoning/composition: controls.zoning and controls.negativeZoneStyle.',
-    '- Color behavior: scenario.palette.pairings.*, scenario.ratios.*, controls.surfaceSaturation, itemSaturation, colorVariance, colorBleed, colorBleedTone.',
-    '- Material style: controls.skeuomorphism and controls.skeuomorphismStyle.',
-    '- Bold emphasis: controls.boldness, controls.boldTypographyStyle, controls.boldGradient*.',
-    '- Image look: foundations.imageProfiles[].style/lighting/lineWeight/notes should mirror artifact visual language.',
-    'QUALITY CHECKLIST BEFORE RETURN:',
-    '- Use primitives that match the artifact hue families and contrast.',
-    '- Keep UI ratio totals coherent (neutral vs primary vs accent) and non-random.',
-    '- Avoid contradictory combinations (e.g., high wireframeFeeling with heavy skeuomorphic gloss unless artifacts justify it).',
-    '- Prefer one coherent scenario ("base") over multiple weak scenarios.',
-    'EXPLICIT CONTROLS REQUIREMENT:',
-    '- Do not omit control keys. Include explicit values for every slider-related field.',
-    '- Required numeric slider fields: typography.sizeGrowth, typography.weightGrowth, typography.contrast, spacing.pattern, spacing.density, spacing.aroundVsInside, flatness, zoning, softness, surfaceSaturation, itemSaturation, colorVariance, colorBleed, colorBleedText, wireframeFeeling, visualRange, skeuomorphism, negativeZoneStyle, boldness.',
-    '- Also include explicit typography.baseSizePx and typography.baseWeight values.',
-    '- Include explicit enum fields: fontVariance, skeuomorphismStyle, colorBleedTone, boldTypographyStyle, boldGradientSource.',
-    '- Include explicit gradient colors: boldGradientFrom, boldGradientMid, boldGradientTo.',
-    '- Include explicit dark mode block with values for showPreview, useOverrides, canvasBg, surfaceBg, panelBg, separator, textPrimary, textSecondary, textMuted, primary, accent, buttonBg.',
-    '- Include explicit foundation fonts: fontFamily, headingFontFamily, decorativeFontFamily.',
-    'Controls are integers 0..100 where applicable.',
-    'If unsure, keep values conservative and coherent.',
-  ];
   const imageNotes = input.artifactImages.map((img, idx) => `${idx + 1}. ${img.name}`).join('\n');
-  const userContent: Array<{ type: 'input_text'; text: string } | { type: 'input_image'; image_url: string; detail?: 'low' | 'high' | 'auto' }> = [
+  const baseUserContent: Array<
+    { type: 'input_text'; text: string } | { type: 'input_image'; image_url: string; detail?: 'low' | 'high' | 'auto' }
+  > = [
     {
       type: 'input_text',
       text: [
@@ -810,47 +825,171 @@ async function generateVisionDesignSystem(input: {
       detail: 'low' as const,
     })),
   ];
-  const runAttempt = async (extraSystem?: string, previousAttempt?: string) => {
-    const retryUserContent = previousAttempt
-      ? [
-          ...userContent,
-          {
-            type: 'input_text' as const,
-            text: `Previous attempt looked generic/barebones. Improve fidelity and avoid zeroed sliders unless explicitly supported.\n\nPrevious JSON:\n${clipText(previousAttempt, 8000)}`,
-          },
-        ]
-      : userContent;
-    const messages: Array<{ role: 'system' | 'user'; content: string | typeof userContent }> = [
-      { role: 'system', content: systemLines.join('\n') },
-      ...(anchorHint ? [{ role: 'system' as const, content: anchorHint }] : []),
-      ...(extraSystem ? [{ role: 'system' as const, content: extraSystem }] : []),
-      { role: 'user', content: retryUserContent },
+
+  const commonSystemLines = [
+    'Return ONLY JSON. No markdown fences.',
+    'Task: Generate a Diregram Vision design system object (version:1) that copies style from provided artifacts.',
+    'Required top-level shape: {"version":1,"activeScenarioId":"base","scenarios":[...],"foundations":{...},"controls":{...}}',
+    'Use palette.pairings to specify primitive mapping and overrides.',
+    'Allowed primitive ids:',
+    primitiveIds,
+    'INTERNAL RENDER CONTRACT (not user-visible):',
+    '- Your JSON is inserted into markdown as visionjson.designSystem and mirrored in a vision-design-system block.',
+    '- Diregram normalizes your object and derives rendered visuals from scenarios/foundations/controls.',
+    '- Choose values for fidelity, not placeholder defaults.',
+    'Pass outputs are merged by field ownership:',
+    '- Color+visual pass owns scenario palette/ratios and color-related controls.',
+    '- Density+shape pass owns spacing/roundness/material controls.',
+    '- Typography pass owns fonts and type scale controls.',
+  ];
+
+  const runPass = async (opts: {
+    passName: 'color_visual' | 'density_shape' | 'typography';
+    focusLines: string[];
+    currentMerged?: VisionDesignSystemV1 | null;
+    previousAttempt?: string;
+    extraSystem?: string;
+  }): Promise<{ output: string; extracted: VisionDesignSystemV1 | null }> => {
+    const passUserContent = [...baseUserContent];
+    if (opts.currentMerged) {
+      passUserContent.push({
+        type: 'input_text',
+        text: [
+          'Current merged design system context (preserve non-focus fields):',
+          clipText(JSON.stringify(normalizeVisionDesignSystem(opts.currentMerged)), 12000),
+        ].join('\n'),
+      });
+    }
+    if (opts.previousAttempt) {
+      passUserContent.push({
+        type: 'input_text',
+        text: `Previous ${opts.passName} attempt was weak. Improve fidelity and keep every pass field explicit.\n\nPrevious JSON:\n${clipText(
+          opts.previousAttempt,
+          9000,
+        )}`,
+      });
+    }
+
+    const messages: Array<{ role: 'system' | 'user'; content: string | typeof baseUserContent }> = [
+      { role: 'system', content: [...commonSystemLines, `Pass: ${opts.passName}`, ...opts.focusLines].join('\n') },
+      ...(anchorHintText ? [{ role: 'system' as const, content: anchorHintText }] : []),
+      ...(opts.extraSystem ? [{ role: 'system' as const, content: opts.extraSystem }] : []),
+      { role: 'user', content: passUserContent },
     ];
-    const output = await runOpenAIResponsesText(messages, { apiKey: input.apiKey, model: input.chatModel, withWebSearch: false });
-    const parsed = parseJsonObject(output);
-    const extracted = extractVisionDesignSystemCandidate(parsed);
-    const adjusted = extracted ? applyVisionStyleAnchors(extracted, styleAnchors) : null;
-    return { output, extracted: adjusted };
+    const output = await runOpenAIResponsesText(messages, {
+      apiKey: input.apiKey,
+      model: input.chatModel,
+      withWebSearch: false,
+    });
+    return { output, extracted: extractVisionDesignSystemCandidate(parseJsonObject(output)) };
   };
 
-  const first = await runAttempt();
-  const firstNeedsRevision = Boolean(
-    hasArtifacts &&
-      first.extracted &&
-      (isBarebonesDesignSystem(first.extracted) || isDefaultLikeColorSystem(first.extracted)),
-  );
-  if (first.extracted && !firstNeedsRevision) return normalizeVisionDesignSystem(first.extracted);
-  if (first.extracted && !normalizeText(input.artifactContext) && input.artifactImages.length === 0) {
-    return normalizeVisionDesignSystem(first.extracted);
+  const colorFocusLines = [
+    'PRIMARY GOAL: Match artifact color system and color-led visual tone.',
+    'Keep one coherent base scenario with believable palette pairings and ratios.',
+    'Fields that must be explicit in this pass:',
+    '- activeScenarioId',
+    '- scenarios[0].palette.pairings.{primaryPrimitive,accentPrimitives,neutralPrimitives,semanticPrimitives,primitiveOverrides}',
+    '- scenarios[0].ratios[] (coherent neutral/primary/accent/semantic proportions)',
+    '- controls.surfaceSaturation, itemSaturation, colorVariance, colorBleed, colorBleedTone, colorBleedCustom, colorBleedText, boldness',
+    '- controls.boldTypographyStyle, boldGradientSource, boldGradientFrom, boldGradientMid, boldGradientTo',
+    '- controls.darkMode.{showPreview,useOverrides,canvasBg,surfaceBg,panelBg,separator,textPrimary,textSecondary,textMuted,primary,accent,buttonBg}',
+    '- foundations.imageProfiles[] to mirror visual language of artifacts',
+    'Do not default to blue/violet templates unless artifacts explicitly show that family.',
+  ];
+  const densityFocusLines = [
+    'PRIMARY GOAL: Match spacing rhythm, density, roundness, zoning, and material behavior.',
+    'Fields that must be explicit in this pass:',
+    '- controls.pillTargets',
+    '- controls.spacing.{pattern,density,aroundVsInside}',
+    '- controls.flatness, zoning, softness',
+    '- controls.wireframeFeeling, visualRange',
+    '- controls.skeuomorphism, skeuomorphismStyle',
+    '- controls.negativeZoneStyle',
+    'Preserve existing color scenario choices from current merged context.',
+  ];
+  const typographyFocusLines = [
+    'PRIMARY GOAL: Match typography family, companion fonts, and scale behavior.',
+    'Fields that must be explicit in this pass:',
+    '- foundations.fontFamily, foundations.headingFontFamily, foundations.decorativeFontFamily',
+    '- controls.fontVariance',
+    '- controls.typography.{baseSizePx,baseWeight,sizeGrowth,weightGrowth,contrast}',
+    'Use exact family naming where artifacts clearly suggest a font.',
+    'Preserve existing scenario and color controls from current merged context.',
+  ];
+
+  const colorFirst = await runPass({ passName: 'color_visual', focusLines: colorFocusLines });
+  let colorFinal = colorFirst;
+  if (hasArtifacts && (!colorFinal.extracted || isDefaultLikeColorSystem(colorFinal.extracted))) {
+    colorFinal = await runPass({
+      passName: 'color_visual',
+      focusLines: colorFocusLines,
+      previousAttempt: colorFirst.output,
+      extraSystem:
+        'REVISION MODE: color mismatch detected. Force artifact palette fidelity first and avoid generic/default pairings.',
+    });
   }
 
-  const second = await runAttempt(
-    'REVISION MODE: prioritize matching artifact color system first. Avoid template/default blue-violet pairings unless strongly evidenced. Keep typography/spacing/roundness aligned but secondary.',
-    first.output,
-  );
-  if (second.extracted) return normalizeVisionDesignSystem(second.extracted);
-  if (first.extracted) return normalizeVisionDesignSystem(first.extracted);
-  throw new Error('AI did not return a valid Vision design system JSON payload.');
+  let merged = colorFinal.extracted ? mergeColorPassDesignSystem(defaultVisionDesignSystem(), colorFinal.extracted) : defaultVisionDesignSystem();
+
+  const densityFirst = await runPass({
+    passName: 'density_shape',
+    focusLines: densityFocusLines,
+    currentMerged: merged,
+  });
+  let densityFinal = densityFirst;
+  if (!densityFinal.extracted) {
+    densityFinal = await runPass({
+      passName: 'density_shape',
+      focusLines: densityFocusLines,
+      currentMerged: merged,
+      previousAttempt: densityFirst.output,
+      extraSystem: 'REVISION MODE: density/shape fields were missing or invalid. Return valid explicit control values.',
+    });
+  }
+  if (densityFinal.extracted) {
+    merged = mergeDensityShapePassDesignSystem(merged, densityFinal.extracted);
+  }
+
+  const typographyFirst = await runPass({
+    passName: 'typography',
+    focusLines: typographyFocusLines,
+    currentMerged: merged,
+  });
+  let typographyFinal = typographyFirst;
+  if (!typographyFinal.extracted) {
+    typographyFinal = await runPass({
+      passName: 'typography',
+      focusLines: typographyFocusLines,
+      currentMerged: merged,
+      previousAttempt: typographyFirst.output,
+      extraSystem: 'REVISION MODE: typography fields were missing or invalid. Return explicit fonts and type controls.',
+    });
+  }
+  if (typographyFinal.extracted) {
+    merged = mergeTypographyPassDesignSystem(merged, typographyFinal.extracted);
+  }
+
+  merged = applyVisionStyleAnchors(merged, styleAnchors);
+
+  if (hasArtifacts && isDefaultLikeColorSystem(merged)) {
+    const recovery = await runPass({
+      passName: 'color_visual',
+      focusLines: colorFocusLines,
+      currentMerged: merged,
+      extraSystem:
+        'EMERGENCY COLOR RECOVERY: final output still looks default/template. Replace palette/ratios with artifact-faithful values.',
+    });
+    if (recovery.extracted && !isDefaultLikeColorSystem(recovery.extracted)) {
+      merged = mergeColorPassDesignSystem(merged, recovery.extracted);
+    }
+  }
+
+  const finalized = normalizeVisionDesignSystem(merged);
+  if (isBarebonesDesignSystem(finalized)) {
+    throw new Error('AI returned a barebones Vision design system after multi-pass generation.');
+  }
+  return finalized;
 }
 
 function storyRowsToGridMarkdown(stories: StoryRow[]): string {

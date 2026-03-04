@@ -399,7 +399,6 @@ export function WorkspaceBrowser() {
                     return next;
                   });
                 }}
-                onCopyMcpAccountUrl={undefined}
                 onCopyProjectLink={async () => {
                   const origin = typeof window !== 'undefined' ? window.location.origin : '';
                   if (!origin) return;

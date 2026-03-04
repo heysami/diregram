@@ -36,12 +36,14 @@ export function AsyncProcessingDrawer({
   onRemoveJob,
   onClearFinished,
   onApplyGridRuleResult,
+  onReviewDiagramAssistProposal,
 }: {
   jobs: AsyncTrackedJob[];
   onCancelJob: (jobId: string) => Promise<{ ok: boolean; error?: string }>;
   onRemoveJob: (jobId: string) => void;
   onClearFinished: () => void;
   onApplyGridRuleResult?: (job: AsyncTrackedJob) => void;
+  onReviewDiagramAssistProposal?: (job: AsyncTrackedJob) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [busyJobId, setBusyJobId] = useState<string | null>(null);
@@ -80,6 +82,7 @@ export function AsyncProcessingDrawer({
               const canCancel = j.status === 'queued' || j.status === 'running';
               const createdFiles = getCreatedFiles(j.result);
               const isGridRule = String(j.kind || '') === 'ai_grid_rule';
+              const isDiagramAssist = String(j.kind || '') === 'ai_diagram_assist';
               return (
                 <div key={j.id} className="mac-double-outline p-2 text-xs space-y-1">
                   <div className="flex items-center justify-between gap-2">
@@ -121,6 +124,16 @@ export function AsyncProcessingDrawer({
                         title="Apply returned updates to this open grid editor"
                       >
                         Apply updates
+                      </button>
+                    ) : null}
+                    {isDiagramAssist && j.status === 'succeeded' && onReviewDiagramAssistProposal ? (
+                      <button
+                        type="button"
+                        className="mac-btn h-7"
+                        onClick={() => onReviewDiagramAssistProposal(j)}
+                        title="Open AI proposal preview and apply options"
+                      >
+                        Review proposal
                       </button>
                     ) : null}
                     {j.status === 'succeeded' && createdFiles.length
