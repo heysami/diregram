@@ -588,18 +588,25 @@ function softnessFromTone(tone: VisionStyleAnchors['roundnessTone']): number | n
 function applyVisionStyleAnchors(
   spec: VisionDesignSystemV1,
   anchors: VisionStyleAnchors | null,
-  opts?: { hasArtifacts?: boolean },
 ): VisionDesignSystemV1 {
   if (!anchors) return normalizeVisionDesignSystem(spec);
-  const hasArtifacts = Boolean(opts?.hasArtifacts);
   const baseDefault = defaultVisionDesignSystem();
   const draft = JSON.parse(JSON.stringify(normalizeVisionDesignSystem(spec))) as VisionDesignSystemV1;
 
-  const hasFontHints = Boolean(anchors.fontFamily || anchors.headingFontFamily || anchors.decorativeFontFamily);
-  if (hasFontHints || hasArtifacts) {
-    if (anchors.fontFamily) draft.foundations.fontFamily = anchors.fontFamily;
-    if (anchors.headingFontFamily) draft.foundations.headingFontFamily = anchors.headingFontFamily;
-    if (anchors.decorativeFontFamily) draft.foundations.decorativeFontFamily = anchors.decorativeFontFamily;
+  if (anchors.fontFamily && (!normalizeText(draft.foundations.fontFamily) || draft.foundations.fontFamily === baseDefault.foundations.fontFamily)) {
+    draft.foundations.fontFamily = anchors.fontFamily;
+  }
+  if (
+    anchors.headingFontFamily &&
+    (!normalizeText(draft.foundations.headingFontFamily || '') || draft.foundations.headingFontFamily === baseDefault.foundations.headingFontFamily)
+  ) {
+    draft.foundations.headingFontFamily = anchors.headingFontFamily;
+  }
+  if (
+    anchors.decorativeFontFamily &&
+    (!normalizeText(draft.foundations.decorativeFontFamily || '') || draft.foundations.decorativeFontFamily === baseDefault.foundations.decorativeFontFamily)
+  ) {
+    draft.foundations.decorativeFontFamily = anchors.decorativeFontFamily;
   }
 
   const spacingToneValues = spacingFromTone(anchors.spacingTone);
@@ -614,7 +621,7 @@ function applyVisionStyleAnchors(
     Math.abs(draft.controls.spacing.density - baseDefault.controls.spacing.density) <= 4 &&
     Math.abs(draft.controls.spacing.aroundVsInside - baseDefault.controls.spacing.aroundVsInside) <= 4;
 
-  if (spacingLooksDefault || hasArtifacts) {
+  if (spacingLooksDefault) {
     if (Number.isFinite(spacingPattern)) draft.controls.spacing.pattern = Math.max(0, Math.min(100, Math.round(spacingPattern || 0)));
     if (Number.isFinite(spacingDensity)) draft.controls.spacing.density = Math.max(0, Math.min(100, Math.round(spacingDensity || 0)));
     if (Number.isFinite(spacingAroundVsInside)) {
@@ -625,11 +632,34 @@ function applyVisionStyleAnchors(
   const softFromTone = softnessFromTone(anchors.roundnessTone);
   const softValue = Number.isFinite(anchors.softness) ? Number(anchors.softness) : softFromTone;
   const softnessLooksDefault = Math.abs(draft.controls.softness - baseDefault.controls.softness) <= 4;
-  if ((softnessLooksDefault || hasArtifacts) && Number.isFinite(softValue)) {
+  if (softnessLooksDefault && Number.isFinite(softValue)) {
     draft.controls.softness = Math.max(0, Math.min(100, Math.round(softValue || 0)));
   }
 
   return normalizeVisionDesignSystem(draft);
+}
+
+function isDefaultLikeColorSystem(spec: VisionDesignSystemV1): boolean {
+  const ds = normalizeVisionDesignSystem(spec);
+  const active = ds.scenarios.find((s) => s.id === ds.activeScenarioId) || ds.scenarios[0];
+  if (!active) return false;
+  const pairings = active.palette.pairings;
+  const primaryPrimitive = String(pairings?.primaryPrimitive || '').trim();
+  const accentPrimitives = (pairings?.accentPrimitives || []).slice(0, 3).map((x) => String(x || '').trim());
+  const uiRatio = active.ratios.find((r) => r.scope === 'ui' || r.scope === 'all') || active.ratios[0];
+  const near = (a: number, b: number, tol: number) => Math.abs(a - b) <= tol;
+  const ratioLooksDefault =
+    !!uiRatio &&
+    near(Number(uiRatio.neutralPct || 0), 74, 10) &&
+    near(Number(uiRatio.primaryPct || 0), 16, 10) &&
+    near(Number(uiRatio.accentPct || 0), 6, 8);
+  const controlsLooksDefault =
+    near(ds.controls.surfaceSaturation, 18, 10) &&
+    near(ds.controls.itemSaturation, 52, 10) &&
+    near(ds.controls.colorVariance, 34, 10) &&
+    near(ds.controls.colorBleed, 20, 10);
+  const pairingLooksDefault = primaryPrimitive === 'blue-600' && accentPrimitives.includes('violet-600');
+  return pairingLooksDefault && ratioLooksDefault && controlsLooksDefault;
 }
 
 async function extractVisionStyleAnchors(input: {
@@ -733,6 +763,11 @@ async function generateVisionDesignSystem(input: {
     '- Your JSON is inserted into markdown as visionjson.designSystem and mirrored in a vision-design-system block.',
     '- Diregram then normalizes your object and derives final visual tokens from controls/scenarios/foundations.',
     '- Therefore, choose property values for visual fidelity, not placeholder defaults.',
+    'PRIORITY ORDER:',
+    '1) Match color palette, color temperature, contrast, and neutral/accent balance from artifacts.',
+    '2) Match structural feel (density, spacing rhythm, roundness/material).',
+    '3) Match typography family/variance.',
+    '- Do not sacrifice color fidelity just to satisfy typography/spacing hints.',
     'VISUAL MAPPING GUIDE:',
     '- Typography likeness: foundations.fontFamily, headingFontFamily, decorativeFontFamily, controls.typography.* and controls.fontVariance.',
     '- Spacing rhythm: controls.spacing.pattern, controls.spacing.density, controls.spacing.aroundVsInside.',
@@ -794,18 +829,23 @@ async function generateVisionDesignSystem(input: {
     const output = await runOpenAIResponsesText(messages, { apiKey: input.apiKey, model: input.chatModel, withWebSearch: false });
     const parsed = parseJsonObject(output);
     const extracted = extractVisionDesignSystemCandidate(parsed);
-    const adjusted = extracted ? applyVisionStyleAnchors(extracted, styleAnchors, { hasArtifacts }) : null;
+    const adjusted = extracted ? applyVisionStyleAnchors(extracted, styleAnchors) : null;
     return { output, extracted: adjusted };
   };
 
   const first = await runAttempt();
-  if (first.extracted && !isBarebonesDesignSystem(first.extracted)) return normalizeVisionDesignSystem(first.extracted);
+  const firstNeedsRevision = Boolean(
+    hasArtifacts &&
+      first.extracted &&
+      (isBarebonesDesignSystem(first.extracted) || isDefaultLikeColorSystem(first.extracted)),
+  );
+  if (first.extracted && !firstNeedsRevision) return normalizeVisionDesignSystem(first.extracted);
   if (first.extracted && !normalizeText(input.artifactContext) && input.artifactImages.length === 0) {
     return normalizeVisionDesignSystem(first.extracted);
   }
 
   const second = await runAttempt(
-    'REVISION MODE: prioritize matching artifact style over conservative defaults. Fill missing controls with coherent, non-zero values when style evidence exists.',
+    'REVISION MODE: prioritize matching artifact color system first. Avoid template/default blue-violet pairings unless strongly evidenced. Keep typography/spacing/roundness aligned but secondary.',
     first.output,
   );
   if (second.extracted) return normalizeVisionDesignSystem(second.extracted);
