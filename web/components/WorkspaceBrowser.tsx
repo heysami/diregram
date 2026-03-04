@@ -28,6 +28,7 @@ import {
 } from '@/lib/local-file-store';
 import { saveFileSnapshot } from '@/lib/local-doc-snapshots';
 import { loadFileSnapshot } from '@/lib/local-doc-snapshots';
+import { makeStarterDiagramMarkdown } from '@/lib/diagram-starter';
 import { makeStarterGridMarkdown } from '@/lib/grid-starter';
 import { makeStarterNoteMarkdown } from '@/lib/note-starter';
 import { makeStarterVisionMarkdown } from '@/lib/vision-starter';
@@ -353,7 +354,9 @@ export function WorkspaceBrowser() {
                 onNewMap={() => {
                   if (!canEditActiveFolder) return;
                   setStore((prev) => {
+                    const initialContent = makeStarterDiagramMarkdown();
                     const { store: next, file } = createLocalFile(prev, 'New Map', activeFolder.id);
+                    saveFileSnapshot(file.id, initialContent);
                     queueMicrotask(() => openFile(file.id));
                     return next;
                   });

@@ -1,6 +1,10 @@
 import type { FlowNodeType } from '@/components/DimensionFlowEditor';
 
-export type DiagramAssistAction = 'node_structure' | 'data_object_attributes' | 'status_descriptions';
+export type DiagramAssistAction =
+  | 'node_structure'
+  | 'data_object_attributes'
+  | 'status_descriptions'
+  | 'markdown_errors_fix';
 
 export type DiagramAssistSelectionBase = {
   baseFileHash: string;
@@ -57,10 +61,16 @@ export type DiagramAssistStatusDescriptionsSelection = DiagramAssistSelectionBas
   target: DiagramAssistStatusTargetDataObject | DiagramAssistStatusTargetConditionDimension;
 };
 
+export type DiagramAssistMarkdownErrorsFixSelection = DiagramAssistSelectionBase & {
+  issueKeys?: string[];
+  maxPatches?: number;
+};
+
 export type DiagramAssistSelection =
   | DiagramAssistNodeStructureSelection
   | DiagramAssistDataObjectAttributesSelection
-  | DiagramAssistStatusDescriptionsSelection;
+  | DiagramAssistStatusDescriptionsSelection
+  | DiagramAssistMarkdownErrorsFixSelection;
 
 export type DiagramAssistExecuteInput = {
   ownerId: string;
@@ -169,10 +179,42 @@ export type DiagramAssistStatusDescriptionsProposal = {
   };
 };
 
+export type DiagramAssistMarkdownIssue = {
+  code: string;
+  message: string;
+  line?: number;
+};
+
+export type DiagramAssistMarkdownSectionPatch = {
+  targetId: string;
+  startLine: number; // 1-based inclusive
+  endLine: number; // 1-based inclusive; insertion when startLine === endLine + 1
+  replacementMarkdown: string;
+  originalMarkdown?: string;
+  reason?: string;
+  issueCodes?: string[];
+};
+
+export type DiagramAssistMarkdownErrorsFixProposal = {
+  action: 'markdown_errors_fix';
+  baseFileHash: string;
+  summary: string;
+  issues: DiagramAssistMarkdownIssue[];
+  patches: DiagramAssistMarkdownSectionPatch[];
+  validationReport?: {
+    errors: string[];
+    warnings: string[];
+    fixedIssueCount?: number;
+    unresolvedIssueCount?: number;
+    newIssueCount?: number;
+  };
+};
+
 export type DiagramAssistProposal =
   | DiagramAssistNodeStructureProposal
   | DiagramAssistDataObjectAttributesProposal
-  | DiagramAssistStatusDescriptionsProposal;
+  | DiagramAssistStatusDescriptionsProposal
+  | DiagramAssistMarkdownErrorsFixProposal;
 
 export type DiagramAssistApplyOperation = {
   kind: string;

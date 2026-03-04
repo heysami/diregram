@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import * as Y from 'yjs';
 import { Eye, EyeOff } from 'lucide-react';
 
@@ -9,6 +9,7 @@ interface Props {
 export function NexusEditor({ doc }: Props) {
   const [text, setText] = useState('');
   const [isVisible, setIsVisible] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => {
     const yText = doc.getText('nexus');
@@ -17,6 +18,34 @@ export function NexusEditor({ doc }: Props) {
     yText.observe(observer);
     return () => yText.unobserve(observer);
   }, [doc]);
+
+  useEffect(() => {
+    const lineToOffset = (source: string, line: number): number => {
+      const lines = String(source || '').replace(/\r\n?/g, '\n').split('\n');
+      const safeLine = Math.max(1, Math.min(lines.length, Math.floor(Number(line || 1))));
+      let pos = 0;
+      for (let i = 0; i < safeLine - 1; i += 1) pos += lines[i].length + 1;
+      return pos;
+    };
+
+    const onNavigate = (evt: Event) => {
+      const custom = evt as CustomEvent<{ line?: number }>;
+      const line = Math.floor(Number(custom.detail?.line || 0));
+      if (!Number.isFinite(line) || line <= 0) return;
+      setIsVisible(true);
+      requestAnimationFrame(() => {
+        const el = textareaRef.current;
+        if (!el) return;
+        const start = lineToOffset(text, line);
+        const end = Math.min(text.length, start + (text.split('\n')[line - 1]?.length || 0));
+        el.focus();
+        el.setSelectionRange(start, end);
+      });
+    };
+
+    window.addEventListener('diregram:nexusEditorNavigateLine', onNavigate as EventListener);
+    return () => window.removeEventListener('diregram:nexusEditorNavigateLine', onNavigate as EventListener);
+  }, [text]);
 
   return (
     <div
@@ -45,6 +74,7 @@ export function NexusEditor({ doc }: Props) {
             Main chart definition
           </div>
           <textarea 
+            ref={textareaRef}
             className="flex-1 w-full p-4 font-mono text-sm resize-none focus:outline-none bg-transparent border-b border-gray-200"
             value={text}
             readOnly

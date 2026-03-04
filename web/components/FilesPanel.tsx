@@ -12,6 +12,8 @@ import {
   createLocalFolder,
   renameLocalFile,
 } from '@/lib/local-file-store';
+import { saveFileSnapshot } from '@/lib/local-doc-snapshots';
+import { makeStarterDiagramMarkdown } from '@/lib/diagram-starter';
 
 type Props = {
   activeFileId: string | null;
@@ -214,7 +216,9 @@ export function FilesPanel({ activeFileId, onOpenFile }: Props) {
             title="New file"
             onClick={() => {
               setStore((prev) => {
+                const initialContent = makeStarterDiagramMarkdown();
                 const { store: next, file } = createLocalFile(prev, 'New Map', null);
+                saveFileSnapshot(file.id, initialContent);
                 // Auto-open new file
                 queueMicrotask(() => onOpenFile(file));
                 return next;

@@ -64,6 +64,7 @@ import { listGlobalTemplates, loadGlobalTemplateContent } from '@/lib/global-tem
 import { useAsyncJobQueue, type AsyncTrackedJob } from '@/hooks/use-async-job-queue';
 import { AsyncProcessingDrawer } from '@/components/async-jobs/AsyncProcessingDrawer';
 import { DiagramAiProposalModal } from '@/components/diagram-ai/DiagramAiProposalModal';
+import { MarkdownDiagnosticsModal } from '@/components/diagram-ai/MarkdownDiagnosticsModal';
 
 const VIEW_SWITCH_FADE_OUT_MS = 120;
 const VIEW_SWITCH_SETTLE_MS = 150;
@@ -171,6 +172,7 @@ export function EditorApp() {
   >([]);
   const asyncQueue = useAsyncJobQueue();
   const [diagramAssistProposalJob, setDiagramAssistProposalJob] = useState<AsyncTrackedJob | null>(null);
+  const [showMarkdownDiagnostics, setShowMarkdownDiagnostics] = useState(false);
 
   const ensureTemplatesFolderId = useCallback(async (scopeOverride?: 'project' | 'account'): Promise<string | null> => {
     const scope = scopeOverride || (templateScope === 'account' ? 'account' : 'project');
@@ -1604,6 +1606,7 @@ export function EditorApp() {
         status={status}
         onClearDatabase={clearDatabase}
         onOpenImportMarkdown={() => setShowImportMarkdown(true)}
+        onOpenMarkdownDiagnostics={() => setShowMarkdownDiagnostics(true)}
         activeFileName={activeFile?.name}
         onlineCount={presence ? 1 + presence.peers.length : undefined}
       />
@@ -2062,6 +2065,15 @@ export function EditorApp() {
         job={diagramAssistProposalJob}
         doc={doc}
         onClose={() => setDiagramAssistProposalJob(null)}
+      />
+      <MarkdownDiagnosticsModal
+        isOpen={showMarkdownDiagnostics}
+        onClose={() => setShowMarkdownDiagnostics(false)}
+        doc={doc}
+        fileId={activeFile?.id || null}
+        projectFolderId={activeFile?.folderId || null}
+        aiFeaturesEnabled={supabaseMode}
+        onTrackAsyncJob={asyncQueue.trackJob}
       />
       {!screenReady ? <div className="absolute inset-0 z-[120] mac-desktop dg-screen-loading pointer-events-none" aria-hidden="true" /> : null}
     </main>

@@ -7,6 +7,7 @@ import type {
   DiagramAssistAction,
   DiagramAssistDataObjectAttributesSelection,
   DiagramAssistExecuteInput,
+  DiagramAssistMarkdownErrorsFixSelection,
   DiagramAssistNodeStructureSelection,
   DiagramAssistSelection,
   DiagramAssistStatusDescriptionsSelection,
@@ -63,7 +64,12 @@ function canEditFromAccess(access: unknown, userEmail: string | null) {
 
 function coerceAction(input: unknown): DiagramAssistAction | null {
   const action = clampText(input, 64);
-  if (action === 'node_structure' || action === 'data_object_attributes' || action === 'status_descriptions') {
+  if (
+    action === 'node_structure' ||
+    action === 'data_object_attributes' ||
+    action === 'status_descriptions' ||
+    action === 'markdown_errors_fix'
+  ) {
     return action;
   }
   return null;
@@ -152,11 +158,21 @@ function coerceStatusDescriptionsSelection(raw: Record<string, unknown>): Diagra
   };
 }
 
+function coerceMarkdownErrorsFixSelection(raw: Record<string, unknown>): DiagramAssistMarkdownErrorsFixSelection {
+  return {
+    baseFileHash: clampText(raw.baseFileHash, 256),
+    baseUpdatedAt: clampText(raw.baseUpdatedAt, 120) || null,
+    issueKeys: clampArray(raw.issueKeys, { maxItems: 120, maxChars: 500 }),
+    maxPatches: Math.min(24, Math.max(1, Math.floor(Number(raw.maxPatches || 12)))),
+  };
+}
+
 function coerceSelection(action: DiagramAssistAction, input: unknown): DiagramAssistSelection | null {
   const raw = input && typeof input === 'object' ? (input as Record<string, unknown>) : null;
   if (!raw) return null;
   if (action === 'node_structure') return coerceNodeStructureSelection(raw);
   if (action === 'data_object_attributes') return coerceDataObjectAttributesSelection(raw);
+  if (action === 'markdown_errors_fix') return coerceMarkdownErrorsFixSelection(raw);
   return coerceStatusDescriptionsSelection(raw);
 }
 
@@ -173,6 +189,10 @@ function validateSelection(action: DiagramAssistAction, selection: DiagramAssist
   if (action === 'data_object_attributes') {
     const s = selection as DiagramAssistDataObjectAttributesSelection;
     if (!s.targetObjectId) return 'Missing targetObjectId';
+    return null;
+  }
+
+  if (action === 'markdown_errors_fix') {
     return null;
   }
 
@@ -194,6 +214,11 @@ function buildDedupeKey(fileId: string, action: DiagramAssistAction, selection: 
   if (action === 'data_object_attributes') {
     const s = selection as DiagramAssistDataObjectAttributesSelection;
     return `ai_diagram_assist:${fileId}:${action}:${s.targetObjectId}:${hash}`;
+  }
+  if (action === 'markdown_errors_fix') {
+    const s = selection as DiagramAssistMarkdownErrorsFixSelection;
+    const issuesHash = clampText((s.issueKeys || []).slice(0, 40).join('|'), 400);
+    return `ai_diagram_assist:${fileId}:${action}:${issuesHash}:${hash}`;
   }
   const s = selection as DiagramAssistStatusDescriptionsSelection;
   if (s.target.kind === 'data_object_status') {

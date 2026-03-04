@@ -7,11 +7,13 @@ import type { AsyncTrackedJob } from '@/hooks/use-async-job-queue';
 import type {
   DiagramAssistAttributeSuggestion,
   DiagramAssistDataObjectAttributesProposal,
+  DiagramAssistMarkdownErrorsFixProposal,
   DiagramAssistNodeStructureProposal,
   DiagramAssistProposal,
   DiagramAssistStatusDescriptionsProposal,
 } from '@/lib/diagram-ai-assist-types';
 import {
+  applyLineRangePatches,
   replaceSubtreeMarkdownAtLineIndex,
   resolveNodeByRelativePath,
   sha256Hex,
@@ -47,7 +49,12 @@ function parseProposal(job: AsyncTrackedJob | null): DiagramAssistProposal | nul
   const proposal = asRecord(result?.proposal);
   if (!proposal) return null;
   const action = String(proposal.action || '').trim();
-  if (action !== 'node_structure' && action !== 'data_object_attributes' && action !== 'status_descriptions') return null;
+  if (
+    action !== 'node_structure' &&
+    action !== 'data_object_attributes' &&
+    action !== 'status_descriptions' &&
+    action !== 'markdown_errors_fix'
+  ) return null;
   return proposal as DiagramAssistProposal;
 }
 
@@ -77,6 +84,42 @@ function formatValidationIssueForUser(issue: ImportValidationIssue): string {
     return `AI output could not be parsed as a valid diagram subtree. No changes were applied. ${issue.message}`;
   }
   return `AI output failed validation (${code || 'VALIDATION_ERROR'}). No changes were applied. ${issue.message}`;
+}
+
+function canonicalIssueSignature(issue: ImportValidationIssue): string {
+  const normalizedMessage = String(issue.message || '')
+    .trim()
+    .toLowerCase()
+    .replace(/starting at line\s+\d+/gi, 'starting at line <n>')
+    .replace(/\bline\s+\d+\b/gi, 'line <n>')
+    .replace(/\brn=\d+\b/gi, 'rn=<n>')
+    .replace(/\brunningnumber\s+\d+\b/gi, 'runningnumber <n>')
+    .replace(/\b\d+\b/g, '<n>');
+  return `${issue.code}::${normalizedMessage}`;
+}
+
+function buildIssueSignatureCountMap(issues: ImportValidationIssue[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const issue of issues) {
+    const key = canonicalIssueSignature(issue);
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  return counts;
+}
+
+function diffAddedValidationIssues(current: ImportValidationIssue[], baseline: ImportValidationIssue[]): ImportValidationIssue[] {
+  const baselineCounts = buildIssueSignatureCountMap(baseline);
+  const seen = new Map<string, number>();
+  const added: ImportValidationIssue[] = [];
+  for (const issue of current) {
+    const key = canonicalIssueSignature(issue);
+    const n = (seen.get(key) || 0) + 1;
+    seen.set(key, n);
+    if (n > (baselineCounts.get(key) || 0)) {
+      added.push(issue);
+    }
+  }
+  return added;
 }
 
 function normalizeIdentity(name: string, type: 'text' | 'status'): string {
@@ -224,6 +267,7 @@ export function DiagramAiProposalModal({
 
   const applyNodeStructure = useCallback(async (p: DiagramAssistNodeStructureProposal) => {
     const current = await ensureNoConflict(p.baseFileHash);
+    const baselineValidation = validateNexusMarkdownImport(current);
     const lineIndex = Number(p.preview?.lineIndex ?? -1);
     if (!Number.isFinite(lineIndex) || lineIndex < 0) {
       throw new Error('Missing node anchor line index in proposal preview.');
@@ -236,10 +280,11 @@ export function DiagramAiProposalModal({
     });
 
     const validation = validateNexusMarkdownImport(replaced.markdown);
-    if (validation.errors.length) {
-      const first = validation.errors[0];
+    const newlyIntroducedErrors = diffAddedValidationIssues(validation.errors, baselineValidation.errors);
+    if (newlyIntroducedErrors.length) {
+      const first = newlyIntroducedErrors[0];
       const detail = formatValidationIssueForUser(first);
-      const more = validation.errors.length > 1 ? ` (${validation.errors.length - 1} more validation error(s))` : '';
+      const more = newlyIntroducedErrors.length > 1 ? ` (${newlyIntroducedErrors.length - 1} more new validation error(s))` : '';
       throw new Error(`${detail}${more} Please run AI Structure Review again.`);
     }
 
@@ -414,6 +459,29 @@ export function DiagramAiProposalModal({
     });
   }, [doc, ensureNoConflict]);
 
+  const applyMarkdownErrorsFix = useCallback(async (p: DiagramAssistMarkdownErrorsFixProposal) => {
+    const current = await ensureNoConflict(p.baseFileHash);
+    if (!p.patches.length) return;
+
+    const patched = applyLineRangePatches({
+      markdown: current,
+      patches: p.patches,
+    });
+    const validation = validateNexusMarkdownImport(patched.markdown);
+    if (validation.errors.length) {
+      const first = validation.errors[0];
+      throw new Error(
+        `${formatValidationIssueForUser(first)} (${validation.errors.length} remaining error(s)). Run markdown diagnostics and queue AI fix again.`,
+      );
+    }
+
+    const yText = doc.getText('nexus');
+    doc.transact(() => {
+      yText.delete(0, yText.length);
+      yText.insert(0, patched.markdown);
+    });
+  }, [doc, ensureNoConflict]);
+
   const onApply = useCallback(async () => {
     if (!proposal) return;
     setBusy(true);
@@ -428,6 +496,8 @@ export function DiagramAiProposalModal({
         await applyNodeStructure(proposal);
       } else if (proposal.action === 'data_object_attributes') {
         await applyDataObjectAttributes(proposal);
+      } else if (proposal.action === 'markdown_errors_fix') {
+        await applyMarkdownErrorsFix(proposal);
       } else {
         await applyStatusDescriptions(proposal);
       }
@@ -437,11 +507,12 @@ export function DiagramAiProposalModal({
     } finally {
       setBusy(false);
     }
-  }, [applyDataObjectAttributes, applyNodeStructure, applyStatusDescriptions, proposal]);
+  }, [applyDataObjectAttributes, applyMarkdownErrorsFix, applyNodeStructure, applyStatusDescriptions, proposal]);
 
   if (!job) return null;
   const hasBlockingValidationErrors =
-    proposal?.action === 'node_structure' && (proposal.validationReport?.errors?.length || 0) > 0;
+    (proposal?.action === 'node_structure' && (proposal.validationReport?.errors?.length || 0) > 0) ||
+    (proposal?.action === 'markdown_errors_fix' && (proposal.validationReport?.errors?.length || 0) > 0);
 
   return (
     <div className="fixed inset-0 z-[1400] bg-black/45 flex items-center justify-center p-4">
@@ -611,6 +682,63 @@ export function DiagramAiProposalModal({
             </div>
           ) : null}
 
+          {proposal?.action === 'markdown_errors_fix' ? (
+            <div className="space-y-3">
+              <div className="mac-double-outline p-3">
+                <div className="font-semibold">Summary</div>
+                <div className="mt-1 whitespace-pre-wrap">{proposal.summary}</div>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="mac-double-outline p-3">
+                  <div className="font-semibold">Issues ({proposal.issues.length})</div>
+                  <ul className="mt-1 list-disc pl-5 space-y-1">
+                    {proposal.issues.slice(0, 30).map((issue, idx) => (
+                      <li key={`${idx}:${issue.code}:${issue.message}`}>
+                        <span className="font-medium">{issue.code}</span>
+                        {issue.line ? ` (line ${issue.line})` : ''}: {issue.message}
+                      </li>
+                    ))}
+                  </ul>
+                  {proposal.issues.length > 30 ? <div className="mt-1">+{proposal.issues.length - 30} more issue(s)</div> : null}
+                </div>
+                <div className="mac-double-outline p-3">
+                  <div className="font-semibold">Patch Plan ({proposal.patches.length})</div>
+                  <div className="mt-1 space-y-2">
+                    {proposal.patches.map((patch, idx) => {
+                      const rangeLabel =
+                        patch.startLine === patch.endLine + 1
+                          ? `insert at line ${patch.startLine}`
+                          : `replace lines ${patch.startLine}-${patch.endLine}`;
+                      return (
+                        <div key={`${idx}:${patch.targetId}`} className="border rounded p-2 bg-white">
+                          <div className="font-medium">{patch.targetId} · {rangeLabel}</div>
+                          {patch.reason ? <div className="opacity-80 mt-1">{patch.reason}</div> : null}
+                          <pre className="mt-1 whitespace-pre-wrap border rounded p-2 bg-gray-50">{patch.replacementMarkdown || '(delete section)'}</pre>
+                        </div>
+                      );
+                    })}
+                    {!proposal.patches.length ? <div className="opacity-70">No patches were generated.</div> : null}
+                  </div>
+                </div>
+              </div>
+              {proposal.validationReport ? (
+                <div className="mac-double-outline p-3">
+                  <div className="font-semibold">Validation Preview</div>
+                  <div className="mt-1">Errors: {proposal.validationReport.errors.length}</div>
+                  <div>Warnings: {proposal.validationReport.warnings.length}</div>
+                  <div className="mt-1 opacity-80">
+                    Fixed: {proposal.validationReport.fixedIssueCount || 0} · Unresolved: {proposal.validationReport.unresolvedIssueCount || 0} · New: {proposal.validationReport.newIssueCount || 0}
+                  </div>
+                  {proposal.validationReport.errors.length ? (
+                    <ul className="mt-2 list-disc pl-5 text-red-700">
+                      {proposal.validationReport.errors.slice(0, 5).map((raw, idx) => <li key={`mverr-${idx}`}>{raw}</li>)}
+                    </ul>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
           {error ? <div className="mac-double-outline p-2 text-red-700">{error}</div> : null}
           {success ? <div className="mac-double-outline p-2 text-green-700">{success}</div> : null}
         </div>
@@ -625,7 +753,7 @@ export function DiagramAiProposalModal({
               type="button"
               className="mac-btn mac-btn--primary"
               disabled={!proposal || busy || hasBlockingValidationErrors}
-              title={hasBlockingValidationErrors ? 'Cannot apply this proposal until validation errors are fixed. Re-run AI Structure Review.' : undefined}
+              title={hasBlockingValidationErrors ? 'Cannot apply this proposal until validation errors are fixed. Re-run AI analysis.' : undefined}
               onClick={onApply}
             >
               {busy ? 'Applying…' : 'Apply Proposal'}

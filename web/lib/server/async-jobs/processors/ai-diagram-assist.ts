@@ -15,6 +15,9 @@ import type {
   DiagramAssistConnectorLabelOp,
   DiagramAssistDataObjectAttributesProposal,
   DiagramAssistDataObjectAttributesSelection,
+  DiagramAssistMarkdownErrorsFixProposal,
+  DiagramAssistMarkdownErrorsFixSelection,
+  DiagramAssistMarkdownSectionPatch,
   DiagramAssistNodeTypeOp,
   DiagramAssistNodeStructureProposal,
   DiagramAssistNodeStructureSelection,
@@ -32,6 +35,10 @@ const MAX_STATUS_VALUES = 24;
 const MAX_TRANSITIONS = 120;
 const MAX_TABLE_ROWS = 140;
 const MAX_FLOW_LINES = 180;
+const MAX_MARKDOWN_FIX_ISSUES = 80;
+const MAX_MARKDOWN_FIX_TARGETS = 40;
+const MAX_MARKDOWN_FIX_PATCHES = 24;
+const MAX_MARKDOWN_FIX_REPLACEMENT_CHARS = 8000;
 const MAX_MODEL_REPAIR_ATTEMPTS = 6;
 const MAX_REPAIR_FEEDBACK_ERRORS = 8;
 const MAX_PREVIOUS_RESPONSE_CHARS = 5000;
@@ -170,24 +177,84 @@ function extractIssueLineNumber(message: string): number | null {
   return null;
 }
 
-function isIssueInsideSubtree(issue: ImportValidationIssue, subtreeRange: { start: number; end: number } | null): boolean {
-  if (!subtreeRange) return false;
+function isIssueInsideLineRange(issue: ImportValidationIssue, lineRange: { start: number; end: number } | null): boolean {
+  if (!lineRange) return false;
   const line = extractIssueLineNumber(issue.message || '');
   if (!line) return false;
   const zeroBased = line - 1;
-  return zeroBased >= subtreeRange.start && zeroBased <= subtreeRange.end;
+  return zeroBased >= lineRange.start && zeroBased <= lineRange.end;
 }
 
-function findBlockingBaselineErrors(input: {
-  errors: ImportValidationIssue[];
-  subtreeRange: { start: number; end: number } | null;
-}): ImportValidationIssue[] {
-  if (!input.subtreeRange) return input.errors.slice(0, 80);
-  const out: ImportValidationIssue[] = [];
-  for (const err of input.errors) {
-    if (!isIssueInsideSubtree(err, input.subtreeRange)) out.push(err);
+function canonicalIssueSignature(issue: ImportValidationIssue): string {
+  const normalizedMessage = normalizeText(issue.message)
+    .toLowerCase()
+    .replace(/starting at line\s+\d+/gi, 'starting at line <n>')
+    .replace(/\bline\s+\d+\b/gi, 'line <n>')
+    .replace(/\brn=\d+\b/gi, 'rn=<n>')
+    .replace(/\brunningnumber\s+\d+\b/gi, 'runningnumber <n>')
+    .replace(/\b\d+\b/g, '<n>');
+  return `${issue.code}::${normalizedMessage}`;
+}
+
+function buildIssueSignatureCountMap(issues: ImportValidationIssue[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const issue of issues) {
+    const key = canonicalIssueSignature(issue);
+    counts.set(key, (counts.get(key) || 0) + 1);
   }
-  return out.slice(0, 80);
+  return counts;
+}
+
+function diffAddedIssues(current: ImportValidationIssue[], baseline: ImportValidationIssue[]): ImportValidationIssue[] {
+  const baselineCounts = buildIssueSignatureCountMap(baseline);
+  const seen = new Map<string, number>();
+  const added: ImportValidationIssue[] = [];
+  for (const issue of current) {
+    const key = canonicalIssueSignature(issue);
+    const n = (seen.get(key) || 0) + 1;
+    seen.set(key, n);
+    if (n > (baselineCounts.get(key) || 0)) {
+      added.push(issue);
+    }
+  }
+  return added;
+}
+
+function diffRemainingBaselineIssues(current: ImportValidationIssue[], baseline: ImportValidationIssue[]): ImportValidationIssue[] {
+  const currentCounts = buildIssueSignatureCountMap(current);
+  const seen = new Map<string, number>();
+  const remaining: ImportValidationIssue[] = [];
+  for (const issue of baseline) {
+    const key = canonicalIssueSignature(issue);
+    const n = (seen.get(key) || 0) + 1;
+    seen.set(key, n);
+    if (n <= (currentCounts.get(key) || 0)) {
+      remaining.push(issue);
+    }
+  }
+  return remaining;
+}
+
+function dedupeIssues(issues: ImportValidationIssue[]): ImportValidationIssue[] {
+  const out: ImportValidationIssue[] = [];
+  const seen = new Set<string>();
+  for (const issue of issues) {
+    const key = `${issue.code}|${normalizeText(issue.message)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(issue);
+  }
+  return out;
+}
+
+function findBlockingNodeStructureErrors(input: {
+  baselineErrors: ImportValidationIssue[];
+  proposalErrors: ImportValidationIssue[];
+  nextSubtreeRange: { start: number; end: number } | null;
+}): ImportValidationIssue[] {
+  const localErrors = input.proposalErrors.filter((err) => isIssueInsideLineRange(err, input.nextSubtreeRange));
+  const newlyIntroducedErrors = diffAddedIssues(input.proposalErrors, input.baselineErrors);
+  return dedupeIssues(localErrors.concat(newlyIntroducedErrors)).slice(0, 80);
 }
 
 function humanizeValidationIssue(issue: ImportValidationIssue): string {
@@ -253,7 +320,7 @@ function fixInstructionForValidationIssue(issue: ImportValidationIssue): string 
     case 'HUB_NOTE_BAD_LINE':
       return 'Line-index metadata must reference valid existing node lines. Update references to current line positions.';
     default:
-      return 'Resolve this issue exactly while keeping edits limited to the selected subtree and required metadata operations only.';
+      return 'Resolve this issue exactly while keeping edits limited to the selected target scope and required metadata operations only.';
   }
 }
 
@@ -279,7 +346,7 @@ function replaceSubtreeAtLine(input: {
   markdown: string;
   lineIndex: number;
   subtreeReplacementMarkdown: string;
-}): { nextMarkdown: string; originalSubtreeMarkdown: string } {
+}): { nextMarkdown: string; originalSubtreeMarkdown: string; nextSubtreeRange: { start: number; end: number } } {
   const lines = normalizeNewlines(input.markdown).split('\n');
   const range = findSubtreeRange(lines, input.lineIndex);
   if (!range) throw new Error('Selected subtree anchor is no longer valid.');
@@ -294,7 +361,258 @@ function replaceSubtreeAtLine(input: {
   return {
     nextMarkdown: nextLines.join('\n'),
     originalSubtreeMarkdown: original,
+    nextSubtreeRange: {
+      start: range.start,
+      end: Math.max(range.start, range.start + replacement.length - 1),
+    },
   };
+}
+
+type MarkdownFixTarget = {
+  id: string;
+  startLine: number; // 1-based inclusive
+  endLine: number; // 1-based inclusive; insertion when startLine === endLine + 1
+  reason: string;
+  issueCodes: string[];
+  contextMarkdown: string;
+  originalMarkdown: string;
+};
+
+function issueKeyFromIssue(issue: ImportValidationIssue): string {
+  return `${normalizeText(issue.code)}|${normalizeText(issue.message)}`;
+}
+
+function selectMarkdownFixIssues(input: {
+  baselineErrors: ImportValidationIssue[];
+  selection: DiagramAssistMarkdownErrorsFixSelection;
+}): ImportValidationIssue[] {
+  const baseline = input.baselineErrors.slice(0, MAX_MARKDOWN_FIX_ISSUES);
+  const selectedKeys = new Set((input.selection.issueKeys || []).map((x) => normalizeText(x)).filter(Boolean));
+  if (!selectedKeys.size) return baseline;
+  const matched = baseline.filter((issue) => selectedKeys.has(issueKeyFromIssue(issue)));
+  return (matched.length ? matched : baseline).slice(0, MAX_MARKDOWN_FIX_ISSUES);
+}
+
+function scanFenceRanges(lines: string[]): Array<{ start: number; end: number }> {
+  const out: Array<{ start: number; end: number }> = [];
+  let openStart: number | null = null;
+  for (let i = 0; i < lines.length; i += 1) {
+    if (!/^```/.test(String(lines[i] || '').trim())) continue;
+    if (openStart === null) {
+      openStart = i;
+      continue;
+    }
+    out.push({ start: openStart, end: i });
+    openStart = null;
+  }
+  if (openStart !== null) out.push({ start: openStart, end: Math.max(openStart, lines.length - 1) });
+  return out;
+}
+
+function findFenceRangeContainingLine(
+  ranges: Array<{ start: number; end: number }>,
+  lineIndex: number,
+): { start: number; end: number } | null {
+  for (const r of ranges) {
+    if (lineIndex >= r.start && lineIndex <= r.end) return r;
+  }
+  return null;
+}
+
+function clampLineRange(range: { startLine: number; endLine: number }, totalLines: number): { startLine: number; endLine: number } {
+  const maxStart = totalLines + 1;
+  const start = Math.max(1, Math.min(maxStart, Math.floor(range.startLine)));
+  const end = Math.max(0, Math.min(totalLines, Math.floor(range.endLine)));
+  if (start <= end || start === end + 1) return { startLine: start, endLine: end };
+  return { startLine: start, endLine: Math.max(0, start - 1) };
+}
+
+function extractOriginalMarkdownForRange(lines: string[], startLine: number, endLine: number): string {
+  if (startLine === endLine + 1) return '';
+  const startIdx = Math.max(0, startLine - 1);
+  const endIdx = Math.max(startIdx, endLine - 1);
+  return lines.slice(startIdx, endIdx + 1).join('\n');
+}
+
+function extractContextMarkdownForRange(lines: string[], startLine: number, endLine: number): string {
+  if (!lines.length) return '';
+  const contextStart = Math.max(1, (startLine === endLine + 1 ? startLine : startLine - 2));
+  const contextEnd = Math.min(lines.length, Math.max(endLine, startLine) + 2);
+  return lines.slice(contextStart - 1, contextEnd).join('\n').slice(0, 6000);
+}
+
+function targetReasonForIssue(issue: ImportValidationIssue): string {
+  switch (issue.code) {
+    case 'UNCLOSED_CODE_BLOCK':
+      return 'Repair an unclosed fenced code block in this local section.';
+    case 'MISSING_TAG_STORE':
+      return 'Add or repair the missing tag-store metadata block in metadata section.';
+    case 'MISSING_EXPANDED_STATES_BLOCK':
+      return 'Add or repair the missing expanded-states metadata block.';
+    default:
+      return `Repair validator issue: ${issue.code}`;
+  }
+}
+
+function buildMarkdownFixTargets(markdown: string, issues: ImportValidationIssue[]): MarkdownFixTarget[] {
+  const lines = normalizeNewlines(markdown).split('\n');
+  const separatorIndex = findSeparatorIndexOutsideFences(lines);
+  const nodeSectionEnd = separatorIndex === -1 ? lines.length : separatorIndex;
+  const metadataInsertStartLine = separatorIndex === -1 ? lines.length + 1 : separatorIndex + 2;
+  const metadataInsertEndLine = metadataInsertStartLine - 1;
+  const fenceRanges = scanFenceRanges(lines);
+
+  const byRangeKey = new Map<
+    string,
+    {
+      startLine: number;
+      endLine: number;
+      reason: string;
+      issueCodes: Set<string>;
+    }
+  >();
+
+  const addTarget = (range: { startLine: number; endLine: number }, issue: ImportValidationIssue) => {
+    const clamped = clampLineRange(range, lines.length);
+    const key = `${clamped.startLine}:${clamped.endLine}`;
+    const existing = byRangeKey.get(key);
+    if (existing) {
+      existing.issueCodes.add(issue.code);
+      if (existing.reason.length < 180) existing.reason = `${existing.reason}; ${targetReasonForIssue(issue)}`.slice(0, 240);
+      return;
+    }
+    byRangeKey.set(key, {
+      ...clamped,
+      reason: targetReasonForIssue(issue),
+      issueCodes: new Set([issue.code]),
+    });
+  };
+
+  for (const issue of issues.slice(0, MAX_MARKDOWN_FIX_TARGETS)) {
+    const line = extractIssueLineNumber(issue.message || '');
+    if (!line) {
+      addTarget(
+        {
+          startLine: metadataInsertStartLine,
+          endLine: metadataInsertEndLine,
+        },
+        issue,
+      );
+      continue;
+    }
+
+    const lineIndex = Math.max(0, line - 1);
+    if (issue.code === 'UNCLOSED_CODE_BLOCK') {
+      const endLine = Math.min(lines.length, line + 120);
+      addTarget({ startLine: line, endLine }, issue);
+      continue;
+    }
+
+    if (lineIndex < nodeSectionEnd) {
+      const subtree = findSubtreeRange(lines, lineIndex);
+      if (subtree) {
+        addTarget({ startLine: subtree.start + 1, endLine: subtree.end + 1 }, issue);
+        continue;
+      }
+      addTarget({ startLine: Math.max(1, line - 2), endLine: Math.min(lines.length, line + 2) }, issue);
+      continue;
+    }
+
+    const fenceRange = findFenceRangeContainingLine(fenceRanges, lineIndex);
+    if (fenceRange) {
+      addTarget({ startLine: fenceRange.start + 1, endLine: fenceRange.end + 1 }, issue);
+      continue;
+    }
+    addTarget({ startLine: Math.max(1, line - 2), endLine: Math.min(lines.length, line + 2) }, issue);
+  }
+
+  const targets = Array.from(byRangeKey.entries())
+    .map(([, v], idx) => {
+      const id = `target-${idx + 1}`;
+      return {
+        id,
+        startLine: v.startLine,
+        endLine: v.endLine,
+        reason: v.reason.slice(0, 280),
+        issueCodes: Array.from(v.issueCodes).slice(0, 8),
+        contextMarkdown: extractContextMarkdownForRange(lines, v.startLine, v.endLine),
+        originalMarkdown: extractOriginalMarkdownForRange(lines, v.startLine, v.endLine),
+      } satisfies MarkdownFixTarget;
+    })
+    .slice(0, MAX_MARKDOWN_FIX_TARGETS);
+
+  return targets;
+}
+
+type NormalizedLineRangePatch = {
+  targetId: string;
+  startLine: number;
+  endLine: number;
+  replacementLines: string[];
+};
+
+function normalizeLineRangePatchForApply(
+  patch: DiagramAssistMarkdownSectionPatch,
+  totalLines: number,
+): NormalizedLineRangePatch {
+  const targetId = normalizeText(patch.targetId);
+  const startLine = Math.max(1, Math.floor(Number(patch.startLine || 0)));
+  const endLine = Math.max(0, Math.floor(Number(patch.endLine || 0)));
+  if (!targetId) throw new Error('Patch target id is missing.');
+  if (startLine > totalLines + 1) throw new Error(`Patch "${targetId}" start line is out of bounds.`);
+  if (endLine > totalLines) throw new Error(`Patch "${targetId}" end line is out of bounds.`);
+  if (!(startLine <= endLine || startLine === endLine + 1)) {
+    throw new Error(`Patch "${targetId}" has invalid line range.`);
+  }
+
+  return {
+    targetId,
+    startLine,
+    endLine,
+    replacementLines: (() => {
+      const raw = normalizeNewlines(patch.replacementMarkdown || '');
+      return raw.length ? raw.split('\n') : [];
+    })(),
+  };
+}
+
+function assertNoOverlappingNormalizedPatches(patches: NormalizedLineRangePatch[]) {
+  if (patches.length <= 1) return;
+  const sorted = [...patches].sort((a, b) => a.startLine - b.startLine || a.endLine - b.endLine);
+  for (let i = 1; i < sorted.length; i += 1) {
+    const prev = sorted[i - 1];
+    const cur = sorted[i];
+    const prevInsert = prev.startLine === prev.endLine + 1;
+    const curInsert = cur.startLine === cur.endLine + 1;
+    if (prevInsert || curInsert) {
+      if (prev.startLine === cur.startLine) {
+        throw new Error(`Patches "${prev.targetId}" and "${cur.targetId}" overlap at insertion line ${cur.startLine}.`);
+      }
+      continue;
+    }
+    if (cur.startLine <= prev.endLine) {
+      throw new Error(`Patches "${prev.targetId}" and "${cur.targetId}" overlap.`);
+    }
+  }
+}
+
+function applyLineRangePatchesToMarkdown(markdown: string, patches: DiagramAssistMarkdownSectionPatch[]): string {
+  const lines = normalizeNewlines(markdown).split('\n');
+  const normalized = patches.map((patch) => normalizeLineRangePatchForApply(patch, lines.length));
+  assertNoOverlappingNormalizedPatches(normalized);
+
+  const sortedDesc = [...normalized].sort((a, b) => b.startLine - a.startLine || b.endLine - a.endLine);
+  const next = [...lines];
+  sortedDesc.forEach((patch) => {
+    const startIdx = patch.startLine - 1;
+    const endIdx = patch.endLine - 1;
+    if (patch.startLine === patch.endLine + 1) {
+      next.splice(startIdx, 0, ...patch.replacementLines);
+      return;
+    }
+    next.splice(startIdx, endIdx - startIdx + 1, ...patch.replacementLines);
+  });
+  return next.join('\n');
 }
 
 function extractJsonObject(text: string): Record<string, unknown> {
@@ -563,6 +881,119 @@ function buildStatusPrompt(input: {
   return { system, user };
 }
 
+function buildMarkdownErrorsFixPrompt(input: {
+  selection: DiagramAssistMarkdownErrorsFixSelection;
+  markdown: string;
+  issues: ImportValidationIssue[];
+  targets: MarkdownFixTarget[];
+  kbContext: string;
+}): { system: string; user: string } {
+  const issueLines = input.issues
+    .slice(0, MAX_MARKDOWN_FIX_ISSUES)
+    .map((issue, idx) => `${idx + 1}. ${issue.code}: ${normalizeText(issue.message)}`)
+    .join('\n');
+  const targetLines = input.targets
+    .slice(0, MAX_MARKDOWN_FIX_TARGETS)
+    .map((target) => {
+      const rangeLabel =
+        target.startLine === target.endLine + 1
+          ? `insert at ${target.startLine}`
+          : `replace ${target.startLine}-${target.endLine}`;
+      return [
+        `Target ${target.id} (${rangeLabel})`,
+        `Reason: ${target.reason}`,
+        `Issue codes: ${target.issueCodes.join(', ') || '(none)'}`,
+        'Section context:',
+        target.contextMarkdown || '(empty)',
+      ].join('\n');
+    })
+    .join('\n\n---\n\n');
+  const fileHead = normalizeNewlines(input.markdown).split('\n').slice(0, 220).join('\n').slice(0, 7000);
+  const maxPatches = Math.min(MAX_MARKDOWN_FIX_PATCHES, Math.max(1, Math.floor(Number(input.selection.maxPatches || 12))));
+
+  const system = [
+    'You are a Diregram markdown repair assistant.',
+    'Return strictly valid JSON only (no markdown fences).',
+    'Do NOT rewrite the whole file.',
+    'Only edit listed target ids.',
+    `Use at most ${maxPatches} patches.`,
+    'JSON contract:',
+    '{',
+    '  "summary": "string",',
+    '  "patches": [',
+    '    {',
+    '      "targetId": "target-1",',
+    '      "replacementMarkdown": "string",',
+    '      "reason": "string",',
+    '      "issueCodes": ["CODE"]',
+    '    }',
+    '  ],',
+    '  "validationNotes": ["string"]',
+    '}',
+  ].join('\n');
+
+  const user = [
+    `Current validator errors to resolve: ${input.issues.length}`,
+    'Errors:',
+    issueLines || '(none)',
+    '',
+    'Allowed editable targets:',
+    targetLines || '(none)',
+    '',
+    'File head snapshot (partial):',
+    fileHead,
+    '',
+    'Project RAG context:',
+    input.kbContext || '(none)',
+    '',
+    'Important constraints:',
+    '- Patch only the provided target ids.',
+    '- Keep unrelated lines unchanged.',
+    '- Preserve valid metadata and diagram syntax.',
+  ].join('\n');
+
+  return { system, user };
+}
+
+function sanitizeMarkdownFixPatchesFromParsed(input: {
+  parsed: Record<string, unknown>;
+  targets: MarkdownFixTarget[];
+  maxPatches: number;
+}): DiagramAssistMarkdownSectionPatch[] {
+  const targetById = new Map<string, MarkdownFixTarget>();
+  input.targets.forEach((t) => targetById.set(t.id, t));
+  const patchesRaw = Array.isArray(input.parsed.patches) ? (input.parsed.patches as unknown[]) : [];
+  const usedTargetIds = new Set<string>();
+  const patches: DiagramAssistMarkdownSectionPatch[] = [];
+
+  for (const raw of patchesRaw) {
+    if (!raw || typeof raw !== 'object') continue;
+    const obj = raw as Record<string, unknown>;
+    const targetId = normalizeText(obj.targetId);
+    if (!targetId || usedTargetIds.has(targetId)) continue;
+    const target = targetById.get(targetId);
+    if (!target) continue;
+
+    const replacementMarkdown = normalizeNewlines(obj.replacementMarkdown || '').slice(0, MAX_MARKDOWN_FIX_REPLACEMENT_CHARS);
+    const reason = normalizeText(obj.reason).slice(0, 280) || undefined;
+    const issueCodes = clampArray(obj.issueCodes, { maxItems: 8, maxChars: 80 });
+
+    patches.push({
+      targetId,
+      startLine: target.startLine,
+      endLine: target.endLine,
+      replacementMarkdown,
+      originalMarkdown: target.originalMarkdown,
+      ...(reason ? { reason } : {}),
+      ...(issueCodes.length ? { issueCodes } : {}),
+    });
+    usedTargetIds.add(targetId);
+    if (patches.length >= input.maxPatches) break;
+  }
+
+  return patches;
+}
+
 function sanitizeNodeStructureProposal(input: {
   selection: DiagramAssistNodeStructureSelection;
   parsed: Record<string, unknown>;
@@ -759,6 +1190,35 @@ function sanitizeStatusDescriptionsProposal(input: {
   };
 }
 
+function sanitizeMarkdownErrorsFixProposal(input: {
+  parsed: Record<string, unknown>;
+  baseFileHash: string;
+  issues: ImportValidationIssue[];
+  patches: DiagramAssistMarkdownSectionPatch[];
+  unresolvedIssues: ImportValidationIssue[];
+  newIssues: ImportValidationIssue[];
+  validationWarnings: string[];
+}): DiagramAssistMarkdownErrorsFixProposal {
+  return {
+    action: 'markdown_errors_fix',
+    baseFileHash: input.baseFileHash,
+    summary: normalizeText(input.parsed.summary).slice(0, 5000) || 'Markdown repair proposal generated.',
+    issues: input.issues.slice(0, MAX_MARKDOWN_FIX_ISSUES).map((issue) => ({
+      code: issue.code,
+      message: normalizeText(issue.message).slice(0, 400),
+      line: extractIssueLineNumber(issue.message || '') || undefined,
+    })),
+    patches: input.patches,
+    validationReport: {
+      errors: input.unresolvedIssues.concat(input.newIssues).slice(0, 80).map((issue) => `${issue.code}: ${issue.message}`),
+      warnings: input.validationWarnings.slice(0, 120),
+      fixedIssueCount: Math.max(0, input.issues.length - input.unresolvedIssues.length),
+      unresolvedIssueCount: input.unresolvedIssues.length,
+      newIssueCount: input.newIssues.length,
+    },
+  };
+}
+
 function coerceSelection(action: DiagramAssistAction, raw: unknown): DiagramAssistSelection {
   if (!raw || typeof raw !== 'object') throw new Error('Missing selection payload');
   const selection = raw as DiagramAssistSelection;
@@ -798,6 +1258,15 @@ function coerceSelection(action: DiagramAssistAction, raw: unknown): DiagramAssi
           }
         : undefined,
     } satisfies DiagramAssistDataObjectAttributesSelection;
+  }
+
+  if (action === 'markdown_errors_fix') {
+    const s = selection as DiagramAssistMarkdownErrorsFixSelection;
+    return {
+      ...s,
+      issueKeys: (s.issueKeys || []).slice(0, MAX_MARKDOWN_FIX_ISSUES).map((x) => normalizeText(x).slice(0, 500)).filter(Boolean),
+      maxPatches: Math.min(MAX_MARKDOWN_FIX_PATCHES, Math.max(1, Math.floor(Number(s.maxPatches || 12)))),
+    } satisfies DiagramAssistMarkdownErrorsFixSelection;
   }
 
   const s = selection as DiagramAssistStatusDescriptionsSelection;
@@ -848,6 +1317,15 @@ function buildKbQuery(action: DiagramAssistAction, selection: DiagramAssistSelec
       `Target object: ${s.targetObjectId} (${s.targetObjectName})`,
       `Linked objects: ${(s.linkedObjectNames || s.linkedObjectIds || []).join(', ') || '(none)'}`,
       'Need ownership-aware attribute recommendations and cross-object attribution guidance.',
+    ].join('\n\n');
+  }
+
+  if (action === 'markdown_errors_fix') {
+    const s = selection as DiagramAssistMarkdownErrorsFixSelection;
+    return [
+      'Diagram markdown validator repair',
+      `Issue keys selected: ${(s.issueKeys || []).length}`,
+      'Need targeted line-range repair patches that fix validation errors without rewriting unrelated content.',
     ].join('\n\n');
   }
 
@@ -919,6 +1397,8 @@ function buildRepairUserPrompt(input: {
   if (input.action === 'node_structure') {
     chunks.push('For node_structure: subtreeReplacementMarkdown must not include any triple backticks or fenced code blocks.');
     chunks.push('For node_structure: output must produce replacement subtree markdown that passes validation with no errors.');
+  } else if (input.action === 'markdown_errors_fix') {
+    chunks.push('For markdown_errors_fix: patch only the provided target ids. Do not propose full-file rewrites.');
   }
 
   return chunks.join('\n');
@@ -927,7 +1407,12 @@ function buildRepairUserPrompt(input: {
 export async function runAiDiagramAssistJob(job: AsyncJobRow): Promise<Record<string, unknown>> {
   const inputRaw = (job.input || {}) as Record<string, unknown>;
   const action = normalizeText(inputRaw.action) as DiagramAssistAction;
-  if (action !== 'node_structure' && action !== 'data_object_attributes' && action !== 'status_descriptions') {
+  if (
+    action !== 'node_structure' &&
+    action !== 'data_object_attributes' &&
+    action !== 'status_descriptions' &&
+    action !== 'markdown_errors_fix'
+  ) {
     throw new Error('Invalid diagram assist action');
   }
 
@@ -987,24 +1472,6 @@ export async function runAiDiagramAssistJob(job: AsyncJobRow): Promise<Record<st
     throw new Error('File updated timestamp changed since analysis snapshot. Re-analyze required.');
   }
 
-  if (action === 'node_structure') {
-    const nodeSelection = selection as DiagramAssistNodeStructureSelection;
-    const fileLines = fileContent.split('\n');
-    const subtreeRange = findSubtreeRange(fileLines, nodeSelection.lineIndex);
-    const baselineValidation = validateNexusMarkdownImport(fileContent);
-    const blockingErrors = findBlockingBaselineErrors({
-      errors: baselineValidation.errors,
-      subtreeRange,
-    });
-    if (blockingErrors.length > 0) {
-      const human = formatValidationIssuesHuman(blockingErrors, 8);
-      const technical = formatValidationIssuesTechnical(blockingErrors, 8);
-      throw new Error(
-        `${NON_RETRYABLE_PREFIX} File already has markdown validation errors outside the selected subtree. Fix these first, then re-run analysis.\nHuman-readable issues:\n${human}${technical ? `\nTechnical issues:\n${technical}` : ''}`,
-      );
-    }
-  }
-
   await ensureNotCancelled(job.id);
   await updateAsyncJob(job.id, {
     step: 'gathering_context',
@@ -1062,10 +1529,26 @@ export async function runAiDiagramAssistJob(job: AsyncJobRow): Promise<Record<st
     });
     systemPrompt = p.system;
     userPrompt = p.user;
-  } else {
+  } else if (action === 'status_descriptions') {
     const p = buildStatusPrompt({
       selection: selection as DiagramAssistStatusDescriptionsSelection,
       markdown: fileContent,
+      kbContext: kb.contextText,
+    });
+    systemPrompt = p.system;
+    userPrompt = p.user;
+  } else {
+    const baselineValidation = validateNexusMarkdownImport(fileContent);
+    const issuesToFix = selectMarkdownFixIssues({
+      baselineErrors: baselineValidation.errors,
+      selection: selection as DiagramAssistMarkdownErrorsFixSelection,
+    });
+    const targets = buildMarkdownFixTargets(fileContent, issuesToFix);
+    const p = buildMarkdownErrorsFixPrompt({
+      selection: selection as DiagramAssistMarkdownErrorsFixSelection,
+      markdown: fileContent,
+      issues: issuesToFix,
+      targets,
       kbContext: kb.contextText,
     });
     systemPrompt = p.system;
@@ -1077,12 +1560,16 @@ export async function runAiDiagramAssistJob(job: AsyncJobRow): Promise<Record<st
 
   if (action === 'node_structure') {
     const selectionNode = selection as DiagramAssistNodeStructureSelection;
+    const baselineValidation = validateNexusMarkdownImport(fileContent);
+    const baselineErrors = baselineValidation.errors;
     let lastFailureReason = 'No valid response received';
     let lastValidationErrors: string[] = [];
     let lastValidationIssues: ImportValidationIssue[] = [];
     let lastResponseText = '';
     let acceptedParsed: Record<string, unknown> | null = null;
-    let acceptedSimulated: { nextMarkdown: string; originalSubtreeMarkdown: string } | null = null;
+    let acceptedSimulated:
+      | { nextMarkdown: string; originalSubtreeMarkdown: string; nextSubtreeRange: { start: number; end: number } }
+      | null = null;
     let acceptedValidationWarnings: string[] = [];
     let acceptedSanitizerNotes: string[] = [];
 
@@ -1144,7 +1631,7 @@ export async function runAiDiagramAssistJob(job: AsyncJobRow): Promise<Record<st
       });
       parsed.subtreeReplacementMarkdown = sanitizedSubtree.subtreeReplacementMarkdown;
 
-      let simulated: { nextMarkdown: string; originalSubtreeMarkdown: string };
+      let simulated: { nextMarkdown: string; originalSubtreeMarkdown: string; nextSubtreeRange: { start: number; end: number } };
       try {
         simulated = replaceSubtreeAtLine({
           markdown: fileContent,
@@ -1158,10 +1645,15 @@ export async function runAiDiagramAssistJob(job: AsyncJobRow): Promise<Record<st
       }
 
       const validation = validateNexusMarkdownImport(simulated.nextMarkdown);
-      if (validation.errors.length > 0) {
-        lastValidationIssues = validation.errors.slice(0, 60);
+      const blockingValidationIssues = findBlockingNodeStructureErrors({
+        baselineErrors,
+        proposalErrors: validation.errors,
+        nextSubtreeRange: simulated.nextSubtreeRange,
+      });
+      if (blockingValidationIssues.length > 0) {
+        lastValidationIssues = blockingValidationIssues.slice(0, 60);
         lastValidationErrors = lastValidationIssues.map((err) => `${err.code}: ${err.message}`).slice(0, 60);
-        lastFailureReason = `Validation failed with ${validation.errors.length} error(s)`;
+        lastFailureReason = `Validation failed with ${blockingValidationIssues.length} blocking error(s)`;
         continue;
       }
 
@@ -1207,6 +1699,173 @@ export async function runAiDiagramAssistJob(job: AsyncJobRow): Promise<Record<st
         .slice(0, 40),
     };
     proposal = nodeProposal;
+  } else if (action === 'markdown_errors_fix') {
+    const selectionFix = selection as DiagramAssistMarkdownErrorsFixSelection;
+    const baselineValidation = validateNexusMarkdownImport(fileContent);
+    const baselineErrors = baselineValidation.errors;
+    const issuesToFix = selectMarkdownFixIssues({
+      baselineErrors,
+      selection: selectionFix,
+    });
+
+    if (!issuesToFix.length) {
+      proposal = {
+        action: 'markdown_errors_fix',
+        baseFileHash: currentHash,
+        summary: 'No markdown validation errors were found.',
+        issues: [],
+        patches: [],
+        validationReport: {
+          errors: [],
+          warnings: baselineValidation.warnings.map((w) => `${w.code}: ${w.message}`).slice(0, 120),
+          fixedIssueCount: 0,
+          unresolvedIssueCount: 0,
+          newIssueCount: 0,
+        },
+      };
+    } else {
+      const targets = buildMarkdownFixTargets(fileContent, issuesToFix);
+      if (!targets.length) {
+        throw new Error(
+          `${NON_RETRYABLE_PREFIX} Unable to build editable target sections for markdown repair. Re-run analysis manually.`,
+        );
+      }
+
+      let lastFailureReason = 'No valid response received';
+      let lastValidationIssues: ImportValidationIssue[] = [];
+      let lastValidationErrors: string[] = [];
+      let lastResponseText = '';
+      let acceptedParsed: Record<string, unknown> | null = null;
+      let acceptedPatches: DiagramAssistMarkdownSectionPatch[] = [];
+      let acceptedUnresolvedIssues: ImportValidationIssue[] = [];
+      let acceptedNewIssues: ImportValidationIssue[] = [];
+      let acceptedValidationWarnings: string[] = [];
+
+      for (let attempt = 1; attempt <= MAX_MODEL_REPAIR_ATTEMPTS; attempt += 1) {
+        await ensureNotCancelled(job.id);
+        modelAttemptsUsed = attempt;
+        if (attempt > 1) {
+          await updateAsyncJob(job.id, {
+            step: 'repairing_proposal',
+            progress_pct: Math.min(92, 58 + attempt * 6),
+            state: {
+              ...(job.state || {}),
+              action,
+              kbMatches: kb.matches.length,
+              repairAttempt: attempt,
+              previousFailure: lastFailureReason.slice(0, 300),
+            },
+          });
+        }
+
+        const userPromptForAttempt =
+          attempt === 1
+            ? userPrompt
+            : buildRepairUserPrompt({
+                baseUserPrompt: userPrompt,
+                action,
+                attempt,
+                failureReason: lastFailureReason,
+                validationErrors: lastValidationErrors,
+                validationIssues: lastValidationIssues,
+                previousResponse: lastResponseText,
+              });
+
+        const responseText = await runOpenAIResponsesText(
+          [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPromptForAttempt },
+          ],
+          {
+            apiKey: openaiApiKey,
+            model: chatModel,
+            withWebSearch: true,
+          },
+        );
+        lastResponseText = responseText;
+
+        let parsed: Record<string, unknown>;
+        try {
+          parsed = extractJsonObject(responseText);
+        } catch (e) {
+          lastFailureReason = `Invalid JSON output: ${e instanceof Error ? e.message : String(e)}`;
+          lastValidationErrors = [];
+          continue;
+        }
+
+        const maxPatches = Math.min(
+          MAX_MARKDOWN_FIX_PATCHES,
+          Math.max(1, Math.floor(Number(selectionFix.maxPatches || 12))),
+        );
+        const patches = sanitizeMarkdownFixPatchesFromParsed({
+          parsed,
+          targets,
+          maxPatches,
+        });
+        if (!patches.length) {
+          lastFailureReason = 'Model returned no valid section patches.';
+          lastValidationErrors = [];
+          continue;
+        }
+
+        let nextMarkdown = '';
+        try {
+          nextMarkdown = applyLineRangePatchesToMarkdown(fileContent, patches);
+        } catch (e) {
+          lastFailureReason = `Invalid patch plan: ${e instanceof Error ? e.message : String(e)}`;
+          lastValidationErrors = [];
+          continue;
+        }
+
+        const validation = validateNexusMarkdownImport(nextMarkdown);
+        const unresolvedIssues = diffRemainingBaselineIssues(validation.errors, issuesToFix);
+        const newIssues = diffAddedIssues(validation.errors, baselineErrors);
+        const blockingIssues = dedupeIssues(unresolvedIssues.concat(newIssues));
+        if (blockingIssues.length > 0) {
+          lastValidationIssues = blockingIssues.slice(0, 80);
+          lastValidationErrors = lastValidationIssues.map((issue) => `${issue.code}: ${issue.message}`).slice(0, 80);
+          lastFailureReason = `Validation failed with ${blockingIssues.length} blocking error(s)`;
+          continue;
+        }
+
+        acceptedParsed = parsed;
+        acceptedPatches = patches;
+        acceptedUnresolvedIssues = unresolvedIssues;
+        acceptedNewIssues = newIssues;
+        acceptedValidationWarnings = validation.warnings.map((w) => `${w.code}: ${w.message}`).slice(0, 120);
+        break;
+      }
+
+      if (!acceptedParsed) {
+        const human = formatValidationIssuesHuman(lastValidationIssues, 10);
+        const technical = formatValidationIssuesTechnical(lastValidationIssues, 10);
+        throw new Error(
+          `${NON_RETRYABLE_PREFIX} Unable to produce a valid markdown repair proposal after ${MAX_MODEL_REPAIR_ATTEMPTS} repair attempts. Auto-repair stopped.\nHuman-readable issues:\n${human}${technical ? `\nTechnical issues:\n${technical}` : ''}\nRe-run analysis manually after fixing the issues above.`,
+        );
+      }
+
+      await ensureNotCancelled(job.id);
+      await updateAsyncJob(job.id, {
+        step: 'validating_proposal',
+        progress_pct: 92,
+        state: {
+          ...(job.state || {}),
+          action,
+          kbMatches: kb.matches.length,
+          modelAttempts: modelAttemptsUsed,
+        },
+      });
+
+      proposal = sanitizeMarkdownErrorsFixProposal({
+        parsed: acceptedParsed,
+        baseFileHash: currentHash,
+        issues: issuesToFix,
+        patches: acceptedPatches,
+        unresolvedIssues: acceptedUnresolvedIssues,
+        newIssues: acceptedNewIssues,
+        validationWarnings: acceptedValidationWarnings,
+      });
+    }
   } else {
     let parsed: Record<string, unknown> | null = null;
     let lastFailureReason = 'No valid response received';

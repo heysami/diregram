@@ -9,6 +9,7 @@ import { AccessPeopleEditor } from '@/components/AccessPeopleEditor';
 import type { AccessPerson } from '@/lib/local-file-store';
 import type { LayoutDirection } from '@/lib/layout-direction';
 import { fetchProfileDefaultLayoutDirection } from '@/lib/layout-direction-supabase';
+import { makeStarterDiagramMarkdown } from '@/lib/diagram-starter';
 import { makeStarterGridMarkdown } from '@/lib/grid-starter';
 import { makeStarterNoteMarkdown } from '@/lib/note-starter';
 import { makeStarterVisionMarkdown } from '@/lib/vision-starter';
@@ -606,6 +607,7 @@ export function WorkspaceBrowserSupabase() {
         last_opened_at: nowIso(),
         layout_direction: defaultLayout,
         kind: 'diagram',
+        content: makeStarterDiagramMarkdown(),
       })
       .select('id,name,owner_id,folder_id,room_name,last_opened_at,updated_at,access,layout_direction,kind')
       .single();
