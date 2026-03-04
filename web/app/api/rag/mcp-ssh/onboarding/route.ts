@@ -164,7 +164,7 @@ export async function POST(request: Request) {
     );
     const claudeDesktopSnippet = cursorSnippet;
     const claudeDesktopSnippetWithOpenAiEnv = cursorSnippetWithOpenAiEnv;
-    const mcpServerBase = String(process.env.NEXT_PUBLIC_MCP_SERVER_URL || process.env.MCP_SERVER_URL || '').trim();
+    const mcpServerBase = String(process.env.MCP_SERVER_URL || process.env.NEXT_PUBLIC_MCP_SERVER_URL || '').trim();
     const normalizedMcpServerBase = mcpServerBase.replace(/\/+$/, '');
     const claudeConnectorUrl = normalizedMcpServerBase ? `${normalizedMcpServerBase}/sse?token=${encodeURIComponent(token)}` : '';
     if (targetClient === 'claude_web' && !claudeConnectorUrl) {

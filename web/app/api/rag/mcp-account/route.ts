@@ -29,7 +29,7 @@ export async function POST() {
     });
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-    const base = process.env.NEXT_PUBLIC_MCP_SERVER_URL || '';
+    const base = process.env.MCP_SERVER_URL || process.env.NEXT_PUBLIC_MCP_SERVER_URL || '';
     const mcpUrl = base ? `${base.replace(/\/+$/, '')}/sse?token=${encodeURIComponent(token)}` : null;
 
     return NextResponse.json({
@@ -54,4 +54,3 @@ export async function POST() {
     );
   }
 }
-

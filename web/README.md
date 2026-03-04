@@ -74,7 +74,7 @@ If you deploy the hosted MCP server (see `mcp-server-*` folders), you have two i
 
 Setup:
 
-- Deploy the MCP server and set `NEXT_PUBLIC_MCP_SERVER_URL` in the `web` app (e.g. `https://mcp.yourdomain.com`).
+- Deploy the MCP server and set `MCP_SERVER_URL` (preferred) or `NEXT_PUBLIC_MCP_SERVER_URL` in the `web` app (e.g. `https://mcp.yourdomain.com`).
 - In the app: go to **Account → MCP SSH Setup**, choose a target client, then generate and copy the provided MCP config (URL/snippet).
 - Share that generated MCP config with users.
 

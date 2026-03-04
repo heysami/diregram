@@ -339,9 +339,9 @@ export default function AccountClient() {
                 </div>
 
                 <div id="mcp-ssh-setup" className="mac-double-outline p-3 space-y-2">
-                  <div className="font-semibold">MCP SSH Setup (Claude / Cursor / Codex)</div>
+                  <div className="font-semibold">MCP Setup (SSH + Claude Web URL)</div>
                   <div className="text-[11px] opacity-70">
-                    Select the client first, then generate only that client’s setup.
+                    Select the client first, then generate only that client’s setup. Claude Web uses the remote `/sse` URL, not SSH host settings.
                   </div>
                   <div className="space-y-1">
                     <div className="text-[11px]">Target AI client</div>
