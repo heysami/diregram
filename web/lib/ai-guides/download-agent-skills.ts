@@ -158,10 +158,45 @@ function downloadAgentSkillBundle(skill: AgentSkillTemplate) {
   downloadBlob(skill.zipFilename, blob);
 }
 
+function downloadMultiAgentSkillBundle(filename: string, skills: AgentSkillTemplate[]) {
+  const validationErrors = skills.flatMap((skill) => validateSkillBundle(skill).map((err) => `[${skill.skillName}] ${err}`));
+  if (validationErrors.length) {
+    showErrorToast(`Skill bundle validation failed: ${validationErrors[0]}`);
+    return;
+  }
+
+  const zipEntries: Record<string, Uint8Array> = {};
+  for (const skill of skills) {
+    for (const [path, content] of Object.entries(skill.files)) {
+      zipEntries[path] = strToU8(content, true);
+    }
+  }
+
+  const zipped = zipSync(zipEntries, { level: 6 });
+  const bytes = new Uint8Array(zipped);
+  const blob = new Blob([bytes], { type: 'application/zip' });
+  downloadBlob(filename, blob);
+}
+
 export function downloadGenerationChecklistAgentSkillBundle() {
   downloadAgentSkillBundle(AGENT_SKILL_TEMPLATES.generationChecklist);
 }
 
 export function downloadMcpRagOperatorAgentSkillBundle() {
   downloadAgentSkillBundle(AGENT_SKILL_TEMPLATES.mcpRagOperator);
+}
+
+export function downloadUiContentSignalAuditAgentSkillBundle() {
+  downloadAgentSkillBundle(AGENT_SKILL_TEMPLATES.uiContentSignalAudit);
+}
+
+export function downloadUiManagerLoopAgentSkillBundle() {
+  downloadAgentSkillBundle(AGENT_SKILL_TEMPLATES.uiManagerLoop);
+}
+
+export function downloadUiQualityAgentSkillsBundle() {
+  downloadMultiAgentSkillBundle('diregram-agent-skills-ui-quality-pack.zip', [
+    AGENT_SKILL_TEMPLATES.uiContentSignalAudit,
+    AGENT_SKILL_TEMPLATES.uiManagerLoop,
+  ]);
 }

@@ -23,7 +23,7 @@ function buildPlainTextSteps() {
     'Help on AI usage — recommended sequence',
     '',
     'Stage 1 — Prepare inputs (strict skills + resources)',
-    '- Download strict-plan agent skills: (1) Generation + Checklist and (2) MCP RAG Operator.',
+    '- Download agent skills: (1) Generation + Checklist, (2) MCP RAG Operator, and (3) UI quality pack (UI Content Signal Audit + UI Manager Loop).',
     '- Keep diagram/vision markdown guide bundles available for guided generation and checks.',
     '- Put them in your Cursor project folder along with your source resources.',
     '- Convert resources to markdown (e.g. via Docling) so the AI can cite them cleanly.',
@@ -47,6 +47,12 @@ function buildPlainTextSteps() {
     '- Use the MCP RAG Operator skill so tools are called in the correct order with project/key checks.',
     '- Back in client, ask it to build the app using the RAG you set up through MCP.',
     '',
+    'Stage 6 — UI quality gate for generated app',
+    '- Run UI Content Signal Audit first (screenshot-first, whole-screen-first, discoverability checks).',
+    '- Send relayout/redesign findings to UI Manager Loop.',
+    '- Run UI Manager Loop with classic metrics plus strict design-system required-control matching.',
+    '- Close only when original metrics pass and DS required-control gate is pass (or explicit waivers are recorded).',
+    '',
   ].join('\n');
 }
 
@@ -64,8 +70,8 @@ export function AiUsageHelpModal({ open, onClose }: { open: boolean; onClose: ()
         steps: [
           {
             icon: Download,
-            title: 'Download strict-plan agent skills',
-            detail: <>Download both strict-plan skills: Generation + Checklist and MCP RAG Operator.</>,
+            title: 'Download required agent skills',
+            detail: <>Download Generation + Checklist, MCP RAG Operator, and the UI quality pack (UI Content Signal Audit + UI Manager Loop).</>,
           },
           {
             icon: FileText,
@@ -186,6 +192,27 @@ export function AiUsageHelpModal({ open, onClose }: { open: boolean; onClose: ()
           },
         ],
       },
+      {
+        icon: ListChecks,
+        title: 'Stage 6 — UI quality gate for generated app',
+        steps: [
+          {
+            icon: FileText,
+            title: 'Run UI Content Signal Audit first',
+            detail: <>Run screenshot-first content audit to remove noise, verify discoverability, and flag relayout/redesign issues.</>,
+          },
+          {
+            icon: Waypoints,
+            title: 'Handoff relayout/redesign to UI Manager Loop',
+            detail: <>Send relayout/redesign items to manager loop with impact, constraints, and acceptance criteria.</>,
+          },
+          {
+            icon: ListChecks,
+            title: 'Run UI Manager Loop as final gate',
+            detail: <>Use classic metrics plus strict design-system required-control matching before sign-off.</>,
+          },
+        ],
+      },
     ],
     [],
   );
@@ -220,6 +247,11 @@ export function AiUsageHelpModal({ open, onClose }: { open: boolean; onClose: ()
   const downloadMcpSkill = async () => {
     const mod = await import('@/lib/ai-guides/download-agent-skills');
     mod.downloadMcpRagOperatorAgentSkillBundle();
+  };
+
+  const downloadUiQualitySkills = async () => {
+    const mod = await import('@/lib/ai-guides/download-agent-skills');
+    mod.downloadUiQualityAgentSkillsBundle();
   };
 
   const openAccountMcpSetup = () => {
@@ -271,6 +303,15 @@ export function AiUsageHelpModal({ open, onClose }: { open: boolean; onClose: ()
             >
               <Download size={14} />
               Download skill: MCP RAG operator
+            </button>
+            <button
+              type="button"
+              className="mac-btn h-8 flex items-center gap-2"
+              onClick={() => void downloadUiQualitySkills()}
+              title="Download UI quality agent skills ZIP"
+            >
+              <Download size={14} />
+              Download skills: UI content + manager loop
             </button>
             <button type="button" className="mac-btn h-8 flex items-center gap-2" onClick={openAccountMcpSetup} title="Open Account MCP setup">
               <AppWindow size={14} />
@@ -329,7 +370,7 @@ export function AiUsageHelpModal({ open, onClose }: { open: boolean; onClose: ()
 
           <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-[11px] text-slate-700">
             Tip: use <span className="font-semibold">+ New</span> for creation and AI generation, <span className="font-semibold">RAG</span> for build/export actions,
-            and this modal’s <span className="font-semibold">Quick actions</span> for skill/guide downloads and copy helpers.
+            and this modal’s <span className="font-semibold">Quick actions</span> for skill/guide downloads including the UI quality agent pack.
           </div>
         </div>
       </div>

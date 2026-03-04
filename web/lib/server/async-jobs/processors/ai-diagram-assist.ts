@@ -666,6 +666,150 @@ function safeNumber(input: unknown, fallback: number): number {
   return n;
 }
 
+function cleanFlowLabel(input: string): string {
+  const noHeading = normalizeText(input).replace(/^#{1,6}\s+/, '');
+  const noBullet = noHeading.replace(/^[-*+]\s+/, '').replace(/^\d+[\.\)]\s+/, '');
+  return normalizeText(noBullet.replace(/\s+#flow#\s*$/i, ''));
+}
+
+function lineIndent(line: string): number {
+  const m = String(line || '').match(/^(\s*)/);
+  return m ? m[1].length : 0;
+}
+
+function toFlowLine(label: string, indent: number): string {
+  const cleaned = cleanFlowLabel(label);
+  if (!cleaned) return '';
+  const safeIndent = Math.max(0, Math.min(30, Math.floor(indent / 2) * 2));
+  return `${' '.repeat(safeIndent)}${cleaned} #flow#`;
+}
+
+function flowRootLabelForTarget(selection: DiagramAssistStatusDescriptionsSelection): string {
+  if (selection.target.kind === 'data_object_status') {
+    return `${selection.target.doName} – ${selection.target.attrName} Lifecycle`;
+  }
+  return `${selection.target.hubLabel} – ${selection.target.dimensionKey} Lifecycle`;
+}
+
+function normalizeFlowLinesFromProvided(raw: string[]): Array<{ indent: number; label: string }> {
+  const out: Array<{ indent: number; label: string }> = [];
+  raw.forEach((entry) => {
+    normalizeNewlines(entry)
+      .split('\n')
+      .forEach((line) => {
+        if (!normalizeText(line)) return;
+        const indent = lineIndent(line);
+        const label = cleanFlowLabel(String(line || '').trimStart());
+        if (!label) return;
+        out.push({ indent, label });
+      });
+  });
+  return out;
+}
+
+function hasDeepHierarchy(lines: Array<{ indent: number; label: string }>): boolean {
+  if (!lines.length) return false;
+  const maxIndent = lines.reduce((acc, x) => Math.max(acc, x.indent), 0);
+  return maxIndent >= 4;
+}
+
+function buildStatusFlowLines(input: {
+  selection: DiagramAssistStatusDescriptionsSelection;
+  providedRawLines: string[];
+  states: string[];
+  transitions: Array<{ from: string; to: string; guard?: string }>;
+}): string[] {
+  const rootLine = toFlowLine(flowRootLabelForTarget(input.selection), 0) || 'Status Lifecycle #flow#';
+  const provided = normalizeFlowLinesFromProvided(input.providedRawLines);
+
+  if (provided.length && hasDeepHierarchy(provided)) {
+    const out: string[] = [];
+    provided.slice(0, MAX_FLOW_LINES).forEach((p) => {
+      const line = toFlowLine(p.label, p.indent);
+      if (!line) return;
+      out.push(line);
+    });
+    return out.length ? out : [rootLine];
+  }
+
+  // Convert flat/numbered advice into explicit parent->child->grandchild chain.
+  if (provided.length) {
+    const out: string[] = [rootLine];
+    let depth = 1;
+    const rootLabelKey = cleanFlowLabel(flowRootLabelForTarget(input.selection)).toLowerCase();
+    provided.forEach((p) => {
+      const key = p.label.toLowerCase();
+      if (!key || key === rootLabelKey) return;
+      const line = toFlowLine(p.label, depth * 2);
+      if (!line) return;
+      out.push(line);
+      depth = Math.min(12, depth + 1);
+    });
+    if (out.length > 1) return out.slice(0, MAX_FLOW_LINES);
+  }
+
+  const transitions = input.transitions.slice(0, MAX_TRANSITIONS);
+  const states = (input.states || []).map((s) => normalizeText(s)).filter(Boolean);
+  const out: string[] = [rootLine];
+  const pushLine = (label: string, indent: number) => {
+    if (out.length >= MAX_FLOW_LINES) return;
+    const line = toFlowLine(label, indent);
+    if (!line) return;
+    out.push(line);
+  };
+
+  if (!transitions.length) {
+    const fallbackStates = states.length ? states : ['Start', 'In Progress', 'Done'];
+    let depth = 1;
+    fallbackStates.forEach((s) => {
+      pushLine(s, depth * 2);
+      depth = Math.min(12, depth + 1);
+    });
+    return out.slice(0, MAX_FLOW_LINES);
+  }
+
+  const outgoing = new Map<string, Array<{ to: string; guard?: string }>>();
+  const toSet = new Set<string>();
+  transitions.forEach((t) => {
+    const from = normalizeText(t.from);
+    const to = normalizeText(t.to);
+    if (!from || !to) return;
+    if (!outgoing.has(from)) outgoing.set(from, []);
+    outgoing.get(from)!.push({ to, guard: normalizeText(t.guard) || undefined });
+    toSet.add(to);
+  });
+
+  const startCandidates = Array.from(outgoing.keys()).filter((k) => !toSet.has(k));
+  const fallbackStart = normalizeText(transitions[0]?.from || '') || states[0] || 'Start';
+  const startStates = startCandidates.length ? startCandidates : [fallbackStart];
+
+  const visitedEdges = new Set<string>();
+  const walk = (state: string, indent: number, depth: number, path: Set<string>) => {
+    if (depth > 8 || out.length >= MAX_FLOW_LINES) return;
+    const outs = outgoing.get(state) || [];
+    outs.slice(0, 10).forEach((edge) => {
+      if (out.length >= MAX_FLOW_LINES) return;
+      const key = `${state}=>${edge.to}::${edge.guard || ''}`;
+      if (visitedEdges.has(key)) return;
+      visitedEdges.add(key);
+      const label = edge.guard ? `${edge.guard}: ${edge.to}` : edge.to;
+      pushLine(label, indent);
+      if (!path.has(edge.to)) {
+        const nextPath = new Set(path);
+        nextPath.add(edge.to);
+        walk(edge.to, Math.min(28, indent + 2), depth + 1, nextPath);
+      }
+    });
+  };
+
+  startStates.slice(0, 5).forEach((start) => {
+    pushLine(start, 2);
+    walk(start, 4, 0, new Set([start]));
+  });
+
+  return out.slice(0, MAX_FLOW_LINES);
+}
+
 function parseDataObjectsFromMarkdown(markdown: string): Array<{ id: string; name: string; attributes: Array<{ name: string; type: 'text' | 'status' }> }> {
   const m = normalizeNewlines(markdown).match(/```data-objects\n([\s\S]*?)\n```/);
   if (!m?.[1]) return [];
@@ -853,6 +997,8 @@ function buildStatusPrompt(input: {
     'Return strictly valid JSON only.',
     'Always generate BOTH: flow-oriented state machine and role/field-access table.',
     'Focus on realistic transitions, guards, and permissions by role.',
+    'flowMarkdownLines MUST be Diregram process-flow tree lines: 2-space indentation, parent/child nesting, and #flow# on every non-empty line.',
+    'Do NOT output numbered or bullet lists (no "1.", "-", "*"). Represent lifecycle as children-of-children flow hierarchy.',
     'JSON contract:',
     '{',
     '  "summary": "string",',
@@ -1154,7 +1300,13 @@ function sanitizeStatusDescriptionsProposal(input: {
     .filter((x) => Boolean(x.from) && Boolean(x.to))
     .slice(0, MAX_TRANSITIONS);
 
-  const flowMarkdownLines = clampArray(input.parsed.flowMarkdownLines, { maxItems: MAX_FLOW_LINES, maxChars: 400 });
+  const flowMarkdownLinesRaw = clampArray(input.parsed.flowMarkdownLines, { maxItems: MAX_FLOW_LINES, maxChars: 400 });
+  const flowMarkdownLines = buildStatusFlowLines({
+    selection: input.selection,
+    providedRawLines: flowMarkdownLinesRaw,
+    states: states.length ? states : input.selection.target.statusValues.slice(0, MAX_STATUS_VALUES),
+    transitions: transitions.map((t) => ({ from: t.from, to: t.to, guard: t.guard })),
+  });
 
   const tableRaw = input.parsed.table && typeof input.parsed.table === 'object'
     ? (input.parsed.table as Record<string, unknown>)

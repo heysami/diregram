@@ -23,6 +23,7 @@ import { ensureTemplateLibraryFolderId, moveTemplateFileToFolder, type TemplateL
 import { downloadProjectBundleZip, exportProjectBundleZip } from '@/lib/export-bundle';
 import { exportKgAndVectorsForProject } from '@/lib/kg-vector-export';
 import { ProjectActionMenus } from '@/components/workspace/ProjectActionMenus';
+import { AiUsageHelpModal } from '@/components/workspace/AiUsageHelpModal';
 import { SemanticKgViewerModal } from '@/components/kg/SemanticKgViewerModal';
 import { DoclingImportPanel } from '@/components/docling/DoclingImportPanel';
 import { ImportMermaidModal } from '@/components/mermaid/ImportMermaidModal';
@@ -158,6 +159,7 @@ export function WorkspaceBrowserSupabase() {
   const [globalTemplateFiles, setGlobalTemplateFiles] = useState<Array<{ id: string; name: string; kind: 'template' }>>([]);
   const [kgViewerOpen, setKgViewerOpen] = useState(false);
   const [kgExportResult, setKgExportResult] = useState<Awaited<ReturnType<typeof exportKgAndVectorsForProject>> | null>(null);
+  const [aiHelpOpen, setAiHelpOpen] = useState(false);
 
   const [resourcesLoading, setResourcesLoading] = useState(false);
   const [resourcesError, setResourcesError] = useState<string | null>(null);
@@ -955,11 +957,23 @@ export function WorkspaceBrowserSupabase() {
         <div className="space-y-4">
           <div className="flex items-center justify-between gap-3">
             <div className="text-sm font-bold tracking-tight">Projects</div>
-            <button type="button" className="mac-btn flex items-center gap-1.5" onClick={createProject}>
-              <FolderPlus size={14} />
-              New project
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                className="mac-btn flex items-center gap-1.5"
+                onClick={() => setAiHelpOpen(true)}
+                title="Recommended sequence for AI usage, imports, exports, and RAG"
+              >
+                <FileText size={14} /> Help on AI usage
+              </button>
+              <button type="button" className="mac-btn flex items-center gap-1.5" onClick={createProject}>
+                <FolderPlus size={14} />
+                New project
+              </button>
+            </div>
           </div>
+
+          <AiUsageHelpModal open={aiHelpOpen} onClose={() => setAiHelpOpen(false)} />
 
 	          <div className="grid gap-4 w-full grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
 	            {folders.map((folder, idx) => {

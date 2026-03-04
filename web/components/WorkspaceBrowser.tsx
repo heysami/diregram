@@ -36,6 +36,7 @@ import { makeStarterTestMarkdown } from '@/lib/test-starter';
 import type { DocKind } from '@/lib/doc-kinds';
 import { NewFromTemplateModal } from '@/components/templates/NewFromTemplateModal';
 import { ProjectActionMenus } from '@/components/workspace/ProjectActionMenus';
+import { AiUsageHelpModal } from '@/components/workspace/AiUsageHelpModal';
 import { ImportMermaidModal } from '@/components/mermaid/ImportMermaidModal';
 import { downloadProjectBundleZip, exportProjectBundleZip } from '@/lib/export-bundle';
 import { exportKgAndVectorsForProject } from '@/lib/kg-vector-export';
@@ -88,6 +89,7 @@ export function WorkspaceBrowser() {
   const [templateScope, setTemplateScope] = useState<'project' | 'account'>('project');
   const [kgViewerOpen, setKgViewerOpen] = useState(false);
   const [kgExportResult, setKgExportResult] = useState<Awaited<ReturnType<typeof exportKgAndVectorsForProject>> | null>(null);
+  const [aiHelpOpen, setAiHelpOpen] = useState(false);
 
   useEffect(() => {
     // Avoid synchronous setState in effect body (lint + perf):
@@ -570,18 +572,30 @@ export function WorkspaceBrowser() {
         <div className="space-y-4">
           <div className="flex items-center justify-between gap-3">
             <div className="text-sm font-bold tracking-tight">Projects</div>
-            <button
-              type="button"
-              className="mac-btn flex items-center gap-1.5"
-              onClick={() => {
-                setStore((prev) => createLocalFolder(prev, 'New Project', null));
-                showToast('Project created');
-              }}
-            >
-              <FolderPlus size={14} />
-              New project
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                className="mac-btn flex items-center gap-1.5"
+                onClick={() => setAiHelpOpen(true)}
+                title="Recommended sequence for AI usage, imports, exports, and RAG"
+              >
+                <FileText size={14} /> Help on AI usage
+              </button>
+              <button
+                type="button"
+                className="mac-btn flex items-center gap-1.5"
+                onClick={() => {
+                  setStore((prev) => createLocalFolder(prev, 'New Project', null));
+                  showToast('Project created');
+                }}
+              >
+                <FolderPlus size={14} />
+                New project
+              </button>
+            </div>
           </div>
+
+          <AiUsageHelpModal open={aiHelpOpen} onClose={() => setAiHelpOpen(false)} />
 
 	          <div className="grid gap-4 w-full grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
 	            {cards.map(({ folder, recent }, idx) => {

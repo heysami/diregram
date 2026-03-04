@@ -1,7 +1,7 @@
 'use client';
 
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import type { Editor, TLEditorSnapshot } from 'tldraw';
 import type * as Y from 'yjs';
@@ -12,6 +12,13 @@ import {
   normalizeVisionDesignSystem,
   type VisionDesignSystemV1,
 } from '@/lib/vision-design-system';
+import {
+  buildVisionDesignSystemComponentsResourceMarkdown,
+  buildVisionDesignSystemVarsClassesResourceMarkdown,
+  normalizeVisionResourceBaseName,
+  upsertVisionDesignSystemResourcesReferenceBlock,
+  type VisionDesignSystemPreviewPublishMetadata,
+} from '@/lib/vision-design-system-publish';
 import { VisionCanvas } from '@/components/vision/v2/VisionCanvas';
 import { MarkdownPopup } from '@/components/vision/v2/shell/MarkdownPopup';
 import { VisionImportModal } from '@/components/vision/v2/shell/VisionImportModal';
@@ -20,7 +27,6 @@ import { useCardCount } from '@/components/vision/v2/hooks/useCardCount';
 import { CommentsPanel } from '@/components/CommentsPanel';
 import { DesignSystemWorkbench } from '@/components/vision/v2/design-system/DesignSystemWorkbench';
 import { deleteAnchor, getThread, isVisionPointCommentTargetKey } from '@/lib/node-comments';
-import { upsertTemplateHeader, type NexusTemplateHeader } from '@/lib/nexus-template';
 import { InsertFromTemplateModal, type WorkspaceFileLite as TemplateWorkspaceFileLite } from '@/components/templates/InsertFromTemplateModal';
 import { createShapeId } from '@tldraw/tlschema';
 
@@ -75,6 +81,10 @@ export function VisionEditor({
   const [importOpen, setImportOpen] = useState(false);
   const [insertCardTemplateOpen, setInsertCardTemplateOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'designSystem' | 'customVisualElements'>('designSystem');
+  const [publishPreviewMeta, setPublishPreviewMeta] = useState<VisionDesignSystemPreviewPublishMetadata | null>(null);
+  const publishPreviewMetaSigRef = useRef<string>('');
+  const [publishingDesignSystem, setPublishingDesignSystem] = useState(false);
+  const [publishStatus, setPublishStatus] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
   useCardCount(doc); // keep memoized for future use (e.g. status line); doesn't render now.
 
   const [activeTool, setActiveTool] = useState<'select' | 'comment'>('select');
@@ -149,6 +159,162 @@ export function VisionEditor({
     },
     [doc, onChange],
   );
+
+  const onPreviewMetadataChange = useCallback((next: VisionDesignSystemPreviewPublishMetadata) => {
+    const sig = JSON.stringify({
+      previewTheme: next.previewTheme,
+      cssVariables: next.cssVariables,
+      cssClasses: next.cssClasses,
+      dataAttributes: next.dataAttributes,
+      components: next.components,
+      capturedAtIso: next.capturedAtIso,
+    });
+    if (publishPreviewMetaSigRef.current === sig) return;
+    publishPreviewMetaSigRef.current = sig;
+    setPublishPreviewMeta(next);
+  }, []);
+
+  const canPublishDesignSystem = activeTab === 'designSystem' && supabaseMode && !!supabase && !!userId && !!folderId && !!publishPreviewMeta;
+
+  const publishDesignSystemResources = useCallback(async () => {
+    if (!supabaseMode || !supabase || !folderId || !userId) {
+      setPublishStatus({ kind: 'error', text: 'Publish is available only in synced Supabase projects.' });
+      return;
+    }
+    if (!publishPreviewMeta) {
+      setPublishStatus({ kind: 'error', text: 'Preview metadata is not ready yet. Wait for preview render, then publish again.' });
+      return;
+    }
+    setPublishingDesignSystem(true);
+    setPublishStatus(null);
+    try {
+      const publishedAtIso = new Date().toISOString();
+      const visionName = String(title || 'Vision').trim() || 'Vision';
+      const baseName = normalizeVisionResourceBaseName(visionName);
+      const componentsResourceName = `${baseName}_components`;
+      const varsClassResourceName = `${baseName}_var+class`;
+
+      const componentsMarkdown = buildVisionDesignSystemComponentsResourceMarkdown({
+        visionFileId: fileId,
+        visionFileName: visionName,
+        designSystem,
+        previewMeta: publishPreviewMeta,
+        publishedAtIso,
+      });
+      const varsClassMarkdown = buildVisionDesignSystemVarsClassesResourceMarkdown({
+        visionFileId: fileId,
+        visionFileName: visionName,
+        previewMeta: publishPreviewMeta,
+        publishedAtIso,
+      });
+
+      const sourceBase = {
+        type: 'vision_design_system_publish',
+        visionFileId: fileId,
+        visionFileName: visionName,
+        generator: 'vision_design_system_publish_v1',
+      };
+
+      const { data: existingRowsRaw, error: existingError } = await supabase
+        .from('project_resources')
+        .select('id,source')
+        .eq('project_folder_id', folderId)
+        .contains('source', { type: 'vision_design_system_publish', visionFileId: fileId });
+      if (existingError) throw existingError;
+      const existingRows = (existingRowsRaw || []) as Array<{ id?: string | null; source?: unknown }>;
+      let existingComponentsId = '';
+      let existingVarsClassId = '';
+      for (const row of existingRows) {
+        const id = String(row.id || '').trim();
+        if (!id) continue;
+        const src = row.source && typeof row.source === 'object' ? (row.source as Record<string, unknown>) : {};
+        const kind = String(src.resourceKind || '').trim();
+        if (kind === 'components' && !existingComponentsId) existingComponentsId = id;
+        if (kind === 'var_class' && !existingVarsClassId) existingVarsClassId = id;
+      }
+
+      const upsertResource = async (opts: {
+        existingId: string;
+        resourceKind: 'components' | 'var_class';
+        name: string;
+        markdown: string;
+      }): Promise<string> => {
+        const source = {
+          ...sourceBase,
+          resourceKind: opts.resourceKind,
+          publishedAtIso,
+        };
+        if (opts.existingId) {
+          const { data, error } = await supabase
+            .from('project_resources')
+            .update({
+              name: opts.name,
+              kind: 'markdown',
+              markdown: opts.markdown,
+              source,
+              updated_at: publishedAtIso,
+            })
+            .eq('id', opts.existingId)
+            .select('id')
+            .single();
+          if (error) throw error;
+          return String((data as { id?: unknown } | null)?.id || opts.existingId);
+        }
+        const { data, error } = await supabase
+          .from('project_resources')
+          .insert({
+            owner_id: userId,
+            project_folder_id: folderId,
+            name: opts.name,
+            kind: 'markdown',
+            markdown: opts.markdown,
+            source,
+          } as never)
+          .select('id')
+          .single();
+        if (error) throw error;
+        return String((data as { id?: unknown } | null)?.id || '');
+      };
+
+      const [componentsId, varsClassId] = await Promise.all([
+        upsertResource({
+          existingId: existingComponentsId,
+          resourceKind: 'components',
+          name: componentsResourceName,
+          markdown: componentsMarkdown,
+        }),
+        upsertResource({
+          existingId: existingVarsClassId,
+          resourceKind: 'var_class',
+          name: varsClassResourceName,
+          markdown: varsClassMarkdown,
+        }),
+      ]);
+      if (!componentsId || !varsClassId) throw new Error('Failed to save additional resources.');
+
+      const nexus = yDoc.getText('nexus');
+      const currentMarkdown = nexus.toString();
+      const nextMarkdown = upsertVisionDesignSystemResourcesReferenceBlock(currentMarkdown, {
+        visionFileId: fileId,
+        visionFileName: visionName,
+        publishedAtIso,
+        components: { id: componentsId, name: componentsResourceName },
+        varsClass: { id: varsClassId, name: varsClassResourceName },
+      });
+      if (nextMarkdown !== currentMarkdown) {
+        yDoc.transact(() => {
+          nexus.delete(0, nexus.length);
+          nexus.insert(0, nextMarkdown);
+        });
+      }
+
+      setPublishStatus({ kind: 'ok', text: `Published ${componentsResourceName} and ${varsClassResourceName}.` });
+    } catch (error) {
+      setPublishStatus({ kind: 'error', text: error instanceof Error ? error.message : 'Failed to publish design system resources.' });
+    } finally {
+      setPublishingDesignSystem(false);
+    }
+  }, [designSystem, fileId, folderId, publishPreviewMeta, supabase, supabaseMode, title, userId, yDoc]);
 
   const activateTab = useCallback(
     (next: 'designSystem' | 'customVisualElements') => {
@@ -229,6 +395,40 @@ export function VisionEditor({
           <button type="button" className="mac-btn h-8" onClick={() => setMarkdownOpen(true)} title="Open markdown preview">
             Markdown
           </button>
+          <button
+            type="button"
+            className="mac-btn h-8 disabled:opacity-40 disabled:cursor-not-allowed"
+            onClick={() => {
+              void publishDesignSystemResources();
+            }}
+            disabled={!canPublishDesignSystem || publishingDesignSystem}
+            title={
+              !supabaseMode
+                ? 'Available only in synced Supabase projects.'
+                : !folderId
+                  ? 'Project folder is required to save additional resources.'
+                  : !publishPreviewMeta
+                    ? 'Waiting for design system preview metadata. Render preview first, then publish.'
+                  : activeTab !== 'designSystem'
+                    ? 'Switch to Design System tab to publish.'
+                    : publishingDesignSystem
+                      ? 'Publishing design system resources...'
+                      : 'Publish design system resources to Additional resources and reference them in markdown.'
+            }
+          >
+            {publishingDesignSystem ? 'Publishing…' : 'Publish Design System'}
+          </button>
+          {publishStatus ? (
+            <div
+              className={[
+                'mac-window mac-shadow-hard px-2 py-1 text-[11px] bg-white max-w-[360px] truncate',
+                publishStatus.kind === 'ok' ? 'text-emerald-800' : 'text-red-800',
+              ].join(' ')}
+              title={publishStatus.text}
+            >
+              {publishStatus.text}
+            </div>
+          ) : null}
         </div>
       </header>
 
@@ -310,6 +510,7 @@ export function VisionEditor({
               onChange={(next) => {
                 updateVisionDoc({ designSystem: next });
               }}
+              onPreviewMetadataChange={onPreviewMetadataChange}
             />
           </div>
         )}

@@ -25,6 +25,12 @@ export type AgentSkillTemplate = {
   files: Record<string, string>;
 };
 
+export type AgentSkillTemplateKey =
+  | 'generationChecklist'
+  | 'mcpRagOperator'
+  | 'uiContentSignalAudit'
+  | 'uiManagerLoop';
+
 const STANDARD_RULE_LINE = 'Do not skip steps. Do not continue after a failed step.';
 const STANDARD_BLOCKING_LINE = 'If any required input is missing, stop and ask the user before continuing.';
 
@@ -325,7 +331,248 @@ const mcpClaudePrompt = [
   mcpSkillMd.replace(/^---[\s\S]*?---\n\n/, ''),
 ].join('\n');
 
-export const AGENT_SKILL_TEMPLATES: Record<'generationChecklist' | 'mcpRagOperator', AgentSkillTemplate> = {
+const uiContentSignalAuditSkillName = 'diregram-ui-content-signal-audit';
+const uiContentSignalAuditSkillMd = `---
+name: ${uiContentSignalAuditSkillName}
+description: Audit and rewrite UI text for signal-to-noise, task clarity, and discoverability using screenshot-first evidence and strict action ordering.
+---
+
+# Diregram UI Content Signal Audit
+
+## Overview
+Use this skill to run a screenshot-first content-signal audit over in-product UI copy.
+${STANDARD_RULE_LINE}
+
+## Required Inputs (Blocking)
+1. Screenshot evidence for each scoped page and key overlays/states.
+2. User type, tone constraints, and must-keep legal/terminology constraints.
+3. Scope boundaries for flows/screens to audit.
+4. Discoverability baseline (which controls/actions are visible in scoped UI states).
+${STANDARD_BLOCKING_LINE}
+
+## Plan (Strict Sequence — Must Follow In Order)
+1. Validate evidence coverage (screens + overlays + state variants).
+2. Build whole-screen scan-flow model before local string edits.
+3. Inventory strings with screenshot anchors and hierarchy context.
+4. Run helper/subtitle default-remove gate and net-new delta proof.
+5. Run reference/discoverability gate (remove misleading action references).
+6. Resolve action classes in strict order: remove -> relayout/redesign -> replace -> add.
+7. Create handoff queue for relayout/redesign items to ui-manager-loop.
+8. Re-audit after manager-loop return and close only when relayout queue is cleared or explicitly deferred.
+9. Return patch-ready copy deltas with evidence anchors.
+
+## Blockers and Ask-User Rules
+1. If screenshot coverage is incomplete for critical areas, ask for missing evidence and pause final sign-off.
+2. If discoverability cannot be verified from evidence, ask for a reproducible UI state and pause final verdict.
+3. If relayout/redesign items exist without handoff details, block completion.
+4. If missing clarity is found but no add candidates are produced, block completion.
+
+## Output Contract
+1. Intake summary (user type, tone, constraints).
+2. Whole-screen scan-flow map and redundancy clusters.
+3. String inventory with action class and evidence anchor.
+4. Must-remove list and relayout/redesign list.
+5. Replace and add proposals with exact insertion slot.
+6. ui-manager-loop handoff queue (impact, constraints, acceptance criteria).
+7. Final status: complete or blocked.
+
+## Guardrails
+1. No text-only audit without screenshot context.
+2. Do not keep helper/subtitle copy by default.
+3. Do not invent functionality in copy.
+4. Do not bypass action priority ordering.
+5. Do not close while unresolved relayout/redesign items remain without explicit defer decision.
+
+## Completion Criteria
+1. Evidence coverage is complete for scoped critical screens/states.
+2. Action ordering was applied correctly.
+3. All relayout/redesign items are handed off and tracked.
+4. Output includes patch-ready copy changes with anchors.
+`;
+
+const uiContentSignalAuditOpenAiYaml = `interface:
+  display_name: "Diregram UI Content Signal Audit"
+  short_description: "Screenshot-first UI content signal audit"
+  default_prompt: "Use $${uiContentSignalAuditSkillName} to run a whole-screen-first content signal audit, enforce remove->relayout->replace->add ordering, and return screenshot-anchored changes plus manager-loop handoff items."
+`;
+
+const uiContentSignalAuditReferenceRubric = [
+  '# Content Signal Rubric (Concise)',
+  '',
+  '## Required order',
+  '1. Remove',
+  '2. Relayout/redesign UI presentation',
+  '3. Replace',
+  '4. Add',
+  '',
+  '## Keep criteria',
+  '- Adds net-new decision value in current scan moment.',
+  '- Not already conveyed by global context, visual hierarchy, or nearby controls.',
+  '- Reference target is discoverable in rendered UI.',
+  '',
+  '## Blockers',
+  '- Missing screenshot evidence for critical scope.',
+  '- Instruction text pointing to non-discoverable control.',
+  '- Relayout findings emitted without manager-loop handoff packet.',
+].join('\n');
+
+const uiContentSignalAuditReferenceTemplates = [
+  '# UI Content Audit Templates',
+  '',
+  '## String Row',
+  '- id:',
+  '- text:',
+  '- screenshot_anchor:',
+  '- hierarchy_group:',
+  '- action: keep/tighten/remove/relayout/replace/add',
+  '- rationale:',
+  '',
+  '## Relayout Handoff Row',
+  '- relayout_id:',
+  '- issue:',
+  '- user_impact:',
+  '- constraints:',
+  '- acceptance_criteria:',
+  '- status: pending/in_review/cleared/deferred',
+].join('\n');
+
+const uiContentSignalAuditClaudePrompt = [
+  '# Diregram UI Content Signal Audit (Claude)',
+  '',
+  'Use this instruction as a strict execution contract.',
+  '',
+  uiContentSignalAuditSkillMd.replace(/^---[\s\S]*?---\n\n/, ''),
+].join('\n');
+
+const uiManagerLoopSkillName = 'diregram-ui-manager-loop';
+const uiManagerLoopSkillMd = `---
+name: ${uiManagerLoopSkillName}
+description: Evaluate UI/UX with original manager-loop metrics plus mandatory Diregram design-system match gates for MCP-generated app outputs.
+---
+
+# Diregram UI Manager Loop
+
+## Overview
+Use this skill to run measure -> propose -> approve -> apply loops for UI quality.
+Keep original manager-loop metrics and add mandatory design-system match checks.
+${STANDARD_RULE_LINE}
+
+## Required Inputs (Blocking)
+1. Target outcomes, avoid outcomes, target emotions, and avoid emotions.
+2. Scope surfaces and state coverage to evaluate.
+3. Design-system source (prefer visionjson.designSystem, then vision-design-system/readout).
+4. Required control families and explicit waiver policy.
+${STANDARD_BLOCKING_LINE}
+
+## Plan (Strict Sequence — Must Follow In Order)
+1. Confirm intake and tradeoff order.
+2. Gather rendered evidence and design-system source evidence.
+3. Run baseline manager metrics (Visual Fidelity, Cognitive Load, Interaction Fidelity, Style Direction, UX Flow, System Interaction).
+4. Run additional DS diagnostics: DS_tok, DS_comp, DS_mat.
+5. Build strict required-control table with verdict per family: match/mismatch/waived.
+6. Route non-linearly based on failures and remeasure after each loop.
+7. Propose changes with expected metric direction and control-family linkage.
+8. Ask for explicit approval before apply.
+9. Apply approved changes and re-measure.
+10. Close only when original metric goals pass and required DS control gate passes (or waivers are explicit).
+
+## Blockers and Ask-User Rules
+1. If design-system source is missing, ask for it; if unavailable, mark inference and confidence limits.
+2. If required controls mismatch, block sign-off unless explicit waiver is provided.
+3. If system realism has blocking flags, pause style polish and resolve realism first.
+4. If critical state coverage is missing, stop and request missing state evidence.
+
+## Output Contract
+1. Intake summary and tradeoff policy.
+2. Original manager-loop scorecard (unchanged metric names).
+3. DS diagnostics (DS_tok, DS_comp, DS_mat).
+4. Required-control match table and DS_required_match verdict.
+5. System realism findings (Sys_flags, State_map, Dependency_map, Mitigation_plan, Assumption_log).
+6. Proposal set + approval request + post-apply remeasure.
+7. Final status: complete or blocked.
+
+## Guardrails
+1. Do not remove or rename original manager-loop metrics.
+2. Do not pass DS gate based on numeric closeness alone for required controls.
+3. Do not apply changes before explicit approval.
+4. Do not treat system-dependent actions as instant by default.
+5. Honor strictNoDarkMode when required by design-system policy.
+
+## Completion Criteria
+1. Original priority metrics are in acceptable bands.
+2. DS_required_match is pass or explicit waivers are recorded.
+3. No blocking system realism flags remain.
+4. Output includes evidence anchors and re-measurement.
+`;
+
+const uiManagerLoopOpenAiYaml = `interface:
+  display_name: "Diregram UI Manager Loop"
+  short_description: "Classic manager-loop + strict DS match gate"
+  default_prompt: "Use $${uiManagerLoopSkillName} to run original manager-loop scoring and add strict required-control design-system matching for MCP-generated app UI before final sign-off."
+`;
+
+const uiManagerLoopReferenceFramework = [
+  '# UI Manager Loop Framework (Concise)',
+  '',
+  '## Original metric families (unchanged)',
+  '- Visual Fidelity: S, S_vf, W_fit, T, V_hue',
+  '- Cognitive Load: S_eff, CL_step, CL_flow, CL_long, CL_journey',
+  '- Interaction Fidelity: I_score, A_amb',
+  '- Style Direction: B_cons, S_palette, D_style, V_vibe',
+  '- UX Flow: U_flow, F_life, P_user, D_arch, N_nav, F_nav, R_step',
+  '- System realism: Sys_flags, State_map, Dependency_map, Mitigation_plan, Assumption_log',
+  '',
+  '## Additional DS diagnostics',
+  '- DS_tok, DS_comp, DS_mat',
+  '- DS_required_match (pass/fail)',
+  '- DS_required_table (match/mismatch/waived per control family)',
+  '',
+  '## Required control families',
+  '- Typography',
+  '- Spacing',
+  '- Shape/composition',
+  '- Color + semantic mapping',
+  '- Material behavior',
+  '- Dark mode policy (strictNoDarkMode if set)',
+  '',
+  '## Gate policy',
+  '- Required mismatch blocks sign-off unless explicit waiver exists.',
+  '- Numeric proximity does not override mismatch verdict for required contracts.',
+].join('\n');
+
+const uiManagerLoopReferenceTemplates = [
+  '# UI Manager Loop Templates',
+  '',
+  '## Scorecard (original metrics + DS diagnostics)',
+  '- original_metrics:',
+  '- ds_diagnostics:',
+  '- ds_required_match:',
+  '',
+  '## Required-control row',
+  '- family:',
+  '- required: yes/no',
+  '- target:',
+  '- observed:',
+  '- verdict: match/mismatch/waived',
+  '- evidence_anchor:',
+  '',
+  '## Proposal row',
+  '- proposal:',
+  '- expected_metric_direction:',
+  '- control_family_linkage:',
+  '- risk:',
+  '- requires_approval: yes',
+].join('\n');
+
+const uiManagerLoopClaudePrompt = [
+  '# Diregram UI Manager Loop (Claude)',
+  '',
+  'Use this instruction as a strict execution contract.',
+  '',
+  uiManagerLoopSkillMd.replace(/^---[\s\S]*?---\n\n/, ''),
+].join('\n');
+
+export const AGENT_SKILL_TEMPLATES: Record<AgentSkillTemplateKey, AgentSkillTemplate> = {
   generationChecklist: {
     zipFilename: 'diregram-agent-skill-generation-checklist.zip',
     skillName: generationSkillName,
@@ -367,6 +614,28 @@ export const AGENT_SKILL_TEMPLATES: Record<'generationChecklist' | 'mcpRagOperat
       [`codex/${mcpSkillName}/references/rag-coverage-and-limits.md`]: mcpReferenceRagScope,
       [`codex/${mcpSkillName}/references/error-recovery.md`]: mcpReferenceErrors,
       [`claude/${mcpSkillName}.md`]: mcpClaudePrompt,
+    },
+  },
+  uiContentSignalAudit: {
+    zipFilename: 'diregram-agent-skill-ui-content-signal-audit.zip',
+    skillName: uiContentSignalAuditSkillName,
+    files: {
+      [`codex/${uiContentSignalAuditSkillName}/SKILL.md`]: uiContentSignalAuditSkillMd,
+      [`codex/${uiContentSignalAuditSkillName}/agents/openai.yaml`]: uiContentSignalAuditOpenAiYaml,
+      [`codex/${uiContentSignalAuditSkillName}/references/rubric.md`]: uiContentSignalAuditReferenceRubric,
+      [`codex/${uiContentSignalAuditSkillName}/references/templates.md`]: uiContentSignalAuditReferenceTemplates,
+      [`claude/${uiContentSignalAuditSkillName}.md`]: uiContentSignalAuditClaudePrompt,
+    },
+  },
+  uiManagerLoop: {
+    zipFilename: 'diregram-agent-skill-ui-manager-loop.zip',
+    skillName: uiManagerLoopSkillName,
+    files: {
+      [`codex/${uiManagerLoopSkillName}/SKILL.md`]: uiManagerLoopSkillMd,
+      [`codex/${uiManagerLoopSkillName}/agents/openai.yaml`]: uiManagerLoopOpenAiYaml,
+      [`codex/${uiManagerLoopSkillName}/references/framework.md`]: uiManagerLoopReferenceFramework,
+      [`codex/${uiManagerLoopSkillName}/references/templates.md`]: uiManagerLoopReferenceTemplates,
+      [`claude/${uiManagerLoopSkillName}.md`]: uiManagerLoopClaudePrompt,
     },
   },
 };

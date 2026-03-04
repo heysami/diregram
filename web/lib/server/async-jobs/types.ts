@@ -55,6 +55,7 @@ export type AsyncJobSummary = {
   status: AsyncJobStatus;
   step: string;
   progressPct: number;
+  cancelRequested: boolean;
   attempts: number;
   maxAttempts: number;
   error: string | null;
@@ -70,6 +71,7 @@ export function toAsyncJobSummary(row: AsyncJobRow): AsyncJobSummary {
     status: row.status,
     step: row.step,
     progressPct: Number(row.progress_pct || 0),
+    cancelRequested: Boolean(row.cancel_requested),
     attempts: Number(row.attempts || 0),
     maxAttempts: Number(row.max_attempts || 0),
     error: row.error ? String(row.error) : null,

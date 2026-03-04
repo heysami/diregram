@@ -1,10 +1,12 @@
 'use client';
 
-import { useState, type CSSProperties } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { deriveDesignSystemTokens, type VisionDesignSystemV1, type VisionTypographyTokenV1 } from '@/lib/vision-design-system';
+import type { VisionDesignSystemPreviewComponentMeta, VisionDesignSystemPreviewPublishMetadata } from '@/lib/vision-design-system-publish';
 
 type Props = {
   value: VisionDesignSystemV1;
+  onPreviewMetadataChange?: (meta: VisionDesignSystemPreviewPublishMetadata) => void;
 };
 
 function getToken(tokens: VisionTypographyTokenV1[], token: VisionTypographyTokenV1['token']) {
@@ -15,9 +17,31 @@ function colorAt(pool: string[], index: number, fallback: string) {
   return pool[index % Math.max(pool.length, 1)] || fallback;
 }
 
-export function DesignSystemPreview({ value }: Props) {
+const PREVIEW_COMPONENTS: VisionDesignSystemPreviewComponentMeta[] = [
+  { name: 'DesignSystemSummaryCard', selector: '.vds-preview-card', role: 'Top-level design summary and ratio snapshot.' },
+  { name: 'PreviewShell', selector: '.vds-preview-shell', role: 'App shell container for nav/content layout.' },
+  { name: 'ShellTopbar', selector: '.vds-shell-topbar', role: 'Top navigation bar.' },
+  { name: 'ShellLeftNav', selector: '.vds-shell-leftnav', role: 'Left navigation rail and actions.' },
+  { name: 'ShellContent', selector: '.vds-shell-content', role: 'Primary content area.' },
+  { name: 'KpiGrid', selector: '.vds-kpi-grid', role: 'Metric cards surface.' },
+  { name: 'ZoneStack', selector: '.vds-zone-stack', role: 'Nested zoning depth sample.' },
+  { name: 'TabsShowcase', selector: '.vds-tabs', role: 'Tabs and segmented controls sample.' },
+  { name: 'ListPreview', selector: '.vds-list-preview', role: 'List/card treatment sample.' },
+  { name: 'FormFields', selector: '.vds-form-field', role: 'Input/select and button controls sample.' },
+  { name: 'TablePreview', selector: '.vds-table', role: 'Table density and tag sample.' },
+  { name: 'SemanticCards', selector: '.vds-semantic-stack', role: 'Semantic cards for success/warn/error/info.' },
+  { name: 'VariantRow', selector: '.vds-variant-row', role: 'Primary/secondary/ghost button variants.' },
+  { name: 'AlertStack', selector: '.vds-alert-stack', role: 'Alert/toast style sample.' },
+  { name: 'ActivityList', selector: '.vds-activity-list', role: 'Activity feed and metadata sample.' },
+  { name: 'ModalFrame', selector: '.vds-modal-frame', role: 'Dialog/modal treatment sample.' },
+  { name: 'NegativeZoneSample', selector: '.vds-negative-zone-sample', role: 'Negative/background zone behavior.' },
+  { name: 'ImageSample', selector: '.vds-image-sample', role: 'Image profile placeholder sample.' },
+];
+
+export function DesignSystemPreview({ value, onPreviewMetadataChange }: Props) {
   const derived = value.derived || deriveDesignSystemTokens(value);
   const [previewTheme, setPreviewTheme] = useState<'light' | 'dark'>('light');
+  const previewRootRef = useRef<HTMLDivElement | null>(null);
   const activeScenario = value.scenarios.find((s) => s.id === value.activeScenarioId) || value.scenarios[0];
   const activeImage = value.foundations.imageProfiles[0] || null;
   const uiRatio = activeScenario?.ratios.find((r) => r.scope === 'ui' || r.scope === 'all') || activeScenario?.ratios[0];
@@ -161,6 +185,44 @@ export function DesignSystemPreview({ value }: Props) {
     '--dg-control-radius': `${previewInputRadiusPx}px`,
   } as CSSProperties;
 
+  useEffect(() => {
+    if (!onPreviewMetadataChange) return;
+    const root = previewRootRef.current;
+    if (!root) return;
+
+    const cssVariables: Record<string, string> = {};
+    for (let i = 0; i < root.style.length; i++) {
+      const key = root.style.item(i);
+      if (!key.startsWith('--')) continue;
+      cssVariables[key] = root.style.getPropertyValue(key).trim();
+    }
+
+    const cssClassSet = new Set<string>();
+    const nodes = [root, ...Array.from(root.querySelectorAll<HTMLElement>('*'))];
+    for (const node of nodes) {
+      for (const cls of Array.from(node.classList)) {
+        const c = String(cls || '').trim();
+        if (!c) continue;
+        cssClassSet.add(c);
+      }
+    }
+
+    const dataAttributes: Record<string, string> = {};
+    for (const [key, val] of Object.entries(root.dataset || {})) {
+      if (val === undefined || val === null) continue;
+      dataAttributes[key] = String(val);
+    }
+
+    onPreviewMetadataChange({
+      previewTheme: themeMode,
+      cssVariables,
+      cssClasses: Array.from(cssClassSet).sort((a, b) => a.localeCompare(b)),
+      dataAttributes,
+      components: PREVIEW_COMPONENTS,
+      capturedAtIso: String(value.updatedAt || '').trim() || new Date().toISOString(),
+    });
+  }, [onPreviewMetadataChange, themeMode, value.updatedAt]);
+
   return (
     <>
       {showDarkPreview ? (
@@ -174,6 +236,7 @@ export function DesignSystemPreview({ value }: Props) {
         </div>
       ) : null}
       <div
+        ref={previewRootRef}
         className="vds-preview"
         style={vars}
         data-preview-theme={themeMode}

@@ -2,15 +2,18 @@
 
 import { type CSSProperties } from 'react';
 import { deriveDesignSystemTokens, normalizeVisionDesignSystem, type VisionDesignSystemV1 } from '@/lib/vision-design-system';
+import type { VisionDesignSystemPreviewPublishMetadata } from '@/lib/vision-design-system-publish';
 import { DesignSystemControls } from '@/components/vision/v2/design-system/DesignSystemControls';
 import { DesignSystemPreview } from '@/components/vision/v2/design-system/DesignSystemPreview';
 
 export function DesignSystemWorkbench({
   value,
   onChange,
+  onPreviewMetadataChange,
 }: {
   value: VisionDesignSystemV1;
   onChange: (next: VisionDesignSystemV1) => void;
+  onPreviewMetadataChange?: (meta: VisionDesignSystemPreviewPublishMetadata) => void;
 }) {
   const derived = value.derived || deriveDesignSystemTokens(value);
   const workbenchVars = {
@@ -54,7 +57,7 @@ export function DesignSystemWorkbench({
             <strong>{derived.shape.inputRadius}px</strong>
           </div>
         </div>
-        <DesignSystemPreview value={value} />
+        <DesignSystemPreview value={value} onPreviewMetadataChange={onPreviewMetadataChange} />
       </section>
     </div>
   );

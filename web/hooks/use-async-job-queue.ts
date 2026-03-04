@@ -17,6 +17,7 @@ export type AsyncTrackedJob = {
   status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'cancel_requested';
   step: string;
   progressPct: number;
+  cancelRequested: boolean;
   createdAt: string;
   updatedAt: string;
   finishedAt: string | null;
@@ -33,6 +34,7 @@ type JobStatusResponse = {
     status?: string;
     step?: string;
     progressPct?: number;
+    cancelRequested?: boolean;
     error?: string | null;
     createdAt?: string;
     updatedAt?: string;
@@ -78,6 +80,7 @@ function safeParseStored(input: string): AsyncTrackedJob[] {
         status: String(x.status || 'queued') as AsyncTrackedJob['status'],
         step: String(x.step || 'queued'),
         progressPct: Number(x.progressPct || 0),
+        cancelRequested: Boolean(x.cancelRequested || String(x.status || '') === 'cancel_requested'),
         createdAt: String(x.createdAt || nowIso()),
         updatedAt: String(x.updatedAt || nowIso()),
         finishedAt: x.finishedAt ? String(x.finishedAt) : null,
@@ -157,6 +160,7 @@ export function useAsyncJobQueue() {
       status: 'queued',
       step: 'queued',
       progressPct: 0,
+      cancelRequested: false,
       createdAt: now,
       updatedAt: now,
       finishedAt: null,
@@ -187,7 +191,7 @@ export function useAsyncJobQueue() {
       setJobs((prev) =>
         prev.map((j) =>
           j.id === id && (j.status === 'queued' || j.status === 'running')
-            ? { ...j, status: 'cancel_requested', step: 'cancel_requested', updatedAt: nowIso() }
+            ? { ...j, status: 'cancel_requested', step: 'cancel_requested', cancelRequested: true, updatedAt: nowIso() }
             : j,
         ),
       );
@@ -215,9 +219,19 @@ export function useAsyncJobQueue() {
       }
       const j = json.job || {};
       const statusRaw = String(j.status || job.status);
-      const status = (statusRaw === 'queued' || statusRaw === 'running' || statusRaw === 'succeeded' || statusRaw === 'failed' || statusRaw === 'cancelled'
+      let status = (statusRaw === 'queued' || statusRaw === 'running' || statusRaw === 'succeeded' || statusRaw === 'failed' || statusRaw === 'cancelled' || statusRaw === 'cancel_requested'
         ? statusRaw
         : job.status) as AsyncTrackedJob['status'];
+      const cancelRequested = Boolean(j.cancelRequested);
+      // Keep canceling sticky while backend reports the cancellation request is still active.
+      if (cancelRequested && (status === 'queued' || status === 'running' || status === 'cancel_requested')) {
+        status = 'cancel_requested';
+      }
+      // Also keep it sticky client-side once the user has requested cancel,
+      // until a terminal state arrives.
+      if (!cancelRequested && job.status === 'cancel_requested' && (status === 'queued' || status === 'running')) {
+        status = 'cancel_requested';
+      }
       const finishedAt = isTerminal(status) ? String(j.finishedAt || nowIso()) : null;
       upsertJob({
         ...job,
@@ -225,6 +239,7 @@ export function useAsyncJobQueue() {
         status,
         step: String(j.step || job.step || 'queued'),
         progressPct: Number(j.progressPct ?? job.progressPct ?? 0),
+        cancelRequested,
         updatedAt: String(j.updatedAt || nowIso()),
         finishedAt,
         error: j.error ? String(j.error) : null,
@@ -235,6 +250,7 @@ export function useAsyncJobQueue() {
         ...job,
         status: 'failed',
         step: 'failed',
+        cancelRequested: false,
         error: e instanceof Error ? e.message : String(e || 'Polling failed'),
         finishedAt: nowIso(),
         updatedAt: nowIso(),

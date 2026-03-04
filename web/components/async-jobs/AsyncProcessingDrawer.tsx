@@ -79,7 +79,7 @@ export function AsyncProcessingDrawer({
             {error ? <div className="text-xs mac-double-outline p-2">{error}</div> : null}
             {jobs.map((j) => {
               const progress = Math.max(0, Math.min(100, Math.floor(Number(j.progressPct || 0))));
-              const canCancel = j.status === 'queued' || j.status === 'running';
+              const canCancel = (j.status === 'queued' || j.status === 'running') && !j.cancelRequested;
               const createdFiles = getCreatedFiles(j.result);
               const isGridRule = String(j.kind || '') === 'ai_grid_rule';
               const isDiagramAssist = String(j.kind || '') === 'ai_diagram_assist';

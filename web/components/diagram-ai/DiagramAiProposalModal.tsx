@@ -177,20 +177,104 @@ function findNodeByLineIndex(roots: ReturnType<typeof parseNexusMarkdown>, lineI
   return found;
 }
 
+function cleanFlowLabel(input: string): string {
+  const noHeading = String(input || '').trim().replace(/^#{1,6}\s+/, '');
+  const noBullet = noHeading.replace(/^[-*+]\s+/, '').replace(/^\d+[\.\)]\s+/, '');
+  return noBullet.replace(/\s+#flow#\s*$/i, '').trim();
+}
+
+function toFlowLine(label: string, indent: number): string {
+  const cleaned = cleanFlowLabel(label);
+  if (!cleaned) return '';
+  const safeIndent = Math.max(0, Math.min(30, Math.floor(indent / 2) * 2));
+  return `${' '.repeat(safeIndent)}${cleaned} #flow#`;
+}
+
 function buildFlowLinesFromStateMachine(p: DiagramAssistStatusDescriptionsProposal): string[] {
-  if (p.flowMarkdownLines.length) return p.flowMarkdownLines;
-  const title = p.target.kind === 'data_object_status'
-    ? `${p.target.doName} – ${p.target.attrName} #flow#`
-    : `${p.target.hubLabel} – ${p.target.dimensionKey} #flow#`;
-  const lines = [title];
-  p.stateMachine.transitions.slice(0, 60).forEach((t) => {
-    const labelParts = [t.from, '->', t.to, t.guard ? `(${t.guard})` : ''].filter(Boolean);
-    lines.push(`  ${labelParts.join(' ')} #flow#`);
-  });
-  if (lines.length === 1 && p.stateMachine.states.length) {
-    p.stateMachine.states.forEach((s) => lines.push(`  ${s} #flow#`));
+  const rootLabel = p.target.kind === 'data_object_status'
+    ? `${p.target.doName} – ${p.target.attrName} Lifecycle`
+    : `${p.target.hubLabel} – ${p.target.dimensionKey} Lifecycle`;
+  const root = toFlowLine(rootLabel, 0) || 'Status Lifecycle #flow#';
+  const rootKey = cleanFlowLabel(rootLabel).toLowerCase();
+
+  const provided = (p.flowMarkdownLines || [])
+    .flatMap((line) => String(line || '').replace(/\r\n?/g, '\n').split('\n'))
+    .map((line) => {
+      const indent = (line.match(/^(\s*)/)?.[1]?.length || 0);
+      const label = cleanFlowLabel(String(line || '').trimStart());
+      return { indent, label };
+    })
+    .filter((x) => x.label.length > 0);
+
+  if (provided.length) {
+    const hasDeepHierarchy = provided.some((x) => x.indent >= 4);
+    if (hasDeepHierarchy) {
+      const lines = provided.map((x) => toFlowLine(x.label, x.indent)).filter(Boolean);
+      if (lines.length) return lines;
+    }
+
+    // Flat list fallback: convert into children-of-children chain.
+    const lines = [root];
+    let depth = 1;
+    provided.forEach((x) => {
+      const key = x.label.toLowerCase();
+      if (!key || key === rootKey) return;
+      const line = toFlowLine(x.label, depth * 2);
+      if (!line) return;
+      lines.push(line);
+      depth = Math.min(12, depth + 1);
+    });
+    if (lines.length > 1) return lines;
   }
-  return lines;
+
+  const lines = [root];
+  const transitions = p.stateMachine.transitions.slice(0, 120);
+  if (transitions.length) {
+    const outgoing = new Map<string, Array<{ to: string; guard?: string }>>();
+    const toSet = new Set<string>();
+    transitions.forEach((t) => {
+      const from = cleanFlowLabel(t.from);
+      const to = cleanFlowLabel(t.to);
+      if (!from || !to) return;
+      if (!outgoing.has(from)) outgoing.set(from, []);
+      outgoing.get(from)!.push({ to, guard: cleanFlowLabel(t.guard || '') || undefined });
+      toSet.add(to);
+    });
+
+    const startStates = Array.from(outgoing.keys()).filter((s) => !toSet.has(s));
+    const start = startStates[0] || cleanFlowLabel(transitions[0]?.from || '') || cleanFlowLabel(p.stateMachine.states[0] || '') || 'Start';
+    lines.push(toFlowLine(start, 2));
+
+    const visit = (state: string, indent: number, path: Set<string>, depth: number) => {
+      if (depth > 8) return;
+      const outs = outgoing.get(state) || [];
+      outs.slice(0, 10).forEach((edge) => {
+        const label = edge.guard ? `${edge.guard}: ${edge.to}` : edge.to;
+        const line = toFlowLine(label, indent);
+        if (line) lines.push(line);
+        if (!path.has(edge.to)) {
+          const nextPath = new Set(path);
+          nextPath.add(edge.to);
+          visit(edge.to, Math.min(28, indent + 2), nextPath, depth + 1);
+        }
+      });
+    };
+    visit(start, 4, new Set([start]), 0);
+  } else if (p.stateMachine.states.length) {
+    let depth = 1;
+    p.stateMachine.states.forEach((s) => {
+      const line = toFlowLine(s, depth * 2);
+      if (line) lines.push(line);
+      depth = Math.min(12, depth + 1);
+    });
+  } else {
+    ['Start', 'In Progress', 'Done'].forEach((s, idx) => {
+      const line = toFlowLine(s, (idx + 1) * 2);
+      if (line) lines.push(line);
+    });
+  }
+
+  return lines.filter(Boolean);
 }
 
 function buildTableJsonLines(p: DiagramAssistStatusDescriptionsProposal): string[] {
