@@ -62,11 +62,15 @@ ${STANDARD_BLOCKING_LINE}
    2. IA + Expanded
    3. Swimlane
    4. Tech Flow
-5. Record exact failed checks, evidence lines, and root-cause hypotheses.
-6. Revise artifacts immediately to fix failed checks without waiting for user "continue" prompts.
-7. Re-run the full verification sequence after each revision.
-8. Repeat steps 5-7 until every required check passes or a real blocker is hit.
-9. Produce the final structured report.
+5. Swimlane hard gate: require at least one cross-system flow, one cross-actor flow, and one multi-touchpoint flow.
+6. For physical real-world touchpoint steps, require:
+   <!-- ann:OFFLINE_PHYSICAL_STEP%3A%20<reason> -->
+   and no flowtab-process-references entry for that step.
+7. Record exact failed checks, evidence lines, and root-cause hypotheses.
+8. Revise artifacts immediately to fix failed checks without waiting for user "continue" prompts.
+9. Re-run the full verification sequence after each revision.
+10. Repeat steps 7-9 until every required check passes or a real blocker is hit.
+11. Produce the final structured report.
 
 ## Blockers and Ask-User Rules
 1. If source material is incomplete, ask for the missing resource before generation.
@@ -91,6 +95,7 @@ ${STANDARD_BLOCKING_LINE}
 4. Keep recommendations tied to explicit resource evidence.
 5. Do not ask the user to "continue" after each failed pass; own the revise/re-run loop until pass or real blocker.
 6. Do not delete scope merely to satisfy validation; repair structure and linkage instead.
+7. Never link physical real-world touchpoint steps in flowtab-process-references; mark them with OFFLINE_PHYSICAL_STEP annotation instead.
 
 ## Completion Criteria
 1. All required inputs are present.
@@ -158,6 +163,9 @@ const generationVerificationOrder = [
   '2. IA + Expanded',
   '3. Swimlane',
   '4. Tech Flow',
+  '',
+  'Swimlane stage hard gate: include at least one cross-system flow, one cross-actor flow, and one multi-touchpoint flow.',
+  'For physical real-world touchpoint steps, require <!-- ann:OFFLINE_PHYSICAL_STEP%3A%20<reason> --> and no flowtab-process-references entry for that node.',
   '',
   'If a stage fails, revise artifacts immediately and re-run from stage 1 until all stages pass.',
   'Do not ask the user to continue between iterations unless a required input is missing.',

@@ -20,6 +20,7 @@ import {
 } from './lib/appConfig';
 import { loadRuntimeState, saveRuntimeState } from './lib/runtimeState';
 import { clearOpenAiKey, loadOpenAiKey, saveOpenAiKey } from './lib/openaiKey';
+import { clearStoredAuthSession, saveStoredAuthSession } from './lib/authSession';
 import { enable as enableAutostart, disable as disableAutostart, isEnabled as isAutostartEnabled } from '@tauri-apps/plugin-autostart';
 import { fetchAccountProjects, type Project } from './features/projects/projectsClient';
 import { writeAiBundleToVault } from './features/ai/aiBundleWriter';
@@ -150,6 +151,26 @@ export function App() {
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (!supabase) return;
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      const access = session?.access_token || '';
+      const refresh = session?.refresh_token || '';
+      if (access && refresh) {
+        void saveStoredAuthSession(access, refresh);
+        return;
+      }
+      if (event === 'SIGNED_OUT') {
+        void clearStoredAuthSession();
+      }
+    });
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [supabase]);
 
   const toggleLaunchAtLogin = async () => {
     try {
@@ -294,6 +315,7 @@ export function App() {
 
   const signOut = async () => {
     if (supabase) await supabase.auth.signOut();
+    await clearStoredAuthSession().catch(() => {});
     setStep('signedOut');
     setEmail('');
     setProjects([]);
@@ -335,6 +357,7 @@ export function App() {
 
   const resetConfig = async () => {
     await clearAppConfig();
+    await clearStoredAuthSession().catch(() => {});
     setConfig(null);
     setSupabase(null);
     setStep('signedOut');

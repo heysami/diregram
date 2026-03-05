@@ -232,6 +232,13 @@ Swimlane intent reminder:
 - Lanes/stages should reflect party/session boundaries (different system, different actors/roles, waiting/async, condition gates).
   If nothing changes, do NOT move nodes just to “fill the grid”.
 - If the journey involves multiple actors/system/partners, EACH must have its own lane (one lane per actor/system). Do NOT combine actors in one lane.
+- Required swimlane format coverage (MUST; at least one for each generated format):
+  - Include at least one cross-system flow (handoff between different systems/apps).
+  - Include at least one cross-actor flow (handoff between different actors/roles).
+  - Include at least one multi-touchpoint flow (switching touchpoints such as web/mobile/app/offline).
+  - For physical real-world touchpoint steps, add:
+    <!-- ann:OFFLINE_PHYSICAL_STEP%3A%20<reason> -->
+    and DO NOT link that node in \`\`\`flowtab-process-references\`\`\`.
 - Non-linearity reminder (MUST):
   - Do NOT force the Flow tab journey to look like a guaranteed smooth linear path.
   - If the underlying process has meaningful alternates/outcomes, represent them as branches at a high level:
@@ -992,6 +999,13 @@ For EACH counted #flow# process root:
 - MUST NOT leave orphan objects in \`\`\`data-objects\`\`\` (each must be referenced by tree anchors and/or expanded grids).
 
 Swimlane rules (must match process flows; can group multiple processes)
+0) Required swimlane format coverage (MUST; at least one for each generated format):
+- MUST include at least one cross-system flow (handoff between different systems/apps).
+- MUST include at least one cross-actor flow (handoff between different actors/roles).
+- MUST include at least one multi-touchpoint flow (switching touchpoints such as web/mobile/app/offline).
+- For physical real-world touchpoint steps, MUST annotate:
+  <!-- ann:OFFLINE_PHYSICAL_STEP%3A%20<reason> -->
+- Physical real-world touchpoint steps MUST NOT be linked in \`\`\`flowtab-process-references\`\`\`.
 1) Swimlane is a journey map, NOT a duplicate process spec:
 - MUST use Flowtab swimlanes to show major phases/handoffs (actors, async waiting, system boundaries).
 - AVOID putting micro-steps in Flowtab that belong inside a #flow# process graph.
@@ -1002,9 +1016,10 @@ Swimlane rules (must match process flows; can group multiple processes)
   - Use conditional connector labels (IF/ELSE language) on the Flowtab parent→child edges.
   - Avoid generic "Next/Continue/Proceed" labels for branch edges.
 2) Swimlane steps MUST be linked to process flows (no implicit matching by name):
-- MUST maintain a \`\`\`flowtab-process-references\`\`\` block mapping each Flowtab node (node-<lineIndex>) to:
+- MUST maintain a \`\`\`flowtab-process-references\`\`\` block mapping each Flowtab node that represents in-app/system process behavior (node-<lineIndex>) to:
   - kind "whole": rootProcessNodeId + targetNodeId = a process root nodeId
   - kind "inner": points to a specific nodeId inside a process
+- EXCEPTION: nodes annotated with <!-- ann:OFFLINE_PHYSICAL_STEP%3A%20<reason> --> are intentionally real-world touchpoints and MUST NOT have reference entries.
 - MUST ensure referenced rootProcessNodeId / targetNodeId exist and node-<lineIndex> ids are correct.
 2.5) Swimlane coverage (MUST; completeness requirement):
 - For EACH counted #flow# process root, MUST have coverage in Flowtab:
@@ -1047,7 +1062,7 @@ Optional completeness target (you MAY set explicit targets in your generation re
 - MUST generate at least:
   - S main-canvas screens with expid (each with expanded grid + primary object binding)
   - P #flow# process roots (each with 1 transaction object + ≥2 supporting objects wired)
-  - J flowtab swimlane journeys, where each flowtab step references a process (\`\`\`flowtab-process-references\`\`\`) and each Flowtab edge has a connector label
+  - J flowtab swimlane journeys, where each in-app/system step references a process (\`\`\`flowtab-process-references\`\`\`), physical real-world touchpoint steps are marked OFFLINE_PHYSICAL_STEP and unlinked, and each Flowtab edge has a connector label
 
 CRITICAL REQUIREMENTS:
 1) Tree Structure:
@@ -1147,6 +1162,11 @@ PRE-GENERATION CHECKLIST (run mentally BEFORE outputting markdown)
 ☐ Swimlane constraints:
   - Each flowtab has a matching \`\`\`flowtab-swimlane-{fid}\`\`\` block.
   - Swimlane blocks contain lanes/stages/placement only (NO "connectors" field).
+  - Required format coverage:
+    - Include at least one cross-system flow, one cross-actor flow, and one multi-touchpoint flow.
+    - Physical real-world touchpoint steps MUST use:
+      <!-- ann:OFFLINE_PHYSICAL_STEP%3A%20<reason> -->
+      and MUST NOT be linked in \`\`\`flowtab-process-references\`\`\`.
   - Swimlane non-linearity:
     - If there are meaningful alternate outcomes (fail/retry/reject/RFI), represent them as high-level branches (sibling children) OR explicitly mark omitted paths with:
       <!-- ann:OOS_PATH%3A%20<reason> -->
@@ -1238,6 +1258,10 @@ const POST_GENERATION_VERIFICATION_CHECKLIST = `Post-Generation Verification Che
 ☐ Swimlane meaning check:
   → Lane/stage placement reflects party/session boundaries (different users/roles, different systems, waiting/async, condition gates)
   → If nothing changes between two steps, do NOT force a lane/stage change just to “fill the grid”
+☐ Required swimlane format coverage check (MUST):
+  → Include at least one cross-system flow, one cross-actor flow, and one multi-touchpoint flow.
+  → Physical real-world touchpoint steps MUST use: <!-- ann:OFFLINE_PHYSICAL_STEP%3A%20<reason> -->
+  → Physical real-world touchpoint steps MUST NOT have \`\`\`flowtab-process-references\`\`\` entries.
 ☐ Swimlane non-linearity check (MUST):
   → Do NOT make the journey look like a guaranteed smooth linear happy path.
   → If the process can diverge (fail/retry/reject/RFI/alternate methods), the Flowtab MUST:
@@ -1246,7 +1270,8 @@ const POST_GENERATION_VERIFICATION_CHECKLIST = `Post-Generation Verification Che
   → Connector labels on Flowtab edges MUST be conditional (IF/ELSE), not "Next/Continue/Proceed".
 ☐ Swimlane-to-process linking (no implicit name matching):
   → If swimlane steps are intended to map to process flows, verify \`\`\`flowtab-process-references\`\`\` exists
-  → Each Flowtab step node (node-<lineIndex>) has an entry of kind whole/inner
+  → Each Flowtab step node (node-<lineIndex>) has an entry of kind whole/inner, EXCEPT physical touchpoint steps marked with:
+    <!-- ann:OFFLINE_PHYSICAL_STEP%3A%20<reason> -->
   → rootProcessNodeId / targetNodeId exist and are correct node-<lineIndex> ids
 ☐ Swimlane coverage gate (MUST; completeness):
   → For EACH counted #flow# process root:
@@ -1464,6 +1489,14 @@ C) Swimlane Correctness + Coverage (journey map; must reflect main canvas proces
   → Lane/stage changes reflect party/session boundaries (different users/roles, different systems, waiting/async, condition gates)
   → AVOID lane/stage churn just to “fill the grid”
 
+☐ Required swimlane format coverage (MUST; at least one for each generated format):
+  → Include at least one cross-system flow (handoff between different systems/apps).
+  → Include at least one cross-actor flow (handoff between different actors/roles).
+  → Include at least one multi-touchpoint flow (switching touchpoints such as web/mobile/app/offline).
+  → Physical real-world touchpoint steps MUST use:
+    <!-- ann:OFFLINE_PHYSICAL_STEP%3A%20<reason> -->
+  → Physical real-world touchpoint steps MUST NOT have \`\`\`flowtab-process-references\`\`\` entries.
+
 ☐ Actor semantics (MUST for #flow# nodes; recommend for Flowtab steps):
   → MUST NOT encode actors in node titles (no "System:" / "Staff:" / "Applicant:" / "Partner:" prefixes)
   → Every #flow# node line MUST declare EXACTLY ONE actor tag (tg-actors): actor-applicant/actor-staff/actor-system/actor-partner
@@ -1474,7 +1507,8 @@ C) Swimlane Correctness + Coverage (journey map; must reflect main canvas proces
 
 ☐ Swimlane-to-process linking (no implicit matching by name):
   → If swimlane steps are intended to map to process flows, \`\`\`flowtab-process-references\`\`\` MUST exist
-  → Each Flowtab step node (node-<lineIndex>) has an entry of kind whole/inner
+  → Each Flowtab step node (node-<lineIndex>) has an entry of kind whole/inner, EXCEPT physical touchpoint steps marked with:
+    <!-- ann:OFFLINE_PHYSICAL_STEP%3A%20<reason> -->
 
 ☐ Coverage gate (MUST; completeness):
   → For EACH counted #flow# process root:

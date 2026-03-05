@@ -18,6 +18,15 @@ AVOID:
     - If a lane label clearly implies an actor (e.g. "Admissions staff", "System"), placed nodes SHOULD have the matching actor tag
     - If a mismatch is intentional, add an annotation explaining it (handoff vs execution actor, shared responsibility, etc.)
 
+☐ Required swimlane format coverage (MUST; at least one for each generated format):
+  → Generated swimlanes MUST include at least one example of EACH:
+    - Cross-system flow (handoff between different systems/apps)
+    - Cross-actor flow (handoff between different actors/roles)
+    - Multi-touchpoint flow (switching touchpoints such as web/mobile/app/offline)
+  → For physical real-world touchpoint steps (offline actions), MUST add:
+    <!-- ann:OFFLINE_PHYSICAL_STEP%3A%20<reason> -->
+  → Physical real-world touchpoint steps MUST NOT have \`\`\`flowtab-process-references\`\`\` entries.
+
 ☐ Non-linearity sanity (MUST; logic-first):
   → The journey map must NOT read like “everything always goes smoothly, linearly”.
   → If the underlying process can diverge, the Flowtab must show it at a high level:
@@ -30,7 +39,8 @@ AVOID:
 
 ☐ Swimlane-to-process linking (no implicit matching by name):
   → If swimlane steps are intended to map to process flows, \`\`\`flowtab-process-references\`\`\` MUST exist
-  → Each Flowtab step node (node-<lineIndex>) has an entry of kind whole/inner
+  → Each Flowtab step node (node-<lineIndex>) has an entry of kind whole/inner, EXCEPT physical touchpoint steps marked with:
+    <!-- ann:OFFLINE_PHYSICAL_STEP%3A%20<reason> -->
   → AVOID implicit matching by title text (it drifts and breaks)
 
 ☐ Coverage gate (MUST; completeness):
@@ -51,4 +61,3 @@ AVOID:
     - GOOD: "If eligible", "If payment fails", "If rejected", "If more info required"
     - BAD: "Next", "Continue", "Proceed" (these imply inevitability and hide risk)
 `;
-

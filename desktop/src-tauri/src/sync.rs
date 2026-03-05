@@ -14,6 +14,7 @@ use walkdir::WalkDir;
 
 static WATCH_STATE: Lazy<Mutex<HashMap<String, WatchState>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 static PULL_STATE: Lazy<Mutex<HashMap<String, PullState>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+const AUTH_SESSION_KEY: &str = "diregram.sync.auth.session.v1";
 
 struct WatchState {
   _watcher: notify::RecommendedWatcher,
@@ -26,6 +27,28 @@ struct PullState {
 
 fn sync_key(vault_path: &str, project_folder_id: &str) -> String {
   format!("{}|{}", vault_path, project_folder_id)
+}
+
+fn persist_auth_session(auth: &SupabaseAuth) -> Result<(), String> {
+  let refresh = auth
+    .refresh_token
+    .as_ref()
+    .map(|s| s.trim())
+    .filter(|s| !s.is_empty())
+    .ok_or_else(|| "missing refresh_token (cannot persist session)".to_string())?;
+
+  let access = auth.access_token.trim();
+  if access.is_empty() {
+    return Err("missing access_token (cannot persist session)".to_string());
+  }
+
+  let entry = keyring::Entry::new(crate::KEYCHAIN_SERVICE, AUTH_SESSION_KEY).map_err(|e| e.to_string())?;
+  let payload = serde_json::json!({
+    "version": 1,
+    "accessToken": access,
+    "refreshToken": refresh,
+  });
+  entry.set_password(&payload.to_string()).map_err(|e| e.to_string())
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -348,6 +371,7 @@ async fn refresh_access_token(client: &reqwest::Client, auth: &mut SupabaseAuth)
   if let Some(rt) = json.refresh_token {
     auth.refresh_token = Some(rt);
   }
+  let _ = persist_auth_session(auth);
   Ok(())
 }
 
@@ -1985,6 +2009,48 @@ pub async fn sync_pull_once(vault_path: String, project_folder_id: String, auth:
 
     let local_modified = !prev_local_hash.is_empty() && local_hash != prev_local_hash;
     let remote_newer = !prev_remote_updated.is_empty() && remote_updated_at > prev_remote_updated;
+    let remote_hash = sha256_hex(remote_content.as_bytes());
+
+    if local_modified && !remote_newer {
+      // Local changed since last sync and remote is not newer.
+      // Keep local as source-of-truth and push it upstream so next pulls converge.
+      if let Some(bytes) = local_bytes.as_ref() {
+        let local_content = String::from_utf8_lossy(bytes).to_string();
+        let local_kind = detect_kind(&local_content);
+        let pushed_at = now_iso();
+        match update_file(&client, &mut auth, &rf.id, &local_kind, &local_content, &pushed_at).await {
+          Ok(row) => {
+            mapping.files.insert(
+              rel_path.clone(),
+              FileMappingV1 {
+                file_id: rf.id.clone(),
+                folder_id: folder_id.clone(),
+                kind: local_kind,
+                local_hash: local_hash.clone(),
+                remote_updated_at: row.updated_at.unwrap_or(pushed_at),
+              },
+            );
+            summary.files_updated += 1;
+            let _ = append_event(
+              &vault_path,
+              &SyncEvent {
+                ts: now_iso(),
+                kind: "push_resolve".to_string(),
+                path: rel_path.clone(),
+                detail: "Kept newer local edit and pushed it to remote.".to_string(),
+              },
+            );
+            continue;
+          }
+          Err(e) => {
+            summary
+              .errors
+              .push(format!("Failed to push newer local file {} to remote: {}", rel_path, e));
+            // Fall back to conflict handling below to avoid silent data loss.
+          }
+        }
+      }
+    }
 
     if local_modified && remote_newer {
       // Conflict: write remote to a sibling conflict file.
@@ -2006,6 +2072,21 @@ pub async fn sync_pull_once(vault_path: String, project_folder_id: String, auth:
         },
       );
       conflicts += 1;
+      continue;
+    }
+
+    if local_hash == remote_hash {
+      // Content already matches remote; refresh mapping state without rewriting the file.
+      mapping.files.insert(
+        rel_path.clone(),
+        FileMappingV1 {
+          file_id: rf.id.clone(),
+          folder_id: folder_id.clone(),
+          kind: remote_kind,
+          local_hash,
+          remote_updated_at,
+        },
+      );
       continue;
     }
 
@@ -2081,6 +2162,54 @@ pub async fn sync_pull_once(vault_path: String, project_folder_id: String, auth:
 
     let local_modified = !prev_local_hash.is_empty() && local_hash != prev_local_hash;
     let remote_newer = !prev_remote_updated.is_empty() && remote_updated_at > prev_remote_updated;
+    let remote_hash = content_hash.clone();
+
+    if local_modified && !remote_newer {
+      // Local changed since last sync and remote is not newer.
+      // Keep local content and push it upstream.
+      if let Some(bytes) = local_bytes.as_ref() {
+        let local_markdown = String::from_utf8_lossy(bytes).to_string();
+        let pushed_at = now_iso();
+        match update_project_resource(
+          &client,
+          &mut auth,
+          &rr.id,
+          &rr.name,
+          &local_markdown,
+          rr.source.as_ref(),
+          &pushed_at,
+        )
+        .await
+        {
+          Ok(row) => {
+            mapping.resources.insert(
+              rel_path.clone(),
+              ResourceMappingV1 {
+                resource_id: rr.id.clone(),
+                local_hash: local_hash.clone(),
+                remote_updated_at: row.updated_at.unwrap_or(pushed_at),
+              },
+            );
+            let _ = append_event(
+              &vault_path,
+              &SyncEvent {
+                ts: now_iso(),
+                kind: "push_resolve".to_string(),
+                path: rel_path.clone(),
+                detail: "Kept newer local resource edit and pushed it to remote.".to_string(),
+              },
+            );
+            continue;
+          }
+          Err(e) => {
+            summary
+              .errors
+              .push(format!("Failed to push newer local resource {} to remote: {}", rel_path, e));
+            // Fall back to conflict handling below to avoid silent data loss.
+          }
+        }
+      }
+    }
 
     if local_modified && remote_newer {
       let ts = Utc::now().format("%Y-%m-%dT%H%M%SZ").to_string();
@@ -2101,6 +2230,18 @@ pub async fn sync_pull_once(vault_path: String, project_folder_id: String, auth:
         },
       );
       conflicts += 1;
+      continue;
+    }
+
+    if local_hash == remote_hash {
+      mapping.resources.insert(
+        rel_path.clone(),
+        ResourceMappingV1 {
+          resource_id: rr.id.clone(),
+          local_hash,
+          remote_updated_at,
+        },
+      );
       continue;
     }
 
