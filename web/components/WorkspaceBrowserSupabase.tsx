@@ -1266,6 +1266,9 @@ export function WorkspaceBrowserSupabase() {
                   showToast('Exported');
                 }}
                 onEditProject={() => setEditProject({ id: activeFolder.id, name: activeFolder.name, people: activeFolder.access?.people || [] })}
+                onOpenProjectPipeline={async () => {
+                  router.push(`/workspace/project/${encodeURIComponent(activeFolder.id)}/pipeline`);
+                }}
               />
             </div>
           </div>

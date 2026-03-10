@@ -8,7 +8,8 @@ export type AsyncTrackedJobKind =
   | 'ai_diagram_assist'
   | 'rag_ingest'
   | 'rag_ingest_jwt'
-  | 'docling_convert';
+  | 'docling_convert'
+  | 'project_pipeline';
 
 export type AsyncTrackedJob = {
   id: string;
@@ -118,6 +119,7 @@ function normalizeTitle(kind: string, title?: string) {
   if (kind === 'ai_diagram_assist') return 'Diagram AI assist';
   if (kind === 'rag_ingest' || kind === 'rag_ingest_jwt') return 'Knowledge base build';
   if (kind === 'docling_convert') return 'Docling conversion';
+  if (kind === 'project_pipeline') return 'Project auto-pipeline';
   return 'Async job';
 }
 

@@ -4,7 +4,8 @@ export type AsyncJobKind =
   | 'docling_convert'
   | 'ai_file_generation'
   | 'ai_grid_rule'
-  | 'ai_diagram_assist';
+  | 'ai_diagram_assist'
+  | 'project_pipeline';
 
 export type AsyncJobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
 

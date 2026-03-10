@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { AppWindow, ChevronDown, Copy, Eye, FileCode, FileText, FlaskConical, Network, Package, Pencil, Plus, Share2, Table } from 'lucide-react';
+import { AppWindow, ChevronDown, Copy, Eye, FileCode, FileText, FlaskConical, Network, Package, Pencil, Plus, Share2, Table, Upload } from 'lucide-react';
 
 type MenuItem = {
   id: string;
@@ -100,6 +100,7 @@ export function ProjectActionMenus({
   onExportBundle,
   onExportKg,
   onEditProject,
+  onOpenProjectPipeline,
 }: {
   projectTab: 'files' | 'templates' | 'import';
   canEdit: boolean;
@@ -118,6 +119,7 @@ export function ProjectActionMenus({
   onExportBundle: () => void | Promise<void>;
   onExportKg: () => void | Promise<void>;
   onEditProject: () => void;
+  onOpenProjectPipeline?: () => void | Promise<void>;
 }) {
   const newDisabled = projectTab !== 'files' || !canEdit;
   const newTitle = projectTab !== 'files' ? 'Switch to Files tab to create new files' : !canEdit ? 'No edit access' : 'Create new content';
@@ -210,6 +212,17 @@ export function ProjectActionMenus({
         ]
       : []),
     { id: 'export-bundle', label: 'Export bundle (.zip)', icon: <Package size={14} />, onClick: onExportBundle },
+    ...(onOpenProjectPipeline
+      ? [
+          {
+            id: 'open-project-pipeline',
+            label: 'Auto pipeline upload…',
+            icon: <Upload size={14} />,
+            title: 'Upload files and run single-diagram auto pipeline',
+            onClick: onOpenProjectPipeline,
+          } satisfies MenuItem,
+        ]
+      : []),
     { id: 'sep-2', label: '────────', disabled: true, onClick: () => {} },
     { id: 'edit-project', label: 'Edit project', icon: <Pencil size={14} />, disabled: !canEdit, title: !canEdit ? 'No edit access' : undefined, onClick: onEditProject },
   ];

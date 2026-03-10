@@ -400,7 +400,7 @@ create policy "project_resources_delete_via_project_edit" on public.project_reso
 -- 9) Durable async jobs for long-running RAG/docling processing.
 create table if not exists public.async_jobs (
   id uuid primary key default uuid_generate_v4(),
-  kind text not null check (kind in ('rag_ingest', 'rag_ingest_jwt', 'docling_convert', 'ai_file_generation', 'ai_grid_rule', 'ai_diagram_assist')),
+  kind text not null check (kind in ('rag_ingest', 'rag_ingest_jwt', 'docling_convert', 'ai_file_generation', 'ai_grid_rule', 'ai_diagram_assist', 'project_pipeline')),
   status text not null check (status in ('queued', 'running', 'succeeded', 'failed', 'cancelled')),
   owner_id uuid references public.profiles(id) on delete cascade not null,
   requester_user_id uuid references public.profiles(id) on delete set null,
@@ -430,7 +430,7 @@ create table if not exists public.async_jobs (
 alter table public.async_jobs drop constraint if exists async_jobs_kind_check;
 alter table public.async_jobs
   add constraint async_jobs_kind_check
-  check (kind in ('rag_ingest', 'rag_ingest_jwt', 'docling_convert', 'ai_file_generation', 'ai_grid_rule', 'ai_diagram_assist'));
+  check (kind in ('rag_ingest', 'rag_ingest_jwt', 'docling_convert', 'ai_file_generation', 'ai_grid_rule', 'ai_diagram_assist', 'project_pipeline'));
 
 create index if not exists async_jobs_status_run_idx
   on public.async_jobs (status, run_after, created_at);

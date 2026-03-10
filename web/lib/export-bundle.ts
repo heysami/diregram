@@ -5,6 +5,7 @@ import { loadFileSnapshot } from '@/lib/local-doc-snapshots';
 import { exportKgAndVectorsForProject } from '@/lib/kg-vector-export';
 
 type ProjectFileRow = { id: string; name: string; kind: string; folderId: string | null; content: string };
+type ProjectResourceRow = { id: string; name: string; kind: string; projectFolderId: string; markdown: string };
 
 function nowIso() {
   return new Date().toISOString();
@@ -53,6 +54,23 @@ async function listProjectFilesSupabase(supabase: SupabaseClient, folderIds: str
       content: String(r?.content || ''),
     }))
     .filter((r) => !!r.id);
+}
+
+async function listProjectResourcesSupabase(supabase: SupabaseClient, folderIds: string[]): Promise<ProjectResourceRow[]> {
+  const { data, error } = await supabase
+    .from('project_resources')
+    .select('id,name,kind,project_folder_id,markdown')
+    .in('project_folder_id', folderIds);
+  if (error) throw error;
+  return (data || [])
+    .map((r: any) => ({
+      id: String(r?.id || ''),
+      name: String(r?.name || 'Untitled resource'),
+      kind: String(r?.kind || 'markdown'),
+      projectFolderId: String(r?.project_folder_id || ''),
+      markdown: String(r?.markdown || ''),
+    }))
+    .filter((r) => !!r.id && !!r.projectFolderId);
 }
 
 function listProjectFolderIdsLocal(projectFolderId: string): string[] {
@@ -138,11 +156,48 @@ export async function exportProjectBundleZip(res: {
         return listProjectFilesLocal(folderIds);
       })();
 
+  const resources: ProjectResourceRow[] = res.supabaseMode
+    ? await (async () => {
+        if (!res.supabase) throw new Error('Not connected to Supabase.');
+        const folderIds = await listProjectFolderIdsSupabase(res.supabase, rootProjectFolderId);
+        return await listProjectResourcesSupabase(res.supabase, folderIds);
+      })()
+    : [];
+
+  const primaryDiagramFileId: string = res.supabaseMode
+    ? await (async () => {
+        if (!res.supabase) return '';
+        const { data, error } = await res.supabase
+          .from('async_jobs')
+          .select('result')
+          .eq('project_folder_id', rootProjectFolderId)
+          .eq('kind', 'project_pipeline')
+          .eq('status', 'succeeded')
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (error || !data || typeof data !== 'object') return '';
+        const result = (data as { result?: unknown }).result;
+        if (!result || typeof result !== 'object') return '';
+        const row = result as Record<string, unknown>;
+        return String(row.primaryDiagramFileId || row.singleDiagramFileId || '').trim();
+      })()
+    : '';
+
+  const resourceExt = (kind: string) => {
+    const k = String(kind || '').toLowerCase();
+    if (k === 'tsx') return 'tsx';
+    if (k === 'json') return 'json';
+    if (k === 'md' || k === 'markdown') return 'md';
+    return 'txt';
+  };
+
   const exportedAt = nowIso();
   const manifest = {
     version: 1,
     exportedAt,
     projectFolderId: rootProjectFolderId,
+    primaryDiagramFileId: primaryDiagramFileId || null,
     files: files
       .map((f) => ({
         id: f.id,
@@ -150,6 +205,15 @@ export async function exportProjectBundleZip(res: {
         kind: f.kind,
         folderId: f.folderId,
         path: `files/${f.kind}/${f.id}.md`,
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
+    resources: resources
+      .map((r) => ({
+        id: r.id,
+        name: r.name,
+        kind: r.kind,
+        projectFolderId: r.projectFolderId,
+        path: `resources/${r.kind}/${r.id}.${resourceExt(r.kind)}`,
       }))
       .sort((a, b) => a.name.localeCompare(b.name)),
   };
@@ -167,6 +231,24 @@ export async function exportProjectBundleZip(res: {
           name: f.name,
           kind: f.kind,
           folderId: f.folderId,
+        },
+        null,
+        2,
+      ),
+    );
+  }
+
+  for (const r of resources) {
+    const safeKind = String(r.kind || 'resource').replace(/[^\w.-]+/g, '_');
+    const ext = resourceExt(r.kind);
+    zipEntries[`resources/${safeKind}/${r.id}.${ext}`] = strToU8(String(r.markdown || ''), true);
+    zipEntries[`resources/${safeKind}/${r.id}.meta.json`] = strToU8(
+      JSON.stringify(
+        {
+          id: r.id,
+          name: r.name,
+          kind: r.kind,
+          projectFolderId: r.projectFolderId,
         },
         null,
         2,
@@ -196,4 +278,3 @@ export async function exportProjectBundleZip(res: {
 export function downloadProjectBundleZip(res: { blob: Blob; filename: string }) {
   downloadBlob(res.filename, res.blob);
 }
-
