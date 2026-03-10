@@ -36,7 +36,7 @@ type JsonRecord = Record<string, unknown>;
 
 const MAX_UPLOADS = 50;
 const MAX_UPLOAD_TEXT = 50_000;
-const MAX_DIAGRAM_REPAIR_ATTEMPTS = 4;
+const MAX_DIAGRAM_REPAIR_ATTEMPTS = 8;
 const MAX_SWARM_RECOMMENDATIONS = 24;
 
 const FLOW_MARKER_RE = /#flow#|#flowtab#|#systemflow#/;
@@ -170,10 +170,88 @@ function ensureNodeLinkMarkers(markdown: string): string {
   return lines.join('\n').trimEnd() + '\n';
 }
 
+type FencedMarkdownBlock = {
+  lang: string;
+  body: string;
+  closed: boolean;
+};
+
+function scanFencedMarkdownBlocks(text: string): FencedMarkdownBlock[] {
+  const lines = String(text || '').replace(/\r\n?/g, '\n').split('\n');
+  const out: FencedMarkdownBlock[] = [];
+  let openLang = '';
+  let body: string[] | null = null;
+
+  for (const line of lines) {
+    const fence = line.match(/^\s*```([^\s`]*)\s*$/);
+    if (!fence) {
+      if (body) body.push(line);
+      continue;
+    }
+
+    if (!body) {
+      openLang = normalizeText(fence[1]).toLowerCase();
+      body = [];
+      continue;
+    }
+
+    out.push({
+      lang: openLang,
+      body: body.join('\n').trim(),
+      closed: true,
+    });
+    openLang = '';
+    body = null;
+  }
+
+  if (body) {
+    out.push({
+      lang: openLang,
+      body: body.join('\n').trim(),
+      closed: false,
+    });
+  }
+
+  return out;
+}
+
+function preferredFencedBody(text: string): string {
+  const blocks = scanFencedMarkdownBlocks(text).filter((b) => Boolean(normalizeText(b.body)));
+  if (!blocks.length) return '';
+  const score = (lang: string) => {
+    if (lang === 'diregram') return 0;
+    if (lang.includes('diregram')) return 1;
+    if (lang === 'markdown' || lang === 'md') return 2;
+    if (!lang) return 3;
+    return 4;
+  };
+  const sorted = [...blocks].sort((a, b) => {
+    const sa = score(a.lang);
+    const sb = score(b.lang);
+    if (sa !== sb) return sa - sb;
+    if (a.closed !== b.closed) return a.closed ? -1 : 1;
+    return b.body.length - a.body.length;
+  });
+  return normalizeText(sorted[0]?.body);
+}
+
+function stripFenceOnlyLines(text: string): string {
+  return String(text || '')
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .filter((line) => !/^\s*```[^\n]*$/.test(line))
+    .join('\n')
+    .trim();
+}
+
 function sanitizeDiagramMarkdown(raw: string): string {
-  const text = String(raw || '').replace(/\r\n?/g, '\n').trim();
+  let text = String(raw || '').replace(/\r\n?/g, '\n').trim();
   if (!text) return makeStarterDiagramMarkdown();
-  const unfenced = text.replace(/^\s*```(?:markdown|md)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
+  const fencedBody = preferredFencedBody(text);
+  if (fencedBody) {
+    text = fencedBody;
+  }
+  const unfenced = stripFenceOnlyLines(text);
   if (!unfenced) return makeStarterDiagramMarkdown();
   return ensureNodeLinkMarkers(unfenced);
 }
@@ -394,6 +472,13 @@ async function generateSingleDiagram(input: {
   for (let attempt = 0; attempt < MAX_DIAGRAM_REPAIR_ATTEMPTS; attempt += 1) {
     const validation = validateNexusMarkdownImport(markdown);
     if (!validation.errors.length) return markdown;
+
+    const localRepair = sanitizeDiagramMarkdown(markdown);
+    if (localRepair !== markdown) {
+      const localValidation = validateNexusMarkdownImport(localRepair);
+      markdown = localRepair;
+      if (!localValidation.errors.length) return markdown;
+    }
 
     const errorSummary = summarizeIssues(validation.errors.map((x) => `${x.code}: ${x.message}`));
     const repaired = await runClaudeMessagesText({
