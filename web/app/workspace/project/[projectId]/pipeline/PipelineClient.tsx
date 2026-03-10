@@ -34,6 +34,20 @@ function safeName(name: string) {
     .slice(0, 160);
 }
 
+function formatBytes(input: number): string {
+  const value = Number(input || 0);
+  if (!Number.isFinite(value) || value <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let size = value;
+  let unitIndex = 0;
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024;
+    unitIndex += 1;
+  }
+  const rounded = size >= 10 || unitIndex === 0 ? size.toFixed(0) : size.toFixed(1);
+  return `${rounded} ${units[unitIndex]}`;
+}
+
 export default function PipelineClient({ projectId }: { projectId: string }) {
   const router = useRouter();
   const { supabase, user, ready } = useAuth();
@@ -45,6 +59,7 @@ export default function PipelineClient({ projectId }: { projectId: string }) {
   const [loadingRuns, setLoadingRuns] = useState(false);
 
   const canRun = useMemo(() => Boolean(projectId) && files.length > 0 && !busy && !!supabase && !!user, [projectId, files.length, busy, supabase, user]);
+  const selectedBytes = useMemo(() => files.reduce((sum, f) => sum + Number(f.size || 0), 0), [files]);
 
   const loadRuns = async () => {
     if (!projectId) return;
@@ -92,6 +107,10 @@ export default function PipelineClient({ projectId }: { projectId: string }) {
     return () => window.clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runs, projectId]);
+
+  const removeFile = (index: number) => {
+    setFiles((prev) => prev.filter((_, i) => i !== index));
+  };
 
   const uploadAndRun = async () => {
     if (!supabase || !user?.id) {
@@ -181,11 +200,49 @@ export default function PipelineClient({ projectId }: { projectId: string }) {
           className="text-xs"
           onChange={(e) => {
             const next = Array.from(e.target.files || []);
-            setFiles(next);
+            if (!next.length) return;
+            setFiles((prev) => {
+              const key = (f: File) => `${f.name}|${f.size}|${f.lastModified}`;
+              const seen = new Set(prev.map(key));
+              const merged = [...prev];
+              for (const file of next) {
+                const k = key(file);
+                if (seen.has(k)) continue;
+                seen.add(k);
+                merged.push(file);
+              }
+              return merged;
+            });
+            setError(null);
+            e.currentTarget.value = '';
           }}
           disabled={busy}
         />
-        {files.length > 0 ? <div className="text-xs opacity-80">{files.length} file(s) selected</div> : null}
+        {files.length > 0 ? (
+          <div className="space-y-2">
+            <div className="text-xs opacity-80">
+              {files.length} file(s) selected · {formatBytes(selectedBytes)}
+            </div>
+            <div className="max-h-48 overflow-auto mac-double-outline p-2 space-y-1">
+              {files.map((file, index) => (
+                <div key={`${file.name}-${file.size}-${file.lastModified}-${index}`} className="flex items-center justify-between gap-2 text-xs">
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate">{file.name}</div>
+                    <div className="opacity-60">{formatBytes(file.size)}</div>
+                  </div>
+                  <button type="button" className="mac-btn h-7" onClick={() => removeFile(index)} disabled={busy}>
+                    Remove
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div>
+              <button type="button" className="mac-btn h-7" onClick={() => setFiles([])} disabled={busy}>
+                Clear all
+              </button>
+            </div>
+          </div>
+        ) : null}
         {error ? <div className="text-xs mac-double-outline p-2">Error: {error}</div> : null}
         <div>
           <button type="button" className="mac-btn mac-btn--primary h-8 flex items-center gap-1.5" disabled={!canRun} onClick={uploadAndRun}>
