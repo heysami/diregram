@@ -55,6 +55,16 @@ function parseIsoDateMs(input: string): number {
   return Number.isFinite(ms) ? ms : 0;
 }
 
+function normalizeRequestedModel(input: string): string {
+  const model = String(input || '').trim();
+  if (!model) return '';
+  if (model === 'claude-3-7-sonnet-latest') return 'claude-3-7-sonnet-20250219';
+  if (model === 'claude-3-5-sonnet-latest') return 'claude-3-5-sonnet-20241022';
+  if (model === 'claude-3-5-haiku-latest') return 'claude-3-5-haiku-20241022';
+  if (/[-_]latest$/i.test(model)) return '';
+  return model;
+}
+
 function buildStaticModelCandidates(): string[] {
   return [
     'claude-sonnet-4-20250514',
@@ -122,7 +132,7 @@ async function listAvailableModels(input: { apiKey: string; timeoutMs: number })
 }
 
 async function buildModelCandidates(input: { apiKey: string; timeoutMs: number; inputModel?: string }): Promise<string[]> {
-  const requested = String(input.inputModel || process.env.CLAUDE_CHAT_MODEL || '').trim();
+  const requested = normalizeRequestedModel(String(input.inputModel || process.env.CLAUDE_CHAT_MODEL || ''));
   const discoveredRaw = await listAvailableModels({ apiKey: input.apiKey, timeoutMs: input.timeoutMs });
   const discovered = prioritizeDiscoveredModels(discoveredRaw);
   const staticCandidates = buildStaticModelCandidates();

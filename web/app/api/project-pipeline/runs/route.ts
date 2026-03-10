@@ -90,7 +90,6 @@ export async function POST(request: Request) {
           openaiApiKey?: unknown;
           claudeApiKey?: unknown;
           embeddingModel?: unknown;
-          claudeModel?: unknown;
         };
 
     const projectFolderId = clampText(body?.projectFolderId, 120);
@@ -153,7 +152,6 @@ export async function POST(request: Request) {
           requestedBy: user.id,
           uploads,
           embeddingModel: clampText(body?.embeddingModel, 120) || null,
-          claudeModel: clampText(body?.claudeModel, 120) || null,
         },
       },
       admin,
