@@ -2,6 +2,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { makeStarterDiagramMarkdown } from '@/lib/diagram-starter';
 import { makeStarterGridMarkdown } from '@/lib/grid-starter';
 import { makeStarterVisionMarkdown } from '@/lib/vision-starter';
+import { PIPELINE_DIAGRAM_REPAIR_POLICY } from '@/lib/ai-guides/pipeline-diagram-repair-policy';
 import { loadGridDoc, saveGridDoc, type GridDoc, type GridSheetV1 } from '@/lib/gridjson';
 import { upsertHeader } from '@/lib/nexus-doc-header';
 import { parseNexusMarkdown } from '@/lib/nexus-parser';
@@ -221,23 +222,23 @@ function findFenceRangeContainingLine(
 function fixInstructionForValidationIssue(issue: ImportValidationIssue): string {
   switch (issue.code) {
     case 'UNCLOSED_CODE_BLOCK':
-      return 'Remove stray fence lines and ensure every opened triple-backtick fence is closed.';
+      return 'Remove stray fence lines and ensure every opened triple-backtick fence is closed; do not delete valid node lines to silence this error.';
     case 'PARSE_FAILED':
-      return 'Keep valid hierarchical node structure with stable 2-space indentation and valid parent-child nesting.';
+      return 'Keep valid hierarchical node structure with stable 2-space indentation and valid parent-child nesting; repair by adding/realigning lines, not by dropping branches.';
     case 'NO_NODES':
       return 'Ensure at least one non-empty node line exists before the metadata separator.';
     case 'INVALID_JSON':
-      return 'Output strict JSON only inside metadata blocks: double quotes, no comments, no trailing commas.';
+      return 'Output strict JSON only inside metadata blocks: double quotes, no comments, no trailing commas. Keep node content intact.';
     case 'DUPLICATE_BLOCK':
-      return 'Keep only one metadata fenced block per block type.';
+      return 'Keep only one metadata fenced block per block type while preserving node coverage.';
     case 'DOATTRS_WITHOUT_DO':
-      return 'If doattrs is present, ensure matching data-object id exists or remove the orphan doattrs reference.';
+      return 'If doattrs is present, ensure matching data-object id exists or remove only the orphan doattrs reference. Do not remove related nodes.';
     case 'MISSING_TAG_STORE':
-      return 'Add or repair the missing tag-store metadata block if tag ids are referenced.';
+      return 'Add or repair the missing tag-store metadata block if tag ids are referenced. Do not delete tagged nodes.';
     case 'MISSING_EXPANDED_STATES_BLOCK':
-      return 'Add or repair the missing expanded-states metadata block.';
+      return 'Add or repair the missing expanded-states metadata block. Preserve existing expanded nodes.';
     default:
-      return 'Resolve this validator issue exactly while preserving unrelated content.';
+      return 'Resolve this validator issue exactly while preserving unrelated content and existing node scope; prefer additive completion over removal.';
   }
 }
 
@@ -435,11 +436,60 @@ function applyTargetedPatches(markdown: string, targets: MarkdownFixTarget[], pa
   return next.join('\n');
 }
 
-function shouldAcceptCandidateValidation(current: ImportValidationResult, candidate: ImportValidationResult): boolean {
-  if (candidate.errors.length < current.errors.length) return true;
-  if (candidate.errors.length > current.errors.length) return false;
-  if (candidate.warnings.length <= current.warnings.length) return true;
-  return false;
+function estimateNodeLineCount(markdown: string): number {
+  const lines = normalizeNewlines(markdown).split('\n');
+  const separator = findSeparatorIndexOutsideFences(lines);
+  const sectionEnd = separator === -1 ? lines.length : separator;
+  let inFence = false;
+  let count = 0;
+  for (let i = 0; i < sectionEnd; i += 1) {
+    const trimmed = String(lines[i] || '').trim();
+    if (!trimmed) continue;
+    if (/^```/.test(trimmed)) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence || trimmed === '---') continue;
+    count += 1;
+  }
+  return count;
+}
+
+function isExcessiveNodeRemoval(currentCount: number, candidateCount: number): boolean {
+  const removed = currentCount - candidateCount;
+  if (removed <= 0) return false;
+  const thresholdAbs = Math.max(3, Math.floor(currentCount * 0.08));
+  return removed >= thresholdAbs;
+}
+
+function shouldAcceptCandidateValidation(input: {
+  current: ImportValidationResult;
+  candidate: ImportValidationResult;
+  currentMarkdown: string;
+  candidateMarkdown: string;
+}): boolean {
+  const currentNodeCount = estimateNodeLineCount(input.currentMarkdown);
+  const candidateNodeCount = estimateNodeLineCount(input.candidateMarkdown);
+  const excessiveRemoval = isExcessiveNodeRemoval(currentNodeCount, candidateNodeCount);
+
+  if (excessiveRemoval && input.candidate.errors.length > 0) {
+    return false;
+  }
+
+  if (input.candidate.errors.length < input.current.errors.length) {
+    if (excessiveRemoval && input.candidate.errors.length !== 0) return false;
+    return true;
+  }
+  if (input.candidate.errors.length > input.current.errors.length) return false;
+
+  if (input.candidate.warnings.length < input.current.warnings.length) {
+    if (excessiveRemoval) return false;
+    return true;
+  }
+  if (input.candidate.warnings.length > input.current.warnings.length) return false;
+
+  if (candidateNodeCount < currentNodeCount) return false;
+  return true;
 }
 
 function ensureNodeLinkMarkers(markdown: string): string {
@@ -784,6 +834,9 @@ async function repairDiagramWithTargetedPatches(input: {
     '}',
     '',
     'Rules:',
+    '- Follow this repair policy strictly:',
+    PIPELINE_DIAGRAM_REPAIR_POLICY,
+    '',
     '- Only patch targetIds listed below.',
     '- Do not add or leave triple-backtick fence lines unless explicitly required for a metadata block.',
     '- Preserve unaffected sections.',
@@ -809,6 +862,7 @@ async function repairDiagramWithTargetedPatches(input: {
       'You are a Diregram markdown repair assistant.',
       'Output JSON only, exactly matching the requested schema.',
       'Do not return markdown fences.',
+      'Do not shrink scope to pass validation; preserve generated node coverage and prefer additive fixes.',
     ].join('\n'),
     messages: [{ role: 'user', content: prompt }],
   });
@@ -923,7 +977,14 @@ async function generateSingleDiagram(input: {
         validation: targetedValidation,
       });
       if (!targetedValidation.errors.length) return targeted;
-      if (shouldAcceptCandidateValidation(validation, targetedValidation)) {
+      if (
+        shouldAcceptCandidateValidation({
+          current: validation,
+          candidate: targetedValidation,
+          currentMarkdown: markdown,
+          candidateMarkdown: targeted,
+        })
+      ) {
         markdown = targeted;
         validation = targetedValidation;
       }
@@ -942,6 +1003,7 @@ async function generateSingleDiagram(input: {
       system: [
         'Repair the provided Diregram diagram markdown so it is import-valid.',
         'Do not remove major content unless required to fix parser/validator errors.',
+        'Never "shrink to pass" by deleting generated nodes/branches; prefer additive completion and relinking.',
         'Use validator line hints and keep unaffected content unchanged.',
         'Return ONLY corrected markdown. No code fences.',
       ].join('\n'),
@@ -961,6 +1023,9 @@ async function generateSingleDiagram(input: {
             'Issue-specific repair hints:',
             detailedHints,
             '',
+            'Repair policy:',
+            PIPELINE_DIAGRAM_REPAIR_POLICY,
+            '',
             'Markdown to repair:',
             markdown,
           ].join('\n'),
@@ -976,7 +1041,14 @@ async function generateSingleDiagram(input: {
       validation: repairedValidation,
     });
     if (!repairedValidation.errors.length) return repairedMarkdown;
-    if (shouldAcceptCandidateValidation(validation, repairedValidation)) {
+    if (
+      shouldAcceptCandidateValidation({
+        current: validation,
+        candidate: repairedValidation,
+        currentMarkdown: markdown,
+        candidateMarkdown: repairedMarkdown,
+      })
+    ) {
       markdown = repairedMarkdown;
     }
   }
