@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { makeStarterDiagramMarkdown } from '@/lib/diagram-starter';
 import { makeStarterGridMarkdown } from '@/lib/grid-starter';
 import { makeStarterVisionMarkdown } from '@/lib/vision-starter';
@@ -14,7 +14,11 @@ import {
   type VisionDesignSystemV1,
 } from '@/lib/vision-design-system';
 import { loadVisionDoc, saveVisionDoc } from '@/lib/visionjson';
-import { validateNexusMarkdownImport } from '@/lib/markdown-import-validator';
+import {
+  validateNexusMarkdownImport,
+  type ImportValidationIssue,
+  type ImportValidationResult,
+} from '@/lib/markdown-import-validator';
 import { runClaudeMessagesText } from '@/lib/server/anthropic-messages';
 import { embedTextsOpenAI } from '@/lib/server/openai-embeddings';
 import { queryProjectKbContext } from '@/lib/server/openai-responses';
@@ -38,6 +42,10 @@ const MAX_UPLOADS = 50;
 const MAX_UPLOAD_TEXT = 50_000;
 const MAX_DIAGRAM_REPAIR_ATTEMPTS = 8;
 const MAX_SWARM_RECOMMENDATIONS = 24;
+const MAX_DIAGRAM_FIX_TARGETS = 8;
+const MAX_DIAGRAM_FIX_ISSUES = 12;
+const MAX_DIAGRAM_FIX_CONTEXT_CHARS = 6000;
+const MAX_DIAGRAM_FIX_REPLACEMENT_CHARS = 20_000;
 
 const FLOW_MARKER_RE = /#flow#|#flowtab#|#systemflow#/;
 const RN_RE = /<!--\s*rn:(\d+)\s*-->/;
@@ -122,6 +130,316 @@ function safeFileName(name: string) {
 function summarizeIssues(messages: string[], maxItems = 14): string {
   const unique = Array.from(new Set(messages.map((m) => normalizeText(m)).filter(Boolean))).slice(0, maxItems);
   return unique.map((m, i) => `${i + 1}. ${m}`).join('\n');
+}
+
+function normalizeNewlines(input: unknown): string {
+  return String(input || '').replace(/\r\n?/g, '\n');
+}
+
+function hashMarkdown(text: string): string {
+  return createHash('sha256').update(normalizeNewlines(text), 'utf8').digest('hex').slice(0, 20);
+}
+
+function getIndent(line: string): number {
+  const m = String(line || '').match(/^(\s*)/);
+  return m ? m[1].length : 0;
+}
+
+function findSeparatorIndexOutsideFences(lines: string[]): number {
+  let inFence = false;
+  for (let i = 0; i < lines.length; i += 1) {
+    const trimmed = lines[i]?.trim() || '';
+    if (/^```/.test(trimmed)) {
+      inFence = !inFence;
+      continue;
+    }
+    if (!inFence && trimmed === '---') return i;
+  }
+  return -1;
+}
+
+function findSubtreeRange(lines: string[], lineIndex: number): { start: number; end: number; baseIndent: number } | null {
+  if (lineIndex < 0 || lineIndex >= lines.length) return null;
+  const startLine = String(lines[lineIndex] || '');
+  if (!startLine.trim()) return null;
+  const separator = findSeparatorIndexOutsideFences(lines);
+  const sectionEnd = separator === -1 ? lines.length : separator;
+  if (lineIndex >= sectionEnd) return null;
+
+  const baseIndent = getIndent(startLine);
+  let end = lineIndex;
+  for (let i = lineIndex + 1; i < sectionEnd; i += 1) {
+    const line = String(lines[i] || '');
+    if (!line.trim()) {
+      end = i;
+      continue;
+    }
+    if (getIndent(line) <= baseIndent) break;
+    end = i;
+  }
+  return { start: lineIndex, end, baseIndent };
+}
+
+function extractIssueLineNumber(message: string): number | null {
+  const normalized = normalizeText(message);
+  const patterns = [/starting at line\s+(\d+)/i, /\bline\s+(\d+)\b/i];
+  for (const re of patterns) {
+    const m = normalized.match(re);
+    if (!m?.[1]) continue;
+    const n = Number.parseInt(m[1], 10);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return null;
+}
+
+function scanFenceRanges(lines: string[]): Array<{ start: number; end: number }> {
+  const out: Array<{ start: number; end: number }> = [];
+  let openStart: number | null = null;
+  for (let i = 0; i < lines.length; i += 1) {
+    if (!/^```/.test(String(lines[i] || '').trim())) continue;
+    if (openStart === null) {
+      openStart = i;
+      continue;
+    }
+    out.push({ start: openStart, end: i });
+    openStart = null;
+  }
+  if (openStart !== null) out.push({ start: openStart, end: Math.max(openStart, lines.length - 1) });
+  return out;
+}
+
+function findFenceRangeContainingLine(
+  ranges: Array<{ start: number; end: number }>,
+  lineIndex: number,
+): { start: number; end: number } | null {
+  for (const r of ranges) {
+    if (lineIndex >= r.start && lineIndex <= r.end) return r;
+  }
+  return null;
+}
+
+function fixInstructionForValidationIssue(issue: ImportValidationIssue): string {
+  switch (issue.code) {
+    case 'UNCLOSED_CODE_BLOCK':
+      return 'Remove stray fence lines and ensure every opened triple-backtick fence is closed.';
+    case 'PARSE_FAILED':
+      return 'Keep valid hierarchical node structure with stable 2-space indentation and valid parent-child nesting.';
+    case 'NO_NODES':
+      return 'Ensure at least one non-empty node line exists before the metadata separator.';
+    case 'INVALID_JSON':
+      return 'Output strict JSON only inside metadata blocks: double quotes, no comments, no trailing commas.';
+    case 'DUPLICATE_BLOCK':
+      return 'Keep only one metadata fenced block per block type.';
+    case 'DOATTRS_WITHOUT_DO':
+      return 'If doattrs is present, ensure matching data-object id exists or remove the orphan doattrs reference.';
+    case 'MISSING_TAG_STORE':
+      return 'Add or repair the missing tag-store metadata block if tag ids are referenced.';
+    case 'MISSING_EXPANDED_STATES_BLOCK':
+      return 'Add or repair the missing expanded-states metadata block.';
+    default:
+      return 'Resolve this validator issue exactly while preserving unrelated content.';
+  }
+}
+
+type MarkdownFixTarget = {
+  id: string;
+  startLine: number;
+  endLine: number;
+  reason: string;
+  issueCodes: string[];
+  contextMarkdown: string;
+  originalMarkdown: string;
+};
+
+type TargetedMarkdownPatch = {
+  targetId: string;
+  replacementMarkdown: string;
+};
+
+function targetReasonForIssue(issue: ImportValidationIssue): string {
+  switch (issue.code) {
+    case 'UNCLOSED_CODE_BLOCK':
+      return 'Repair an unclosed fenced code block in this local section.';
+    case 'MISSING_TAG_STORE':
+      return 'Add or repair the missing tag-store metadata block in metadata section.';
+    case 'MISSING_EXPANDED_STATES_BLOCK':
+      return 'Add or repair the missing expanded-states metadata block.';
+    default:
+      return `Repair validator issue: ${issue.code}`;
+  }
+}
+
+function clampLineRange(range: { startLine: number; endLine: number }, totalLines: number): { startLine: number; endLine: number } {
+  const maxStart = totalLines + 1;
+  const start = Math.max(1, Math.min(maxStart, Math.floor(range.startLine)));
+  const end = Math.max(0, Math.min(totalLines, Math.floor(range.endLine)));
+  if (start <= end || start === end + 1) return { startLine: start, endLine: end };
+  return { startLine: start, endLine: Math.max(0, start - 1) };
+}
+
+function extractOriginalMarkdownForRange(lines: string[], startLine: number, endLine: number): string {
+  if (startLine === endLine + 1) return '';
+  const startIdx = Math.max(0, startLine - 1);
+  const endIdx = Math.max(startIdx, endLine - 1);
+  return lines.slice(startIdx, endIdx + 1).join('\n');
+}
+
+function extractContextMarkdownForRange(lines: string[], startLine: number, endLine: number): string {
+  if (!lines.length) return '';
+  const contextStart = Math.max(1, startLine - 2);
+  const contextEnd = Math.min(lines.length, Math.max(endLine, startLine) + 2);
+  return lines.slice(contextStart - 1, contextEnd).join('\n').slice(0, MAX_DIAGRAM_FIX_CONTEXT_CHARS);
+}
+
+function buildMarkdownFixTargets(markdown: string, issues: ImportValidationIssue[]): MarkdownFixTarget[] {
+  const lines = normalizeNewlines(markdown).split('\n');
+  const separatorIndex = findSeparatorIndexOutsideFences(lines);
+  const nodeSectionEnd = separatorIndex === -1 ? lines.length : separatorIndex;
+  const metadataInsertStartLine = separatorIndex === -1 ? lines.length + 1 : separatorIndex + 2;
+  const metadataInsertEndLine = metadataInsertStartLine - 1;
+  const fenceRanges = scanFenceRanges(lines);
+
+  type TargetRange = {
+    startLine: number;
+    endLine: number;
+    reason: string;
+    issueCodes: Set<string>;
+  };
+
+  const ranges: TargetRange[] = [];
+
+  const addRange = (range: { startLine: number; endLine: number }, issue: ImportValidationIssue) => {
+    const clamped = clampLineRange(range, lines.length);
+    ranges.push({
+      startLine: clamped.startLine,
+      endLine: clamped.endLine,
+      reason: targetReasonForIssue(issue),
+      issueCodes: new Set([issue.code]),
+    });
+  };
+
+  for (const issue of issues.slice(0, MAX_DIAGRAM_FIX_TARGETS)) {
+    const line = extractIssueLineNumber(issue.message || '');
+    if (!line) {
+      addRange(
+        {
+          startLine: metadataInsertStartLine,
+          endLine: metadataInsertEndLine,
+        },
+        issue,
+      );
+      continue;
+    }
+
+    const lineIndex = Math.max(0, line - 1);
+    if (issue.code === 'UNCLOSED_CODE_BLOCK') {
+      const endLine = Math.min(lines.length, line + 120);
+      addRange({ startLine: line, endLine }, issue);
+      continue;
+    }
+
+    if (lineIndex < nodeSectionEnd) {
+      const subtree = findSubtreeRange(lines, lineIndex);
+      if (subtree) {
+        addRange({ startLine: subtree.start + 1, endLine: subtree.end + 1 }, issue);
+        continue;
+      }
+      addRange({ startLine: Math.max(1, line - 2), endLine: Math.min(lines.length, line + 2) }, issue);
+      continue;
+    }
+
+    const fenceRange = findFenceRangeContainingLine(fenceRanges, lineIndex);
+    if (fenceRange) {
+      addRange({ startLine: fenceRange.start + 1, endLine: fenceRange.end + 1 }, issue);
+      continue;
+    }
+    addRange({ startLine: Math.max(1, line - 2), endLine: Math.min(lines.length, line + 2) }, issue);
+  }
+
+  const merged = ranges
+    .sort((a, b) => a.startLine - b.startLine || a.endLine - b.endLine)
+    .reduce<TargetRange[]>((acc, cur) => {
+      const prev = acc[acc.length - 1];
+      if (!prev) {
+        acc.push(cur);
+        return acc;
+      }
+      const overlaps = cur.startLine <= prev.endLine + 1;
+      if (!overlaps) {
+        acc.push(cur);
+        return acc;
+      }
+      prev.endLine = Math.max(prev.endLine, cur.endLine);
+      prev.reason = `${prev.reason}; ${cur.reason}`.slice(0, 260);
+      cur.issueCodes.forEach((code) => prev.issueCodes.add(code));
+      return acc;
+    }, []);
+
+  return merged.slice(0, MAX_DIAGRAM_FIX_TARGETS).map((target, idx) => ({
+    id: `target-${idx + 1}`,
+    startLine: target.startLine,
+    endLine: target.endLine,
+    reason: target.reason.slice(0, 280),
+    issueCodes: Array.from(target.issueCodes).slice(0, 8),
+    contextMarkdown: extractContextMarkdownForRange(lines, target.startLine, target.endLine),
+    originalMarkdown: extractOriginalMarkdownForRange(lines, target.startLine, target.endLine),
+  }));
+}
+
+function parseTargetedPatchResponse(text: string): { summary: string; patches: TargetedMarkdownPatch[] } | null {
+  const obj = parseJsonObject(text);
+  if (!obj) return null;
+  const summary = clipText(obj.summary, 2000);
+  const patchesRaw = Array.isArray(obj.patches) ? obj.patches : [];
+  const patches = patchesRaw
+    .map((p) => (p && typeof p === 'object' ? (p as JsonRecord) : null))
+    .filter((p): p is JsonRecord => p !== null)
+    .map((p) => ({
+      targetId: normalizeText(p.targetId),
+      replacementMarkdown: normalizeNewlines(p.replacementMarkdown).slice(0, MAX_DIAGRAM_FIX_REPLACEMENT_CHARS),
+    }))
+    .filter((p) => Boolean(p.targetId))
+    .slice(0, MAX_DIAGRAM_FIX_TARGETS);
+  return { summary, patches };
+}
+
+function applyTargetedPatches(markdown: string, targets: MarkdownFixTarget[], patches: TargetedMarkdownPatch[]): string {
+  if (!patches.length) return markdown;
+  const lines = normalizeNewlines(markdown).split('\n');
+  const targetById = new Map(targets.map((t) => [t.id, t]));
+  const selected = patches
+    .map((p) => ({ patch: p, target: targetById.get(p.targetId) || null }))
+    .filter((x): x is { patch: TargetedMarkdownPatch; target: MarkdownFixTarget } => x.target !== null)
+    .slice(0, MAX_DIAGRAM_FIX_TARGETS);
+  if (!selected.length) return markdown;
+
+  const uniqueByTarget = new Map<string, { patch: TargetedMarkdownPatch; target: MarkdownFixTarget }>();
+  selected.forEach((entry) => {
+    if (!uniqueByTarget.has(entry.target.id)) uniqueByTarget.set(entry.target.id, entry);
+  });
+
+  const ordered = Array.from(uniqueByTarget.values()).sort((a, b) => b.target.startLine - a.target.startLine);
+  const next = [...lines];
+  ordered.forEach(({ patch, target }) => {
+    const replacementText = stripFenceOnlyLines(normalizeNewlines(patch.replacementMarkdown)).trimEnd();
+    const replacementLines = replacementText.length ? replacementText.split('\n') : [];
+    const startIdx = Math.max(0, target.startLine - 1);
+    const endIdx = Math.max(startIdx - 1, target.endLine - 1);
+
+    if (target.startLine === target.endLine + 1) {
+      next.splice(startIdx, 0, ...replacementLines);
+      return;
+    }
+    next.splice(startIdx, endIdx - startIdx + 1, ...replacementLines);
+  });
+  return next.join('\n');
+}
+
+function shouldAcceptCandidateValidation(current: ImportValidationResult, candidate: ImportValidationResult): boolean {
+  if (candidate.errors.length < current.errors.length) return true;
+  if (candidate.errors.length > current.errors.length) return false;
+  if (candidate.warnings.length <= current.warnings.length) return true;
+  return false;
 }
 
 function ensureNodeLinkMarkers(markdown: string): string {
@@ -430,6 +748,77 @@ async function collectUploadTexts(input: {
   return out;
 }
 
+async function repairDiagramWithTargetedPatches(input: {
+  claudeApiKey: string;
+  claudeModel?: string;
+  markdown: string;
+  validation: ImportValidationResult;
+}): Promise<string | null> {
+  const issues = input.validation.errors.slice(0, MAX_DIAGRAM_FIX_ISSUES);
+  if (!issues.length) return input.markdown;
+  const targets = buildMarkdownFixTargets(input.markdown, issues);
+  if (!targets.length) return null;
+
+  const issueDetails = issues
+    .map((issue, idx) => `${idx + 1}. ${issue.code}: ${normalizeText(issue.message)}\n   Fix hint: ${fixInstructionForValidationIssue(issue)}`)
+    .join('\n');
+
+  const targetPayload = targets.map((target) => ({
+    targetId: target.id,
+    startLine: target.startLine,
+    endLine: target.endLine,
+    reason: target.reason,
+    issueCodes: target.issueCodes,
+    originalMarkdown: target.originalMarkdown,
+    contextMarkdown: target.contextMarkdown,
+  }));
+
+  const prompt = [
+    'Repair the markdown using targeted patches only.',
+    'Return JSON only, no markdown fences:',
+    '{',
+    '  "summary": "short note",',
+    '  "patches": [',
+    '    { "targetId": "target-1", "replacementMarkdown": "..." }',
+    '  ]',
+    '}',
+    '',
+    'Rules:',
+    '- Only patch targetIds listed below.',
+    '- Do not add or leave triple-backtick fence lines unless explicitly required for a metadata block.',
+    '- Preserve unaffected sections.',
+    '- Keep Diregram node indentation valid (2 spaces per level).',
+    '',
+    `Current markdown hash: ${hashMarkdown(input.markdown)}`,
+    'Validator report:',
+    input.validation.aiFriendlyReport,
+    '',
+    'Issues with fix hints:',
+    issueDetails,
+    '',
+    'Patch targets:',
+    JSON.stringify(targetPayload, null, 2),
+  ].join('\n');
+
+  const out = await runClaudeMessagesText({
+    apiKey: input.claudeApiKey,
+    model: input.claudeModel,
+    maxTokens: 3600,
+    temperature: 0.1,
+    system: [
+      'You are a Diregram markdown repair assistant.',
+      'Output JSON only, exactly matching the requested schema.',
+      'Do not return markdown fences.',
+    ].join('\n'),
+    messages: [{ role: 'user', content: prompt }],
+  });
+
+  const parsed = parseTargetedPatchResponse(out);
+  if (!parsed || !parsed.patches.length) return null;
+  const next = applyTargetedPatches(input.markdown, targets, parsed.patches);
+  return sanitizeDiagramMarkdown(next);
+}
+
 async function generateSingleDiagram(input: {
   claudeApiKey: string;
   claudeModel?: string;
@@ -470,7 +859,7 @@ async function generateSingleDiagram(input: {
   markdown = sanitizeDiagramMarkdown(first);
 
   for (let attempt = 0; attempt < MAX_DIAGRAM_REPAIR_ATTEMPTS; attempt += 1) {
-    const validation = validateNexusMarkdownImport(markdown);
+    let validation = validateNexusMarkdownImport(markdown);
     if (!validation.errors.length) return markdown;
 
     const localRepair = sanitizeDiagramMarkdown(markdown);
@@ -478,9 +867,29 @@ async function generateSingleDiagram(input: {
       const localValidation = validateNexusMarkdownImport(localRepair);
       markdown = localRepair;
       if (!localValidation.errors.length) return markdown;
+      validation = localValidation;
+    }
+
+    const targeted = await repairDiagramWithTargetedPatches({
+      claudeApiKey: input.claudeApiKey,
+      claudeModel: input.claudeModel,
+      markdown,
+      validation,
+    });
+    if (targeted && targeted !== markdown) {
+      const targetedValidation = validateNexusMarkdownImport(targeted);
+      if (!targetedValidation.errors.length) return targeted;
+      if (shouldAcceptCandidateValidation(validation, targetedValidation)) {
+        markdown = targeted;
+        validation = targetedValidation;
+      }
     }
 
     const errorSummary = summarizeIssues(validation.errors.map((x) => `${x.code}: ${x.message}`));
+    const detailedHints = validation.errors
+      .slice(0, MAX_DIAGRAM_FIX_ISSUES)
+      .map((issue, idx) => `${idx + 1}. ${issue.code}: ${normalizeText(issue.message)}\n   Fix hint: ${fixInstructionForValidationIssue(issue)}`)
+      .join('\n');
     const repaired = await runClaudeMessagesText({
       apiKey: input.claudeApiKey,
       model: input.claudeModel,
@@ -489,14 +898,24 @@ async function generateSingleDiagram(input: {
       system: [
         'Repair the provided Diregram diagram markdown so it is import-valid.',
         'Do not remove major content unless required to fix parser/validator errors.',
+        'Use validator line hints and keep unaffected content unchanged.',
         'Return ONLY corrected markdown. No code fences.',
       ].join('\n'),
       messages: [
         {
           role: 'user',
           content: [
+            `Repair attempt: ${attempt + 1}/${MAX_DIAGRAM_REPAIR_ATTEMPTS}`,
+            `Current markdown hash: ${hashMarkdown(markdown)}`,
+            '',
             'Fix these validator issues:',
             errorSummary,
+            '',
+            'Validator report:',
+            validation.aiFriendlyReport,
+            '',
+            'Issue-specific repair hints:',
+            detailedHints,
             '',
             'Markdown to repair:',
             markdown,
@@ -504,7 +923,12 @@ async function generateSingleDiagram(input: {
         },
       ],
     });
-    markdown = sanitizeDiagramMarkdown(repaired);
+    const repairedMarkdown = sanitizeDiagramMarkdown(repaired);
+    const repairedValidation = validateNexusMarkdownImport(repairedMarkdown);
+    if (!repairedValidation.errors.length) return repairedMarkdown;
+    if (shouldAcceptCandidateValidation(validation, repairedValidation)) {
+      markdown = repairedMarkdown;
+    }
   }
 
   const finalValidation = validateNexusMarkdownImport(markdown);
