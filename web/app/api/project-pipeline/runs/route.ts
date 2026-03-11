@@ -209,10 +209,45 @@ export async function GET(request: Request) {
     const rows = ((data || []) as AsyncJobRow[]).map((row) => {
       const summary = toAsyncJobSummary(row);
       const result = row.result && typeof row.result === 'object' ? (row.result as Record<string, unknown>) : {};
+      const state = row.state && typeof row.state === 'object' ? (row.state as Record<string, unknown>) : {};
+      const timelineRaw = Array.isArray(state.timeline) ? state.timeline : [];
+      const timeline = timelineRaw
+        .map((item) => (item && typeof item === 'object' ? (item as Record<string, unknown>) : null))
+        .filter((item): item is Record<string, unknown> => item !== null)
+        .map((item) => ({
+          at: clampText(item.at, 80) || summary.updatedAt,
+          kind: clampText(item.kind, 60) || 'stage',
+          step: clampText(item.step, 120) || summary.step || '',
+          progressPct: Number(item.progressPct || summary.progressPct || 0),
+          mode: clampText(item.mode, 80) || '',
+          attempt: Number(item.attempt || 0),
+          errorCount: Number(item.errorCount || 0),
+          warningCount: Number(item.warningCount || 0),
+        }))
+        .slice(-160);
+
+      const monitor = state.diagramMonitor && typeof state.diagramMonitor === 'object' ? (state.diagramMonitor as Record<string, unknown>) : {};
+      const monitorErrors = Array.isArray(monitor.errors) ? monitor.errors.map((x) => clampText(x, 260)).filter(Boolean).slice(0, 10) : [];
+      const monitorWarnings = Array.isArray(monitor.warnings) ? monitor.warnings.map((x) => clampText(x, 260)).filter(Boolean).slice(0, 10) : [];
+
       return {
         ...summary,
+        startedAt: row.started_at || null,
         singleDiagramFileId: String(result.singleDiagramFileId || ''),
         primaryDiagramFileId: String(result.primaryDiagramFileId || ''),
+        timeline,
+        diagramMonitor: {
+          attempt: Number(monitor.attempt || 0),
+          mode: clampText(monitor.mode, 80) || '',
+          markdownHash: clampText(monitor.markdownHash, 120) || '',
+          lineCount: Number(monitor.lineCount || 0),
+          previewMarkdown: String(monitor.previewMarkdown || ''),
+          errorCount: Number(monitor.errorCount || 0),
+          warningCount: Number(monitor.warningCount || 0),
+          errors: monitorErrors,
+          warnings: monitorWarnings,
+          updatedAt: clampText(monitor.updatedAt, 80) || '',
+        },
       };
     });
 

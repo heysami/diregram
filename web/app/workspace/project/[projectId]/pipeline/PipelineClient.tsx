@@ -15,11 +15,46 @@ type PipelineRunRow = {
   progressPct: number;
   error: string | null;
   createdAt: string;
+  startedAt: string | null;
   updatedAt: string;
   finishedAt: string | null;
   singleDiagramFileId: string;
   primaryDiagramFileId: string;
+  timeline: Array<{
+    at: string;
+    kind: string;
+    step: string;
+    progressPct: number;
+    mode: string;
+    attempt: number;
+    errorCount: number;
+    warningCount: number;
+  }>;
+  diagramMonitor: {
+    attempt: number;
+    mode: string;
+    markdownHash: string;
+    lineCount: number;
+    previewMarkdown: string;
+    errorCount: number;
+    warningCount: number;
+    errors: string[];
+    warnings: string[];
+    updatedAt: string;
+  };
 };
+
+const PIPELINE_STAGE_ORDER = [
+  'prepare_inputs',
+  'generate_single_diagram',
+  'build_rag_from_diagram',
+  'swarm_analysis',
+  'generate_user_story_grid',
+  'generate_design_system_and_components',
+  'generate_epic_notes',
+  'final_rag_refresh',
+  'done',
+] as const;
 
 function nowIso() {
   return new Date().toISOString();
@@ -48,6 +83,32 @@ function formatBytes(input: number): string {
   return `${rounded} ${units[unitIndex]}`;
 }
 
+function stageIndex(step: string): number {
+  const idx = PIPELINE_STAGE_ORDER.indexOf(step as (typeof PIPELINE_STAGE_ORDER)[number]);
+  if (idx >= 0) return idx;
+  if (step === 'failed' || step === 'retrying') return 1;
+  return -1;
+}
+
+function formatDateTime(input: string | null): string {
+  const t = String(input || '').trim();
+  if (!t) return '-';
+  const ms = Date.parse(t);
+  if (!Number.isFinite(ms)) return t;
+  return new Date(ms).toLocaleString();
+}
+
+function formatDurationMs(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) return '0s';
+  const seconds = Math.floor(ms / 1000);
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  if (h > 0) return `${h}h ${m}m ${s}s`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+
 export default function PipelineClient({ projectId }: { projectId: string }) {
   const router = useRouter();
   const { supabase, user, ready } = useAuth();
@@ -57,9 +118,18 @@ export default function PipelineClient({ projectId }: { projectId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [runs, setRuns] = useState<PipelineRunRow[]>([]);
   const [loadingRuns, setLoadingRuns] = useState(false);
+  const [selectedRunId, setSelectedRunId] = useState<string>('');
 
   const canRun = useMemo(() => Boolean(projectId) && files.length > 0 && !busy && !!supabase && !!user, [projectId, files.length, busy, supabase, user]);
   const selectedBytes = useMemo(() => files.reduce((sum, f) => sum + Number(f.size || 0), 0), [files]);
+  const selectedRun = useMemo(() => {
+    if (!runs.length) return null;
+    if (selectedRunId) {
+      const found = runs.find((r) => r.id === selectedRunId);
+      if (found) return found;
+    }
+    return runs[0] || null;
+  }, [runs, selectedRunId]);
 
   const loadRuns = async () => {
     if (!projectId) return;
@@ -79,13 +149,63 @@ export default function PipelineClient({ projectId }: { projectId: string }) {
           progressPct: Number(r.progressPct || 0),
           error: r.error ? String(r.error) : null,
           createdAt: String(r.createdAt || nowIso()),
+          startedAt: r.startedAt ? String(r.startedAt) : null,
           updatedAt: String(r.updatedAt || nowIso()),
           finishedAt: r.finishedAt ? String(r.finishedAt) : null,
           singleDiagramFileId: String(r.singleDiagramFileId || ''),
           primaryDiagramFileId: String(r.primaryDiagramFileId || ''),
+          timeline: Array.isArray(r.timeline)
+            ? r.timeline
+                .map((item) => (item && typeof item === 'object' ? (item as Record<string, unknown>) : null))
+                .filter((item): item is Record<string, unknown> => item !== null)
+                .map((item) => ({
+                  at: String(item.at || nowIso()),
+                  kind: String(item.kind || 'stage'),
+                  step: String(item.step || ''),
+                  progressPct: Number(item.progressPct || 0),
+                  mode: String(item.mode || ''),
+                  attempt: Number(item.attempt || 0),
+                  errorCount: Number(item.errorCount || 0),
+                  warningCount: Number(item.warningCount || 0),
+                }))
+                .slice(-160)
+            : [],
+          diagramMonitor:
+            r.diagramMonitor && typeof r.diagramMonitor === 'object'
+              ? {
+                  attempt: Number((r.diagramMonitor as Record<string, unknown>).attempt || 0),
+                  mode: String((r.diagramMonitor as Record<string, unknown>).mode || ''),
+                  markdownHash: String((r.diagramMonitor as Record<string, unknown>).markdownHash || ''),
+                  lineCount: Number((r.diagramMonitor as Record<string, unknown>).lineCount || 0),
+                  previewMarkdown: String((r.diagramMonitor as Record<string, unknown>).previewMarkdown || ''),
+                  errorCount: Number((r.diagramMonitor as Record<string, unknown>).errorCount || 0),
+                  warningCount: Number((r.diagramMonitor as Record<string, unknown>).warningCount || 0),
+                  errors: Array.isArray((r.diagramMonitor as Record<string, unknown>).errors)
+                    ? ((r.diagramMonitor as Record<string, unknown>).errors as unknown[]).map((x) => String(x || '')).filter(Boolean).slice(0, 10)
+                    : [],
+                  warnings: Array.isArray((r.diagramMonitor as Record<string, unknown>).warnings)
+                    ? ((r.diagramMonitor as Record<string, unknown>).warnings as unknown[]).map((x) => String(x || '')).filter(Boolean).slice(0, 10)
+                    : [],
+                  updatedAt: String((r.diagramMonitor as Record<string, unknown>).updatedAt || ''),
+                }
+              : {
+                  attempt: 0,
+                  mode: '',
+                  markdownHash: '',
+                  lineCount: 0,
+                  previewMarkdown: '',
+                  errorCount: 0,
+                  warningCount: 0,
+                  errors: [],
+                  warnings: [],
+                  updatedAt: '',
+                },
         }))
         .filter((r) => Boolean(r.id));
       setRuns(parsed);
+      if (parsed.length && !parsed.some((r) => r.id === selectedRunId)) {
+        setSelectedRunId(parsed[0]!.id);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load runs');
     } finally {
@@ -259,8 +379,13 @@ export default function PipelineClient({ projectId }: { projectId: string }) {
         <div className="space-y-2">
           {runs.map((run) => {
             const diagramId = run.primaryDiagramFileId || run.singleDiagramFileId;
+            const isSelected = selectedRun?.id === run.id;
             return (
-              <div key={run.id} className="mac-double-outline p-3 text-xs space-y-1">
+              <div
+                key={run.id}
+                className={`mac-double-outline p-3 text-xs space-y-1 cursor-pointer ${isSelected ? 'ring-2 ring-black/30' : ''}`}
+                onClick={() => setSelectedRunId(run.id)}
+              >
                 <div className="flex items-center justify-between gap-3">
                   <div className="font-semibold">{run.id}</div>
                   <div className="opacity-70">{run.status}</div>
@@ -268,6 +393,9 @@ export default function PipelineClient({ projectId }: { projectId: string }) {
                 <div className="opacity-70">{run.step || 'queued'} ({Math.max(0, Math.min(100, Math.floor(run.progressPct || 0)))}%)</div>
                 {run.error ? <div>Error: {run.error}</div> : null}
                 <div className="flex items-center gap-2">
+                  <button type="button" className="mac-btn h-7" onClick={() => setSelectedRunId(run.id)}>
+                    Monitor
+                  </button>
                   {diagramId ? (
                     <button
                       type="button"
@@ -284,6 +412,135 @@ export default function PipelineClient({ projectId }: { projectId: string }) {
           })}
         </div>
       </div>
+
+      {selectedRun ? (
+        <div className="mac-window mac-double-outline p-4 space-y-3 max-w-[980px]">
+          <div className="text-sm font-bold tracking-tight">Live monitor</div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-xs">
+            <div className="mac-double-outline p-2">
+              <div className="opacity-70">Run ID</div>
+              <div className="font-semibold break-all">{selectedRun.id}</div>
+            </div>
+            <div className="mac-double-outline p-2">
+              <div className="opacity-70">Status</div>
+              <div className="font-semibold">{selectedRun.status}</div>
+            </div>
+            <div className="mac-double-outline p-2">
+              <div className="opacity-70">Current step</div>
+              <div className="font-semibold">{selectedRun.step || '-'}</div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-xs">
+            <div className="mac-double-outline p-2">
+              <div className="opacity-70">Created</div>
+              <div>{formatDateTime(selectedRun.createdAt)}</div>
+            </div>
+            <div className="mac-double-outline p-2">
+              <div className="opacity-70">Started</div>
+              <div>{formatDateTime(selectedRun.startedAt)}</div>
+            </div>
+            <div className="mac-double-outline p-2">
+              <div className="opacity-70">Finished</div>
+              <div>{formatDateTime(selectedRun.finishedAt)}</div>
+            </div>
+          </div>
+
+          <div className="text-xs opacity-80">
+            Duration:{' '}
+            {(() => {
+              const startMs = Date.parse(String(selectedRun.startedAt || selectedRun.createdAt || ''));
+              const endMs = selectedRun.finishedAt ? Date.parse(selectedRun.finishedAt) : Date.now();
+              if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs < startMs) return '-';
+              return formatDurationMs(endMs - startMs);
+            })()}
+          </div>
+
+          <div className="space-y-2">
+            <div className="text-xs font-semibold">Stage timeline</div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+              {PIPELINE_STAGE_ORDER.map((stage, idx) => {
+                const currentIndex = stageIndex(selectedRun.step);
+                const done = selectedRun.status === 'succeeded' ? true : currentIndex > idx;
+                const active = selectedRun.status === 'running' && currentIndex === idx;
+                const failed = selectedRun.status === 'failed' && currentIndex === idx;
+                const classes = failed
+                  ? 'border-red-700 bg-red-100'
+                  : active
+                    ? 'border-black bg-yellow-100 animate-pulse'
+                    : done
+                      ? 'border-black/40 bg-black/5'
+                      : 'border-black/20 bg-transparent';
+                return (
+                  <div key={stage} className={`mac-double-outline p-2 text-xs border ${classes}`}>
+                    <div className="font-semibold">{stage}</div>
+                    <div className="opacity-70">
+                      {failed ? 'failed' : active ? 'running' : done ? 'done' : 'pending'}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <div className="text-xs font-semibold">Attempt log</div>
+            <div className="max-h-44 overflow-auto mac-double-outline p-2 space-y-1 text-xs">
+              {(selectedRun.timeline || []).length === 0 ? <div className="opacity-70">No timeline events yet.</div> : null}
+              {(selectedRun.timeline || []).slice().reverse().map((event, i) => (
+                <div key={`${event.at}-${event.kind}-${i}`} className="mac-double-outline p-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="font-semibold">
+                      {event.kind}
+                      {event.mode ? ` · ${event.mode}` : ''}
+                      {event.attempt ? ` · attempt ${event.attempt}` : ''}
+                    </div>
+                    <div className="opacity-70">{formatDateTime(event.at)}</div>
+                  </div>
+                  <div className="opacity-70">
+                    {event.step || '-'} ({Math.max(0, Math.min(100, Math.floor(event.progressPct || 0)))}%)
+                  </div>
+                  <div className="opacity-70">
+                    errors: {Math.max(0, Math.floor(event.errorCount || 0))} · warnings: {Math.max(0, Math.floor(event.warningCount || 0))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <div className="text-xs font-semibold">Diagram markdown (live WIP)</div>
+            <div className="text-xs opacity-70">
+              attempt {selectedRun.diagramMonitor.attempt || 0} · mode {selectedRun.diagramMonitor.mode || '-'} · lines{' '}
+              {Math.max(0, Math.floor(selectedRun.diagramMonitor.lineCount || 0))} · updated {formatDateTime(selectedRun.diagramMonitor.updatedAt || selectedRun.updatedAt)}
+            </div>
+            {(selectedRun.diagramMonitor.errors || []).length > 0 ? (
+              <div className="mac-double-outline p-2 text-xs">
+                <div className="font-semibold">Current validator errors</div>
+                <div className="space-y-1 mt-1">
+                  {selectedRun.diagramMonitor.errors.map((msg, i) => (
+                    <div key={`err-${i}`}>- {msg}</div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+            {(selectedRun.diagramMonitor.warnings || []).length > 0 ? (
+              <div className="mac-double-outline p-2 text-xs">
+                <div className="font-semibold">Current validator warnings</div>
+                <div className="space-y-1 mt-1">
+                  {selectedRun.diagramMonitor.warnings.map((msg, i) => (
+                    <div key={`warn-${i}`}>- {msg}</div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+            <pre className="mac-double-outline p-3 text-[11px] leading-relaxed overflow-auto max-h-[420px] whitespace-pre-wrap">
+              {selectedRun.diagramMonitor.previewMarkdown || 'No WIP markdown snapshot yet for this run.'}
+            </pre>
+            {selectedRun.error ? <div className="text-xs mac-double-outline p-2">Final error: {selectedRun.error}</div> : null}
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }

@@ -823,7 +823,27 @@ async function generateSingleDiagram(input: {
   claudeApiKey: string;
   claudeModel?: string;
   uploadTexts: Array<{ name: string; text: string }>;
+  onMonitorUpdate?: (event: {
+    attempt: number;
+    mode: string;
+    markdown: string;
+    validation: ImportValidationResult;
+  }) => Promise<void> | void;
 }): Promise<string> {
+  const emitMonitor = async (event: {
+    attempt: number;
+    mode: string;
+    markdown: string;
+    validation: ImportValidationResult;
+  }) => {
+    if (!input.onMonitorUpdate) return;
+    try {
+      await input.onMonitorUpdate(event);
+    } catch {
+      // Do not fail pipeline generation because monitor updates failed.
+    }
+  };
+
   const sourceText = input.uploadTexts
     .map((item, idx) => `## Source ${idx + 1}: ${item.name}\n${clipText(item.text, 40_000)}`)
     .join('\n\n');
@@ -857,15 +877,33 @@ async function generateSingleDiagram(input: {
     ],
   });
   markdown = sanitizeDiagramMarkdown(first);
+  await emitMonitor({
+    attempt: 0,
+    mode: 'initial_generation',
+    markdown,
+    validation: validateNexusMarkdownImport(markdown),
+  });
 
   for (let attempt = 0; attempt < MAX_DIAGRAM_REPAIR_ATTEMPTS; attempt += 1) {
     let validation = validateNexusMarkdownImport(markdown);
     if (!validation.errors.length) return markdown;
+    await emitMonitor({
+      attempt: attempt + 1,
+      mode: 'attempt_start',
+      markdown,
+      validation,
+    });
 
     const localRepair = sanitizeDiagramMarkdown(markdown);
     if (localRepair !== markdown) {
       const localValidation = validateNexusMarkdownImport(localRepair);
       markdown = localRepair;
+      await emitMonitor({
+        attempt: attempt + 1,
+        mode: 'local_sanitize',
+        markdown,
+        validation: localValidation,
+      });
       if (!localValidation.errors.length) return markdown;
       validation = localValidation;
     }
@@ -878,6 +916,12 @@ async function generateSingleDiagram(input: {
     });
     if (targeted && targeted !== markdown) {
       const targetedValidation = validateNexusMarkdownImport(targeted);
+      await emitMonitor({
+        attempt: attempt + 1,
+        mode: 'targeted_patch',
+        markdown: targeted,
+        validation: targetedValidation,
+      });
       if (!targetedValidation.errors.length) return targeted;
       if (shouldAcceptCandidateValidation(validation, targetedValidation)) {
         markdown = targeted;
@@ -925,6 +969,12 @@ async function generateSingleDiagram(input: {
     });
     const repairedMarkdown = sanitizeDiagramMarkdown(repaired);
     const repairedValidation = validateNexusMarkdownImport(repairedMarkdown);
+    await emitMonitor({
+      attempt: attempt + 1,
+      mode: 'full_repair',
+      markdown: repairedMarkdown,
+      validation: repairedValidation,
+    });
     if (!repairedValidation.errors.length) return repairedMarkdown;
     if (shouldAcceptCandidateValidation(validation, repairedValidation)) {
       markdown = repairedMarkdown;
@@ -1645,8 +1695,27 @@ export async function runProjectPipelineJob(job: AsyncJobRow): Promise<Record<st
   const createdResources: Array<{ id: string; name: string; kind: string }> = [];
   let stageState: JsonRecord = { ...(job.state || {}), runLabel };
 
-  const setStage = async (step: string, progressPct: number, patch?: JsonRecord) => {
+  const appendTimelineEvent = (event: JsonRecord) => {
+    const existing = Array.isArray(stageState.timeline)
+      ? (stageState.timeline as unknown[]).filter((row) => row && typeof row === 'object').map((row) => ({ ...(row as JsonRecord) }))
+      : [];
+    const next = existing
+      .concat({
+        at: nowIso(),
+        ...event,
+      })
+      .slice(-180);
+    stageState = { ...stageState, timeline: next };
+  };
+
+  const setStage = async (step: string, progressPct: number, patch?: JsonRecord, timelineMeta?: JsonRecord) => {
     if (patch) stageState = { ...stageState, ...patch };
+    appendTimelineEvent({
+      kind: 'stage',
+      step,
+      progressPct: Math.max(1, Math.min(99, Math.floor(progressPct))),
+      ...(timelineMeta || {}),
+    });
     await updateAsyncJob(job.id, {
       step,
       progress_pct: Math.max(1, Math.min(99, Math.floor(progressPct))),
@@ -1676,6 +1745,41 @@ export async function runProjectPipelineJob(job: AsyncJobRow): Promise<Record<st
     claudeApiKey,
     claudeModel,
     uploadTexts: uploadTexts.map((x) => ({ name: x.name, text: x.text })),
+    onMonitorUpdate: async (event) => {
+      const preview = normalizeNewlines(event.markdown).split('\n').slice(0, 260).join('\n').slice(0, 20_000);
+      const errors = event.validation.errors
+        .slice(0, 8)
+        .map((issue) => `${issue.code}: ${normalizeText(issue.message)}`);
+      const warnings = event.validation.warnings
+        .slice(0, 6)
+        .map((issue) => `${issue.code}: ${normalizeText(issue.message)}`);
+
+      await setStage(
+        'generate_single_diagram',
+        16,
+        {
+          diagramMonitor: {
+            attempt: event.attempt,
+            mode: event.mode,
+            markdownHash: hashMarkdown(event.markdown),
+            lineCount: normalizeNewlines(event.markdown).split('\n').length,
+            previewMarkdown: preview,
+            errorCount: event.validation.errors.length,
+            warningCount: event.validation.warnings.length,
+            errors,
+            warnings,
+            updatedAt: nowIso(),
+          },
+        },
+        {
+          kind: 'diagram_monitor',
+          mode: event.mode,
+          attempt: event.attempt,
+          errorCount: event.validation.errors.length,
+          warningCount: event.validation.warnings.length,
+        },
+      );
+    },
   });
 
   const diagramName = `${runLabel}-single-diagram`;
@@ -1955,6 +2059,16 @@ export async function runProjectPipelineJob(job: AsyncJobRow): Promise<Record<st
     primaryDiagramFileId: singleDiagramFileId,
     linkedArtifacts,
   };
+
+  await setStage(
+    'done',
+    99,
+    {
+      completedAt: nowIso(),
+      finalManifestLinkedArtifacts: linkedArtifacts.length,
+    },
+    { kind: 'stage_complete' },
+  );
 
   return {
     ok: true,
