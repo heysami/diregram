@@ -78,18 +78,26 @@ function resolveTimeoutMs(envName: string, fallbackMs: number, minMs: number, ma
 
 export async function runOpenAIResponsesText(
   input: OpenAIResponsesInputItem[],
-  opts?: { apiKey?: string; model?: string; withWebSearch?: boolean },
+  opts?: { apiKey?: string; model?: string; withWebSearch?: boolean; temperature?: number; maxOutputTokens?: number },
 ): Promise<string> {
   const apiKey = resolveApiKey(opts?.apiKey);
   const model = resolveModel(opts?.model);
   const withWebSearch = Boolean(opts?.withWebSearch);
   const timeoutMs = resolveTimeoutMs('OPENAI_RESPONSES_TIMEOUT_MS', 120_000, 5_000, 600_000);
+  const temperature = Number.isFinite(Number(opts?.temperature)) ? Math.max(0, Math.min(1, Number(opts?.temperature))) : 0.2;
+  const maxOutputTokensRaw = Number(opts?.maxOutputTokens);
+  const maxOutputTokens = Number.isFinite(maxOutputTokensRaw)
+    ? Math.max(256, Math.min(12_000, Math.floor(maxOutputTokensRaw)))
+    : null;
 
   const body: Record<string, unknown> = {
     model,
     input,
-    temperature: 0.2,
+    temperature,
   };
+  if (maxOutputTokens) {
+    body.max_output_tokens = maxOutputTokens;
+  }
   if (withWebSearch) {
     body.tools = [{ type: 'web_search_preview' }];
   }

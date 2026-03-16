@@ -35,7 +35,7 @@ import {
 } from '@/lib/markdown-import-validator';
 import { runClaudeMessagesText } from '@/lib/server/anthropic-messages';
 import { embedTextsOpenAI } from '@/lib/server/openai-embeddings';
-import { queryProjectKbContext } from '@/lib/server/openai-responses';
+import { queryProjectKbContext, runOpenAIResponsesText } from '@/lib/server/openai-responses';
 import { getAdminSupabaseClient } from '@/lib/server/supabase-admin';
 import { decryptSecretPayload } from '@/lib/server/async-jobs/crypto';
 import { isAsyncJobCancelRequested, updateAsyncJob } from '@/lib/server/async-jobs/repo';
@@ -51,6 +51,55 @@ import type {
 } from '@/lib/project-pipeline-types';
 
 type JsonRecord = Record<string, unknown>;
+type PipelineGenerationProvider = 'claude' | 'openai';
+type PipelineGenerationMessage = {
+  role: 'user' | 'assistant';
+  content: string;
+};
+type PipelineGenerationConfig = {
+  provider: PipelineGenerationProvider;
+  openaiApiKey: string;
+  claudeApiKey?: string;
+  claudeModel?: string;
+};
+
+function normalizeGenerationProvider(input: unknown): PipelineGenerationProvider {
+  return String(input || '').trim().toLowerCase() === 'openai' ? 'openai' : 'claude';
+}
+
+async function runPipelineGenerationText(input: {
+  generation: PipelineGenerationConfig;
+  messages: PipelineGenerationMessage[];
+  system?: string;
+  maxTokens?: number;
+  temperature?: number;
+}): Promise<string> {
+  if (input.generation.provider === 'openai') {
+    const requestInput = [
+      ...(input.system ? ([{ role: 'system', content: input.system }] as const) : []),
+      ...input.messages.map((message) => ({
+        role: message.role,
+        content: message.content,
+      })),
+    ];
+    return runOpenAIResponsesText(requestInput, {
+      apiKey: input.generation.openaiApiKey,
+      temperature: input.temperature,
+      maxOutputTokens: input.maxTokens,
+    });
+  }
+  if (!input.generation.claudeApiKey) {
+    throw new Error('Missing Claude API key');
+  }
+  return runClaudeMessagesText({
+    apiKey: input.generation.claudeApiKey,
+    model: input.generation.claudeModel,
+    messages: input.messages,
+    system: input.system,
+    maxTokens: input.maxTokens,
+    temperature: input.temperature,
+  });
+}
 
 const MAX_UPLOADS = 50;
 const MAX_UPLOAD_TEXT = 50_000;
@@ -1012,8 +1061,7 @@ function summarizeCurrentDataObjects(markdown: string): string {
 }
 
 async function progressivelyEnrichDiagramMarkdown(input: {
-  claudeApiKey: string;
-  claudeModel?: string;
+  generation: PipelineGenerationConfig;
   markdown: string;
   uploadTexts: Array<{ name: string; text: string }>;
   onMonitorUpdate?: (event: {
@@ -1061,9 +1109,8 @@ async function progressivelyEnrichDiagramMarkdown(input: {
       sourceExcerpt || '(none)',
     ].join('\n');
 
-    const out = await runClaudeMessagesText({
-      apiKey: input.claudeApiKey,
-      model: input.claudeModel,
+    const out = await runPipelineGenerationText({
+      generation: input.generation,
       maxTokens: 3200,
       temperature: 0.1,
       system: [
@@ -1121,9 +1168,8 @@ async function progressivelyEnrichDiagramMarkdown(input: {
       sourceExcerpt || '(none)',
     ].join('\n');
 
-    const out = await runClaudeMessagesText({
-      apiKey: input.claudeApiKey,
-      model: input.claudeModel,
+    const out = await runPipelineGenerationText({
+      generation: input.generation,
       maxTokens: 3200,
       temperature: 0.1,
       system: [
@@ -1329,8 +1375,7 @@ async function collectUploadTexts(input: {
 }
 
 async function repairDiagramWithTargetedPatches(input: {
-  claudeApiKey: string;
-  claudeModel?: string;
+  generation: PipelineGenerationConfig;
   markdown: string;
   validation: ImportValidationResult;
 }): Promise<string | null> {
@@ -1385,9 +1430,8 @@ async function repairDiagramWithTargetedPatches(input: {
     JSON.stringify(targetPayload, null, 2),
   ].join('\n');
 
-  const out = await runClaudeMessagesText({
-    apiKey: input.claudeApiKey,
-    model: input.claudeModel,
+  const out = await runPipelineGenerationText({
+    generation: input.generation,
     maxTokens: 3600,
     temperature: 0.1,
     system: [
@@ -1408,8 +1452,7 @@ async function repairDiagramWithTargetedPatches(input: {
 }
 
 async function generateSingleDiagram(input: {
-  claudeApiKey: string;
-  claudeModel?: string;
+  generation: PipelineGenerationConfig;
   uploadTexts: Array<{ name: string; text: string }>;
   onMonitorUpdate?: (event: {
     attempt: number;
@@ -1451,9 +1494,8 @@ async function generateSingleDiagram(input: {
   ].join('\n');
 
   let markdown = makeStarterDiagramMarkdown();
-  const first = await runClaudeMessagesText({
-    apiKey: input.claudeApiKey,
-    model: input.claudeModel,
+  const first = await runPipelineGenerationText({
+    generation: input.generation,
     system,
     maxTokens: 7200,
     temperature: 0.2,
@@ -1472,8 +1514,7 @@ async function generateSingleDiagram(input: {
   });
   markdown = sanitizeDiagramMarkdown(first);
   markdown = await progressivelyEnrichDiagramMarkdown({
-    claudeApiKey: input.claudeApiKey,
-    claudeModel: input.claudeModel,
+    generation: input.generation,
     markdown,
     uploadTexts: input.uploadTexts,
     onMonitorUpdate: input.onMonitorUpdate,
@@ -1515,8 +1556,7 @@ async function generateSingleDiagram(input: {
     }
 
     const targeted = await repairDiagramWithTargetedPatches({
-      claudeApiKey: input.claudeApiKey,
-      claudeModel: input.claudeModel,
+      generation: input.generation,
       markdown,
       validation,
     });
@@ -1549,9 +1589,8 @@ async function generateSingleDiagram(input: {
       .slice(0, MAX_DIAGRAM_FIX_ISSUES)
       .map((issue, idx) => `${idx + 1}. ${issue.code}: ${normalizeText(issue.message)}\n   Fix hint: ${fixInstructionForValidationIssue(issue)}`)
       .join('\n');
-    const repaired = await runClaudeMessagesText({
-      apiKey: input.claudeApiKey,
-      model: input.claudeModel,
+    const repaired = await runPipelineGenerationText({
+      generation: input.generation,
       maxTokens: 7200,
       temperature: 0.1,
       system: [
@@ -1752,8 +1791,7 @@ function parseRecommendationRefs(input: unknown, anchors: Map<string, DiagramLin
 
 async function runSwarmAgent(input: {
   agent: SwarmAgentName;
-  claudeApiKey: string;
-  claudeModel?: string;
+  generation: PipelineGenerationConfig;
   ownerId: string;
   projectFolderId: string;
   openaiApiKey: string;
@@ -1788,9 +1826,8 @@ async function runSwarmAgent(input: {
     embeddingModel: input.embeddingModel,
   });
 
-  const output = await runClaudeMessagesText({
-    apiKey: input.claudeApiKey,
-    model: input.claudeModel,
+  const output = await runPipelineGenerationText({
+    generation: input.generation,
     temperature: 0.2,
     maxTokens: 3600,
     system: [
@@ -1873,8 +1910,7 @@ function mapAnchorKeysToRefs(input: unknown, anchors: Map<string, DiagramLinkRef
 }
 
 async function synthesizePipeline(input: {
-  claudeApiKey: string;
-  claudeModel?: string;
+  generation: PipelineGenerationConfig;
   diagramLinkIndex: DiagramLinkRef[];
   diagramMarkdown: string;
   agentOutputs: AgentOutputRecord[];
@@ -1897,9 +1933,8 @@ async function synthesizePipeline(input: {
     })
     .join('\n\n');
 
-  const out = await runClaudeMessagesText({
-    apiKey: input.claudeApiKey,
-    model: input.claudeModel,
+  const out = await runPipelineGenerationText({
+    generation: input.generation,
     temperature: 0.2,
     maxTokens: 5200,
     system: [
@@ -2113,8 +2148,7 @@ function storyRowsToGridMarkdown(stories: PipelineStory[], epicsById: Map<string
 }
 
 async function buildVisionDesignSystem(input: {
-  claudeApiKey: string;
-  claudeModel?: string;
+  generation: PipelineGenerationConfig;
   brief: string;
 }): Promise<VisionDesignSystemV1> {
   const base = defaultVisionDesignSystem();
@@ -2127,9 +2161,8 @@ async function buildVisionDesignSystem(input: {
   ].join('\n\n');
 
   try {
-    const out = await runClaudeMessagesText({
-      apiKey: input.claudeApiKey,
-      model: input.claudeModel,
+    const out = await runPipelineGenerationText({
+      generation: input.generation,
       maxTokens: 1000,
       temperature: 0.2,
       messages: [{ role: 'user', content: prompt }],
@@ -2201,9 +2234,8 @@ function fallbackTsxStub(input: { componentName: string; purpose: string; propsC
   ].join('\n');
 }
 
-async function generateTsxStubWithClaude(input: {
-  claudeApiKey: string;
-  claudeModel?: string;
+async function generateTsxStubWithModel(input: {
+  generation: PipelineGenerationConfig;
   component: PipelineComponentGap;
   runLabel: string;
 }): Promise<string> {
@@ -2217,9 +2249,8 @@ async function generateTsxStubWithClaude(input: {
   ].join('\n');
 
   try {
-    const out = await runClaudeMessagesText({
-      apiKey: input.claudeApiKey,
-      model: input.claudeModel,
+    const out = await runPipelineGenerationText({
+      generation: input.generation,
       maxTokens: 1800,
       temperature: 0.2,
       messages: [{ role: 'user', content: prompt }],
@@ -2306,6 +2337,7 @@ export async function runProjectPipelineJob(job: AsyncJobRow): Promise<Record<st
   const requesterUserId = normalizeText(input.requestedBy || job.requester_user_id || '');
   const uploadsRaw = Array.isArray(input.uploads) ? (input.uploads as unknown[]) : [];
   const embeddingModel = normalizeText(input.embeddingModel) || undefined;
+  const generationProvider = normalizeGenerationProvider(input.generationProvider);
   const claudeModel = normalizeText(input.claudeModel) || undefined;
 
   if (!ownerId) throw new Error('Missing ownerId');
@@ -2337,7 +2369,13 @@ export async function runProjectPipelineJob(job: AsyncJobRow): Promise<Record<st
   const openaiApiKey = normalizeText(secret.openaiApiKey) || normalizeText(process.env.OPENAI_API_KEY);
   const claudeApiKey = normalizeText(secret.claudeApiKey) || normalizeText(process.env.CLAUDE_API_KEY);
   if (!openaiApiKey) throw new Error('Missing OpenAI API key');
-  if (!claudeApiKey) throw new Error('Missing Claude API key');
+  if (generationProvider === 'claude' && !claudeApiKey) throw new Error('Missing Claude API key');
+  const generation: PipelineGenerationConfig = {
+    provider: generationProvider,
+    openaiApiKey,
+    claudeApiKey,
+    claudeModel,
+  };
 
   const runLabel = `pipeline-${new Date().toISOString().replace(/[:T]/g, '-').slice(0, 16)}-${randomUUID().slice(0, 6)}`;
   const linkedArtifacts: PipelineArtifactManifest['linkedArtifacts'] = [];
@@ -2380,7 +2418,7 @@ export async function runProjectPipelineJob(job: AsyncJobRow): Promise<Record<st
   };
 
   await ensureNotCancelled();
-  await setStage('prepare_inputs', 3, { uploadCount: uploads.length });
+  await setStage('prepare_inputs', 3, { uploadCount: uploads.length, generationProvider });
 
   const uploadTexts = await collectUploadTexts({
     uploads,
@@ -2392,8 +2430,7 @@ export async function runProjectPipelineJob(job: AsyncJobRow): Promise<Record<st
   await setStage('generate_single_diagram', 16, { sourceCount: uploadTexts.length });
 
   const diagramMarkdown = await generateSingleDiagram({
-    claudeApiKey,
-    claudeModel,
+    generation,
     uploadTexts: uploadTexts.map((x) => ({ name: x.name, text: x.text })),
     onMonitorUpdate: async (event) => {
       const preview = normalizeNewlines(event.markdown).split('\n').slice(0, 260).join('\n').slice(0, 20_000);
@@ -2483,8 +2520,7 @@ export async function runProjectPipelineJob(job: AsyncJobRow): Promise<Record<st
     const agent = agents[i]!;
     const output = await runSwarmAgent({
       agent,
-      claudeApiKey,
-      claudeModel,
+      generation,
       ownerId,
       projectFolderId,
       openaiApiKey,
@@ -2529,8 +2565,7 @@ export async function runProjectPipelineJob(job: AsyncJobRow): Promise<Record<st
   }
 
   const synthesis = await synthesizePipeline({
-    claudeApiKey,
-    claudeModel,
+    generation,
     diagramLinkIndex,
     diagramMarkdown,
     agentOutputs,
@@ -2574,8 +2609,7 @@ export async function runProjectPipelineJob(job: AsyncJobRow): Promise<Record<st
   await setStage('generate_design_system_and_components', 70, { componentGapCount: synthesis.componentGaps.length });
 
   const designSystem = await buildVisionDesignSystem({
-    claudeApiKey,
-    claudeModel,
+    generation,
     brief: synthesis.designSystemBrief,
   });
   const visionStarter = makeStarterVisionMarkdown();
@@ -2609,9 +2643,8 @@ export async function runProjectPipelineJob(job: AsyncJobRow): Promise<Record<st
   for (let i = 0; i < synthesis.componentGaps.length; i += 1) {
     await ensureNotCancelled();
     const component = synthesis.componentGaps[i]!;
-    const tsx = await generateTsxStubWithClaude({
-      claudeApiKey,
-      claudeModel,
+    const tsx = await generateTsxStubWithModel({
+      generation,
       component,
       runLabel,
     });

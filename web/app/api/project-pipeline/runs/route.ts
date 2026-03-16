@@ -19,6 +19,8 @@ type PipelineUploadInput = {
   mimeType: string;
 };
 
+type PipelineGenerationProvider = 'claude' | 'openai';
+
 function normalizeEmail(s: string) {
   return String(s || '').trim().toLowerCase();
 }
@@ -46,6 +48,10 @@ function pollUrl(request: Request, jobId: string) {
 
 function clampText(input: unknown, max: number): string {
   return String(input || '').trim().slice(0, max);
+}
+
+function normalizeGenerationProvider(input: unknown): PipelineGenerationProvider {
+  return String(input || '').trim().toLowerCase() === 'openai' ? 'openai' : 'claude';
 }
 
 function parseUploads(input: unknown): PipelineUploadInput[] {
@@ -89,6 +95,7 @@ export async function POST(request: Request) {
           uploads?: unknown;
           openaiApiKey?: unknown;
           claudeApiKey?: unknown;
+          generationProvider?: unknown;
           embeddingModel?: unknown;
         };
 
@@ -105,12 +112,13 @@ export async function POST(request: Request) {
       }
     }
 
+    const generationProvider = normalizeGenerationProvider(body?.generationProvider);
     const openaiApiKey = clampText(request.headers.get('x-openai-api-key') || body?.openaiApiKey, 500);
     const claudeApiKey = clampText(request.headers.get('x-claude-api-key') || body?.claudeApiKey, 500);
     if (!openaiApiKey && !String(process.env.OPENAI_API_KEY || '').trim()) {
       return NextResponse.json({ error: 'Missing OpenAI API key' }, { status: 400 });
     }
-    if (!claudeApiKey && !String(process.env.CLAUDE_API_KEY || '').trim()) {
+    if (generationProvider === 'claude' && !claudeApiKey && !String(process.env.CLAUDE_API_KEY || '').trim()) {
       return NextResponse.json({ error: 'Missing Claude API key' }, { status: 400 });
     }
 
@@ -143,7 +151,7 @@ export async function POST(request: Request) {
         ownerId,
         requesterUserId: user.id,
         projectFolderId,
-        dedupeKey: `project_pipeline:${ownerId}:${projectFolderId}:${uploadHash}`,
+        dedupeKey: `project_pipeline:${ownerId}:${projectFolderId}:${generationProvider}:${uploadHash}`,
         secretPayload,
         input: {
           authMode: 'cookie_user',
@@ -151,6 +159,7 @@ export async function POST(request: Request) {
           projectFolderId,
           requestedBy: user.id,
           uploads,
+          generationProvider,
           embeddingModel: clampText(body?.embeddingModel, 120) || null,
         },
       },

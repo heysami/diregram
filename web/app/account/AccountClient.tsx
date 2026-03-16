@@ -314,7 +314,8 @@ export default function AccountClient() {
                       </button>
                     </div>
                     <div className="text-[11px] opacity-70">
-                      This key is used for “Build knowledge base (RAG)” and RAG queries. It is not uploaded to Supabase by default.
+                      This key is used for “Build knowledge base (RAG)”, RAG queries, and project pipeline runs when generation is set
+                      to OpenAI. It is not uploaded to Supabase by default.
                     </div>
                   </div>
                   <div className="space-y-1 border-t border-black/10 pt-2">
@@ -355,8 +356,8 @@ export default function AccountClient() {
                       </button>
                     </div>
                     <div className="text-[11px] opacity-70">
-                      This key is used for project auto-pipeline runs. It stays in this browser unless you separately set a server
-                      `CLAUDE_API_KEY`.
+                      This key is used for project pipeline runs when generation is set to Claude. It stays in this browser unless you
+                      separately set a server `CLAUDE_API_KEY`.
                     </div>
                   </div>
                 </div>

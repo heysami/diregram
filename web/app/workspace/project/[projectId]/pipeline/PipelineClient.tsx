@@ -8,6 +8,7 @@ import { ensureOpenAiApiKeyWithPrompt } from '@/lib/openai-key-browser';
 import { ensureClaudeApiKeyWithPrompt } from '@/lib/claude-key-browser';
 import { useAsyncJobQueue } from '@/hooks/use-async-job-queue';
 
+type PipelineGenerationProvider = 'claude' | 'openai';
 type PipelineRunRow = {
   id: string;
   status: string;
@@ -55,9 +56,14 @@ const PIPELINE_STAGE_ORDER = [
   'final_rag_refresh',
   'done',
 ] as const;
+const PIPELINE_GENERATION_PROVIDER_STORAGE = 'diregram.projectPipeline.generationProvider.v1';
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function normalizeGenerationProvider(input: string): PipelineGenerationProvider {
+  return String(input || '').trim().toLowerCase() === 'openai' ? 'openai' : 'claude';
 }
 
 function safeName(name: string) {
@@ -128,6 +134,7 @@ export default function PipelineClient({ projectId }: { projectId: string }) {
   const [loadingRuns, setLoadingRuns] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [deletingRunId, setDeletingRunId] = useState<string>('');
+  const [generationProvider, setGenerationProvider] = useState<PipelineGenerationProvider>('claude');
 
   const canRun = useMemo(() => Boolean(projectId) && files.length > 0 && !busy && !!supabase && !!user, [projectId, files.length, busy, supabase, user]);
   const selectedBytes = useMemo(() => files.reduce((sum, f) => sum + Number(f.size || 0), 0), [files]);
@@ -214,9 +221,26 @@ export default function PipelineClient({ projectId }: { projectId: string }) {
   };
 
   useEffect(() => {
+    try {
+      const stored = typeof window === 'undefined' ? '' : window.localStorage.getItem(PIPELINE_GENERATION_PROVIDER_STORAGE) || '';
+      setGenerationProvider(normalizeGenerationProvider(stored));
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
     void loadRuns();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(PIPELINE_GENERATION_PROVIDER_STORAGE, generationProvider);
+    } catch {
+      // ignore
+    }
+  }, [generationProvider]);
 
   useEffect(() => {
     const hasActive = runs.some((r) => r.status === 'queued' || r.status === 'running');
@@ -270,10 +294,17 @@ export default function PipelineClient({ projectId }: { projectId: string }) {
     setError(null);
 
     try {
-      const claudeApiKey = await ensureClaudeApiKeyWithPrompt('Enter your Claude API key (saved only in this browser).');
-      const openaiApiKey = await ensureOpenAiApiKeyWithPrompt('Enter your OpenAI API key for embeddings (saved only in this browser).');
-      if (!claudeApiKey) throw new Error('Missing Claude API key.');
+      const openaiApiKey = await ensureOpenAiApiKeyWithPrompt(
+        generationProvider === 'openai'
+          ? 'Enter your OpenAI API key for pipeline generation and embeddings (saved only in this browser).'
+          : 'Enter your OpenAI API key for embeddings (saved only in this browser).',
+      );
       if (!openaiApiKey) throw new Error('Missing OpenAI API key.');
+      const claudeApiKey =
+        generationProvider === 'claude'
+          ? await ensureClaudeApiKeyWithPrompt('Enter your Claude API key for pipeline generation (saved only in this browser).')
+          : '';
+      if (generationProvider === 'claude' && !claudeApiKey) throw new Error('Missing Claude API key.');
 
       const runUploadId = crypto.randomUUID();
       const uploads: Array<{ objectPath: string; name: string; size: number; mimeType: string }> = [];
@@ -294,11 +325,12 @@ export default function PipelineClient({ projectId }: { projectId: string }) {
         headers: {
           'content-type': 'application/json',
           'x-openai-api-key': openaiApiKey,
-          'x-claude-api-key': claudeApiKey,
+          ...(claudeApiKey ? { 'x-claude-api-key': claudeApiKey } : {}),
         },
         body: JSON.stringify({
           projectFolderId: projectId,
           uploads,
+          generationProvider,
         }),
       });
       const json = (await res.json().catch(() => ({}))) as { error?: string; jobId?: string };
@@ -334,22 +366,39 @@ export default function PipelineClient({ projectId }: { projectId: string }) {
         <div className="text-xs font-semibold opacity-70">Project pipeline</div>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[420px_minmax(0,1fr)] items-start">
-        <div className="mac-window mac-double-outline p-4 space-y-3">
+	      <div className="grid gap-4 xl:grid-cols-[420px_minmax(0,1fr)] items-start">
+	        <div className="mac-window mac-double-outline p-4 space-y-3">
           <div className="flex items-start justify-between gap-3">
-            <div className="space-y-1">
-              <div className="text-sm font-bold tracking-tight">Upload files and run auto-pipeline</div>
-              <div className="text-xs opacity-80">
-                This run generates one linked diagram, swarm outputs, story grid, vision design system, TSX component stubs, epic notes, and refreshes RAG.
-              </div>
-            </div>
+	            <div className="space-y-1">
+	              <div className="text-sm font-bold tracking-tight">Upload files and run auto-pipeline</div>
+	              <div className="text-xs opacity-80">
+	                This run generates one linked diagram, swarm outputs, story grid, vision design system, TSX component stubs, epic notes, and refreshes RAG.
+	              </div>
+	            </div>
             <button type="button" className="mac-btn h-8 flex items-center gap-1.5" onClick={() => setHistoryOpen(true)}>
               <History size={14} />
               History
             </button>
+	          </div>
+          <div className="space-y-1">
+            <div className="text-xs font-semibold">Generation provider</div>
+            <select
+              className="mac-field h-8 w-full"
+              value={generationProvider}
+              onChange={(e) => setGenerationProvider(normalizeGenerationProvider(e.target.value))}
+              disabled={busy}
+            >
+              <option value="claude">Claude</option>
+              <option value="openai">OpenAI</option>
+            </select>
+            <div className="text-[11px] opacity-70">
+              {generationProvider === 'openai'
+                ? 'OpenAI will be used for pipeline generation and embeddings.'
+                : 'Claude will be used for pipeline generation. OpenAI is still used for embeddings and RAG.'}
+            </div>
           </div>
-          <input
-            type="file"
+	          <input
+	            type="file"
             multiple
             className="text-xs"
             onChange={(e) => {
