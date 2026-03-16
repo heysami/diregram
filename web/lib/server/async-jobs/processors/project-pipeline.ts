@@ -3,6 +3,7 @@ import { AI_PROMPT } from '@/lib/ai-guides/diagram-full-prompt';
 import { makeStarterDiagramMarkdown } from '@/lib/diagram-starter';
 import { makeStarterGridMarkdown } from '@/lib/grid-starter';
 import { makeStarterVisionMarkdown } from '@/lib/vision-starter';
+import type { ExpandedGridNodeRuntime } from '@/lib/expanded-grid-storage';
 import {
   POST_GEN_CHECKLIST_COMPLETENESS,
   POST_GEN_CHECKLIST_CONDITIONAL,
@@ -59,6 +60,11 @@ const MAX_DIAGRAM_FIX_TARGETS = 8;
 const MAX_DIAGRAM_FIX_ISSUES = 12;
 const MAX_DIAGRAM_FIX_CONTEXT_CHARS = 6000;
 const MAX_DIAGRAM_FIX_REPLACEMENT_CHARS = 20_000;
+const MAX_PROGRESSIVE_SOURCE_CHARS = 14_000;
+const MAX_PROGRESSIVE_TREE_CHARS = 16_000;
+const MAX_PROGRESSIVE_SCREEN_BATCH_SIZE = 3;
+const MAX_PROGRESSIVE_SCREEN_SUBTREE_CHARS = 10_000;
+const MAX_PROGRESSIVE_DATA_OBJECT_IDS = 24;
 
 const RN_RE = /<!--\s*rn:(\d+)\s*-->/;
 const PIPELINE_DIAGRAM_CONTENT_CHECKLIST = [
@@ -650,6 +656,83 @@ function ensureNodeLinkMarkers(markdown: string): string {
   return lines.join('\n').trimEnd() + '\n';
 }
 
+function stripTrailingUnclosedMetadataFence(markdown: string): string {
+  const lines = normalizeNewlines(markdown).split('\n');
+  const separator = findSeparatorIndexOutsideFences(lines);
+  if (separator === -1) return markdown;
+
+  let inFence = false;
+  let openFenceStart = -1;
+  for (let i = 0; i < lines.length; i += 1) {
+    const trimmed = String(lines[i] || '').trim();
+    if (!/^```/.test(trimmed)) continue;
+    if (!inFence) {
+      inFence = true;
+      openFenceStart = i;
+      continue;
+    }
+    inFence = false;
+    openFenceStart = -1;
+  }
+
+  if (!inFence || openFenceStart <= separator) return markdown;
+  return lines.slice(0, openFenceStart).join('\n').trimEnd();
+}
+
+function buildExpandedStatesBlock(markdown: string): string | null {
+  const expByLine = extractExpandedIdsFromMarkdown(markdown);
+  if (!expByLine.size) return null;
+
+  const roots = parseNexusMarkdown(markdown);
+  const allNodes = flattenNodes(roots);
+  const nodeById = new Map(allNodes.map((node) => [node.id, node]));
+  const nodeByLine = new Map(allNodes.map((node) => [node.lineIndex, node]));
+
+  const buildParentPath = (node: (typeof allNodes)[number]): string[] => {
+    const path: string[] = [];
+    let current = node;
+    while (current.parentId) {
+      const parent = nodeById.get(current.parentId);
+      if (!parent) break;
+      path.unshift(normalizeText(parent.content) || normalizeText(parent.rawContent) || parent.id);
+      current = parent;
+    }
+    return path;
+  };
+
+  const entries = Array.from(expByLine.entries())
+    .sort((a, b) => a[1] - b[1])
+    .map(([lineIndex, runningNumber]) => {
+      const node = nodeByLine.get(lineIndex);
+      if (!node) return null;
+      return {
+        runningNumber,
+        content: normalizeText(node.content) || normalizeText(node.rawContent) || node.id,
+        parentPath: buildParentPath(node),
+        lineIndex,
+      };
+    })
+    .filter((entry): entry is { runningNumber: number; content: string; parentPath: string[]; lineIndex: number } => entry !== null);
+
+  if (!entries.length) return null;
+  const nextRunningNumber = Math.max(0, ...entries.map((entry) => entry.runningNumber)) + 1;
+  return `\`\`\`expanded-states\n${JSON.stringify({ nextRunningNumber, entries }, null, 2)}\n\`\`\``;
+}
+
+function ensureExpandedStatesBlock(markdown: string): string {
+  if (!extractExpandedIdsFromMarkdown(markdown).size) return markdown;
+  if (/```expanded-states\n[\s\S]*?\n```/.test(markdown)) return markdown;
+
+  const block = buildExpandedStatesBlock(markdown);
+  if (!block) return markdown;
+
+  const normalized = markdown.trimEnd();
+  if (normalized.includes('\n---\n')) {
+    return `${normalized}\n\n${block}\n`;
+  }
+  return `${normalized}\n\n---\n\n${block}\n`;
+}
+
 function unwrapOuterDiagramFence(text: string): string {
   const normalized = normalizeNewlines(text).trim();
   const m = normalized.match(/^```([^\s`]*)\s*\n([\s\S]*?)\n```\s*$/);
@@ -666,7 +749,409 @@ function sanitizeDiagramMarkdown(raw: string): string {
   if (!text) return makeStarterDiagramMarkdown();
   text = unwrapOuterDiagramFence(text);
   if (!text) return makeStarterDiagramMarkdown();
+  text = stripTrailingUnclosedMetadataFence(text);
+  text = ensureExpandedStatesBlock(text);
   return ensureNodeLinkMarkers(text);
+}
+
+function escapeRegExp(value: string): string {
+  return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function getTreeMarkdown(markdown: string): string {
+  const lines = normalizeNewlines(markdown).split('\n');
+  const separator = findSeparatorIndexOutsideFences(lines);
+  return lines.slice(0, separator === -1 ? lines.length : separator).join('\n').trim();
+}
+
+function upsertFencedBlock(markdown: string, type: string, bodyText: string): string {
+  const block = `\`\`\`${type}\n${normalizeNewlines(bodyText).trim()}\n\`\`\``;
+  const re = new RegExp(String.raw`\`\`\`${escapeRegExp(type)}\n[\s\S]*?\n\`\`\``);
+  const normalized = normalizeNewlines(markdown).trimEnd();
+  if (re.test(normalized)) {
+    return normalized.replace(re, block).trimEnd() + '\n';
+  }
+  if (normalized.includes('\n---\n')) {
+    return `${normalized}\n\n${block}\n`;
+  }
+  return `${normalized}\n\n---\n\n${block}\n`;
+}
+
+function upsertFencedJsonBlock(markdown: string, type: string, payload: unknown): string {
+  return upsertFencedBlock(markdown, type, JSON.stringify(payload, null, 2));
+}
+
+function buildUploadPromptExcerpt(
+  uploadTexts: Array<{ name: string; text: string }>,
+  opts: { maxTotalChars: number; perFileChars?: number },
+): string {
+  let remaining = Math.max(0, opts.maxTotalChars);
+  const perFileChars = Math.max(500, Math.min(opts.perFileChars || opts.maxTotalChars, opts.maxTotalChars));
+  const out: string[] = [];
+  for (const item of uploadTexts) {
+    if (remaining <= 0) break;
+    const piece = clipText(item.text, Math.min(perFileChars, remaining));
+    if (!piece) continue;
+    out.push(`## ${safeFileName(item.name)}\n${piece}`);
+    remaining -= piece.length;
+  }
+  return out.join('\n\n');
+}
+
+function extractNodeTagsFromLine(line: string): string[] {
+  const m = String(line || '').match(/<!--\s*tags:([^>]*)\s*-->/);
+  if (!m?.[1]) return [];
+  return m[1]
+    .split(',')
+    .map((x) => x.trim())
+    .filter(Boolean);
+}
+
+function extractDataObjectIdFromLine(line: string): string | null {
+  const m = String(line || '').match(/<!--\s*do:([^>]+)\s*-->/);
+  const value = normalizeText(m?.[1]);
+  return value || null;
+}
+
+function buildDerivedTagStore(markdown: string): JsonRecord {
+  const defaultGroups = [
+    { id: 'tg-ungrouped', name: 'ungrouped', order: 0 },
+    { id: 'tg-actors', name: 'actors', order: 1 },
+    { id: 'tg-uiSurface', name: 'ui surface', order: 2 },
+    { id: 'tg-uiType', name: 'ui type', order: 3 },
+    { id: 'tg-systems', name: 'system', order: 4 },
+  ];
+
+  const classifyTag = (id: string) => {
+    if (id.startsWith('actor-')) return 'tg-actors';
+    if (id.startsWith('ui-surface-')) return 'tg-uiSurface';
+    if (id.startsWith('tag-ui-')) return 'tg-uiType';
+    if (id.startsWith('system-') || id.startsWith('tag-system-')) return 'tg-systems';
+    return 'tg-ungrouped';
+  };
+
+  const humanizeTag = (id: string) =>
+    id
+      .replace(/^actor-/, '')
+      .replace(/^ui-surface-/, '')
+      .replace(/^tag-ui-/, '')
+      .replace(/^tag-system-/, '')
+      .replace(/^tag-/, '')
+      .replace(/[-_]+/g, ' ')
+      .trim();
+
+  const tagIds = new Set<string>();
+  extractNodeSectionLines(markdown).forEach((line) => {
+    extractNodeTagsFromLine(line).forEach((id) => tagIds.add(id));
+  });
+
+  const tags = Array.from(tagIds)
+    .sort((a, b) => a.localeCompare(b))
+    .map((id) => ({
+      id,
+      groupId: classifyTag(id),
+      name: humanizeTag(id) || id,
+    }));
+
+  const usedGroupIds = new Set(tags.map((tag) => tag.groupId));
+  const groups = defaultGroups.filter((group) => usedGroupIds.has(group.id) || group.id === 'tg-ungrouped');
+
+  return {
+    nextGroupId: groups.length + 1,
+    nextTagId: tags.length + 1,
+    groups,
+    tags,
+  };
+}
+
+type ProgressiveDataObjectTarget = {
+  doId: string;
+  lineIndex: number;
+  label: string;
+  parentPath: string[];
+};
+
+type ProgressiveExpandedTarget = {
+  runningNumber: number;
+  lineIndex: number;
+  label: string;
+  parentPath: string[];
+  dataObjectId: string | null;
+  subtreeMarkdown: string;
+};
+
+function extractParentPathForNode(
+  node: ReturnType<typeof parseNexusMarkdown>[number],
+  nodeById: Map<string, ReturnType<typeof parseNexusMarkdown>[number]>,
+): string[] {
+  const path: string[] = [];
+  let current = node;
+  while (current.parentId) {
+    const parent = nodeById.get(current.parentId);
+    if (!parent) break;
+    path.unshift(normalizeText(parent.content) || normalizeText(parent.rawContent) || parent.id);
+    current = parent;
+  }
+  return path;
+}
+
+function getSubtreeMarkdownByLine(markdown: string, lineIndex: number): string {
+  const lines = normalizeNewlines(markdown).split('\n');
+  const range = findSubtreeRange(lines, lineIndex);
+  if (!range) return '';
+  return lines.slice(range.start, range.end + 1).join('\n').slice(0, MAX_PROGRESSIVE_SCREEN_SUBTREE_CHARS);
+}
+
+function extractProgressiveTargets(markdown: string): {
+  dataObjects: ProgressiveDataObjectTarget[];
+  expanded: ProgressiveExpandedTarget[];
+} {
+  const roots = flattenNodes(parseNexusMarkdown(markdown));
+  const nodeById = new Map(roots.map((node) => [node.id, node]));
+  const nodeByLine = new Map(roots.map((node) => [node.lineIndex, node]));
+  const expByLine = extractExpandedIdsFromMarkdown(markdown);
+  const lines = normalizeNewlines(markdown).split('\n');
+  const separator = findSeparatorIndexOutsideFences(lines);
+  const sectionEnd = separator === -1 ? lines.length : separator;
+
+  const dataObjects: ProgressiveDataObjectTarget[] = [];
+  let inFence = false;
+  for (let lineIndex = 0; lineIndex < sectionEnd; lineIndex += 1) {
+    const rawLine = String(lines[lineIndex] || '');
+    const trimmed = rawLine.trim();
+    if (!trimmed) continue;
+    if (/^```/.test(trimmed)) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;
+    const doId = extractDataObjectIdFromLine(rawLine);
+    if (!doId) continue;
+    const node = nodeByLine.get(lineIndex);
+    if (!node) continue;
+    if (dataObjects.some((item) => item.doId === doId)) continue;
+    dataObjects.push({
+      doId,
+      lineIndex,
+      label: normalizeText(node.content) || normalizeText(node.rawContent) || node.id,
+      parentPath: extractParentPathForNode(node, nodeById),
+    });
+    if (dataObjects.length >= MAX_PROGRESSIVE_DATA_OBJECT_IDS) break;
+  }
+
+  const expanded = Array.from(expByLine.entries())
+    .sort((a, b) => a[1] - b[1])
+    .map(([lineIndex, runningNumber]) => {
+      const node = nodeByLine.get(lineIndex);
+      if (!node) return null;
+      const rawLine = lines[lineIndex] || '';
+      return {
+        runningNumber,
+        lineIndex,
+        label: normalizeText(node.content) || normalizeText(node.rawContent) || node.id,
+        parentPath: extractParentPathForNode(node, nodeById),
+        dataObjectId: extractDataObjectIdFromLine(rawLine),
+        subtreeMarkdown: getSubtreeMarkdownByLine(markdown, lineIndex),
+      } satisfies ProgressiveExpandedTarget;
+    })
+    .filter((value): value is ProgressiveExpandedTarget => value !== null);
+
+  return { dataObjects, expanded };
+}
+
+function normalizeGeneratedGridNodes(input: unknown[], runningNumber: number): ExpandedGridNodeRuntime[] {
+  const out: ExpandedGridNodeRuntime[] = [];
+  input.forEach((node, index) => {
+    if (!node || typeof node !== 'object') return;
+    const rec = node as JsonRecord;
+    const key = normalizeText(rec.key) || `grid-${runningNumber}-${index + 1}`;
+    const content = normalizeText(rec.content) || `Section ${index + 1}`;
+    const gridX = Number.isFinite(Number(rec.gridX)) ? Number(rec.gridX) : 0;
+    const gridY = Number.isFinite(Number(rec.gridY)) ? Number(rec.gridY) : index * 2;
+    const gridWidth = Number.isFinite(Number(rec.gridWidth)) ? Number(rec.gridWidth) : 4;
+    const gridHeight = Number.isFinite(Number(rec.gridHeight)) ? Number(rec.gridHeight) : 2;
+    out.push({
+      ...(rec as unknown as ExpandedGridNodeRuntime),
+      key,
+      id: key,
+      content,
+      gridX,
+      gridY,
+      gridWidth,
+      gridHeight,
+    });
+  });
+  return out;
+}
+
+function upsertExpandedMetadataBlock(markdown: string, runningNumber: number, metadata: unknown): string {
+  return upsertFencedJsonBlock(markdown, `expanded-metadata-${runningNumber}`, metadata);
+}
+
+function upsertExpandedGridBlock(markdown: string, runningNumber: number, nodes: ExpandedGridNodeRuntime[]): string {
+  const persisted = nodes.map((node) => {
+    const { id, ...rest } = node;
+    void id;
+    return rest;
+  });
+  return upsertFencedJsonBlock(markdown, `expanded-grid-${runningNumber}`, persisted);
+}
+
+function summarizeCurrentDataObjects(markdown: string): string {
+  const match = normalizeNewlines(markdown).match(/```data-objects\n([\s\S]*?)\n```/);
+  if (!match?.[1]) return '(none)';
+  const obj = parseJsonObject(match[1]);
+  const rows = Array.isArray(obj?.objects) ? (obj!.objects as unknown[]) : [];
+  return rows
+    .map((item) => (item && typeof item === 'object' ? (item as JsonRecord) : null))
+    .filter((item): item is JsonRecord => item !== null)
+    .map((item) => `${normalizeText(item.id)}:${normalizeText(item.name)}`)
+    .filter(Boolean)
+    .join('\n')
+    .slice(0, 4000);
+}
+
+async function progressivelyEnrichDiagramMarkdown(input: {
+  claudeApiKey: string;
+  claudeModel?: string;
+  markdown: string;
+  uploadTexts: Array<{ name: string; text: string }>;
+  onMonitorUpdate?: (event: {
+    attempt: number;
+    mode: string;
+    markdown: string;
+    validation: ImportValidationResult;
+  }) => Promise<void> | void;
+}): Promise<string> {
+  const emit = async (mode: string, markdown: string) => {
+    if (!input.onMonitorUpdate) return;
+    await input.onMonitorUpdate({
+      attempt: 0,
+      mode,
+      markdown,
+      validation: validateNexusMarkdownImport(markdown),
+    });
+  };
+
+  let markdown = sanitizeDiagramMarkdown(input.markdown);
+  const sourceExcerpt = buildUploadPromptExcerpt(input.uploadTexts, {
+    maxTotalChars: MAX_PROGRESSIVE_SOURCE_CHARS,
+    perFileChars: 7000,
+  });
+
+  markdown = upsertFencedJsonBlock(markdown, 'tag-store', buildDerivedTagStore(markdown));
+  await emit('progressive_tag_store', markdown);
+
+  const targets = extractProgressiveTargets(markdown);
+  if (targets.dataObjects.length) {
+    const doPrompt = [
+      'Return JSON only for the body of a ```data-objects``` block.',
+      'Do not return markdown fences.',
+      'Define every referenced do-* id exactly once. Avoid creating unreferenced extra objects.',
+      'Keep the payload compact but practical for the linked flows/screens.',
+      'Prefer data.attributes with stable attr ids and optional relations.',
+      '',
+      'Referenced data object ids:',
+      JSON.stringify(targets.dataObjects, null, 2),
+      '',
+      'Current tree:',
+      clipText(getTreeMarkdown(markdown), MAX_PROGRESSIVE_TREE_CHARS),
+      '',
+      'Source excerpt:',
+      sourceExcerpt || '(none)',
+    ].join('\n');
+
+    const out = await runClaudeMessagesText({
+      apiKey: input.claudeApiKey,
+      model: input.claudeModel,
+      maxTokens: 3200,
+      temperature: 0.1,
+      system: [
+        'You are editing one existing Diregram markdown file progressively.',
+        'Generate only the data-objects block body as strict JSON.',
+        'This is a partial-file update, not a full-document rewrite.',
+      ].join('\n'),
+      messages: [{ role: 'user', content: doPrompt }],
+    });
+
+    const dataObjectsJson = parseJsonObject(out);
+    if (dataObjectsJson) {
+      markdown = upsertFencedJsonBlock(markdown, 'data-objects', dataObjectsJson);
+      await emit('progressive_data_objects', markdown);
+    }
+  }
+
+  const batches: ProgressiveExpandedTarget[][] = [];
+  for (let i = 0; i < targets.expanded.length; i += MAX_PROGRESSIVE_SCREEN_BATCH_SIZE) {
+    batches.push(targets.expanded.slice(i, i + MAX_PROGRESSIVE_SCREEN_BATCH_SIZE));
+  }
+
+  for (let i = 0; i < batches.length; i += 1) {
+    const batch = batches[i];
+    if (!batch.length) continue;
+    const batchPrompt = [
+      'Return JSON only using this schema:',
+      '{ "screens": [ { "runningNumber": 1, "metadata": { ... }, "grid": [ ... ] } ] }',
+      'Do not return markdown fences.',
+      'Only include the requested running numbers.',
+      'This is a partial-file update. You are filling expanded screen blocks only for the provided screens.',
+      'Use compact but concrete UI structure.',
+      '',
+      'Known data objects:',
+      summarizeCurrentDataObjects(markdown),
+      '',
+      'Target screens:',
+      JSON.stringify(
+        batch.map((screen) => ({
+          runningNumber: screen.runningNumber,
+          lineIndex: screen.lineIndex,
+          label: screen.label,
+          parentPath: screen.parentPath,
+          dataObjectId: screen.dataObjectId,
+          subtreeMarkdown: screen.subtreeMarkdown,
+        })),
+        null,
+        2,
+      ),
+      '',
+      'Tree excerpt:',
+      clipText(getTreeMarkdown(markdown), MAX_PROGRESSIVE_TREE_CHARS),
+      '',
+      'Source excerpt:',
+      sourceExcerpt || '(none)',
+    ].join('\n');
+
+    const out = await runClaudeMessagesText({
+      apiKey: input.claudeApiKey,
+      model: input.claudeModel,
+      maxTokens: 3200,
+      temperature: 0.1,
+      system: [
+        'You are editing one existing Diregram markdown file progressively.',
+        'Generate only expanded-metadata-N and expanded-grid-N payloads for the requested screens.',
+        'Return strict JSON matching the requested schema.',
+      ].join('\n'),
+      messages: [{ role: 'user', content: batchPrompt }],
+    });
+
+    const parsed = parseJsonObject(out);
+    const screens = Array.isArray(parsed?.screens) ? (parsed!.screens as unknown[]) : [];
+    screens.forEach((screen) => {
+      if (!screen || typeof screen !== 'object') return;
+      const rec = screen as JsonRecord;
+      const runningNumber = Number.parseInt(String(rec.runningNumber || ''), 10);
+      if (!Number.isFinite(runningNumber) || runningNumber <= 0) return;
+      const metadata = rec.metadata && typeof rec.metadata === 'object' ? (rec.metadata as JsonRecord) : {};
+      const gridRaw = Array.isArray(rec.grid) ? (rec.grid as unknown[]) : [];
+      markdown = upsertExpandedMetadataBlock(markdown, runningNumber, metadata);
+      markdown = upsertExpandedGridBlock(markdown, runningNumber, normalizeGeneratedGridNodes(gridRaw, runningNumber));
+    });
+
+    markdown = sanitizeDiagramMarkdown(markdown);
+    await emit(`progressive_expanded_batch_${i + 1}`, markdown);
+  }
+
+  return markdown;
 }
 
 function flattenNodes(roots: ReturnType<typeof parseNexusMarkdown>) {
@@ -957,6 +1442,9 @@ async function generateSingleDiagram(input: {
     'Use the repository diagram guidance and post-generation checklist below as the source of truth.',
     'Use the repository content checklist as the build contract.',
     'Treat technical validation as a later import gate, not as the definition of what content should exist.',
+    'In this first pass, output ONLY the node tree section of the file.',
+    'Do not output the --- separator or any fenced JSON metadata blocks in the first pass.',
+    'Preserve inline comments and anchors needed for later partial-file edits: tags, do links, expid, fid, sfid.',
     'Build missing structure/metadata when required; do not delete scope to satisfy technical validation.',
     '',
     PIPELINE_DIAGRAM_BUILD_CHECKLIST,
@@ -983,6 +1471,13 @@ async function generateSingleDiagram(input: {
     ],
   });
   markdown = sanitizeDiagramMarkdown(first);
+  markdown = await progressivelyEnrichDiagramMarkdown({
+    claudeApiKey: input.claudeApiKey,
+    claudeModel: input.claudeModel,
+    markdown,
+    uploadTexts: input.uploadTexts,
+    onMonitorUpdate: input.onMonitorUpdate,
+  });
   await emitMonitor({
     attempt: 0,
     mode: 'initial_generation',
@@ -990,7 +1485,9 @@ async function generateSingleDiagram(input: {
     validation: validateNexusMarkdownImport(markdown),
   });
 
+  let stagnantAttempts = 0;
   for (let attempt = 0; attempt < MAX_DIAGRAM_REPAIR_ATTEMPTS; attempt += 1) {
+    const attemptStartHash = hashMarkdown(markdown);
     let validation = validateNexusMarkdownImport(markdown);
     let integrityIssues = assessDiagramIntegrity(markdown);
     if (!validation.errors.length && !integrityIssues.length) return markdown;
@@ -1113,6 +1610,20 @@ async function generateSingleDiagram(input: {
       })
     ) {
       markdown = repairedMarkdown;
+    }
+
+    if (hashMarkdown(markdown) === attemptStartHash) {
+      stagnantAttempts += 1;
+    } else {
+      stagnantAttempts = 0;
+    }
+
+    if (stagnantAttempts >= 2) {
+      const blockingIssues = [
+        ...validation.errors.map((x) => `${x.code}: ${x.message}`),
+        ...integrityIssues,
+      ];
+      throw new Error(`Diagram repair stalled after repeated non-progress attempts: ${summarizeIssues(blockingIssues)}`);
     }
   }
 
