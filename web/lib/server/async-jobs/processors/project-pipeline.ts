@@ -114,6 +114,9 @@ const MAX_PROGRESSIVE_TREE_CHARS = 16_000;
 const MAX_PROGRESSIVE_SCREEN_BATCH_SIZE = 3;
 const MAX_PROGRESSIVE_SCREEN_SUBTREE_CHARS = 10_000;
 const MAX_PROGRESSIVE_DATA_OBJECT_IDS = 24;
+const STORAGE_DOWNLOAD_TIMEOUT_MS = 60_000;
+const STORAGE_TEXT_READ_TIMEOUT_MS = 30_000;
+const DOCLING_REQUEST_TIMEOUT_MS = 180_000;
 
 const RN_RE = /<!--\s*rn:(\d+)\s*-->/;
 const PIPELINE_DIAGRAM_CONTENT_CHECKLIST = [
@@ -243,6 +246,18 @@ function clipText(input: unknown, maxChars: number): string {
   const t = normalizeText(input);
   if (t.length <= maxChars) return t;
   return t.slice(0, maxChars);
+}
+
+async function withTimeout<T>(label: string, ms: number, work: () => Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const timeoutPromise = new Promise<T>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${Math.max(1, Math.floor(ms / 1000))}s`)), ms);
+  });
+  try {
+    return await Promise.race([work(), timeoutPromise]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 function parseJsonObject(text: string): JsonRecord | null {
@@ -1416,21 +1431,37 @@ async function convertViaDocling(input: {
   objectPath: string;
   originalFilename: string;
   admin: ReturnType<typeof getAdminSupabaseClient>;
+  onProgress?: (action: string) => Promise<void> | void;
 }): Promise<string> {
   const base = String(process.env.DOCLING_SERVICE_URL || 'http://127.0.0.1:8686').replace(/\/+$/, '');
   const url = `${base}/convert`;
   const jobId = randomUUID();
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      userId: input.userId,
-      bucketId: 'docling-files',
-      objectPath: input.objectPath,
-      originalFilename: input.originalFilename,
-      jobId,
-      outputFormat: 'markdown',
-    }),
+  await input.onProgress?.('convert_docling');
+  const res = await withTimeout(`Docling convert for ${input.originalFilename}`, DOCLING_REQUEST_TIMEOUT_MS, async () => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), DOCLING_REQUEST_TIMEOUT_MS);
+    try {
+      return await fetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          userId: input.userId,
+          bucketId: 'docling-files',
+          objectPath: input.objectPath,
+          originalFilename: input.originalFilename,
+          jobId,
+          outputFormat: 'markdown',
+        }),
+        signal: controller.signal,
+      });
+    } catch (error) {
+      if (controller.signal.aborted) {
+        throw new Error(`Docling convert for ${input.originalFilename} timed out after ${Math.max(1, Math.floor(DOCLING_REQUEST_TIMEOUT_MS / 1000))}s`);
+      }
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
   });
   const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   if (!res.ok) {
@@ -1439,9 +1470,14 @@ async function convertViaDocling(input: {
   const outputObjectPath = normalizeText(json.outputObjectPath);
   if (!outputObjectPath) throw new Error('Docling returned no output path');
 
-  const { data: blob, error } = await input.admin.storage.from('docling-files').download(outputObjectPath);
+  await input.onProgress?.('download_converted');
+  const { data: blob, error } = await withTimeout(
+    `Download converted output for ${input.originalFilename}`,
+    STORAGE_DOWNLOAD_TIMEOUT_MS,
+    () => input.admin.storage.from('docling-files').download(outputObjectPath),
+  );
   if (error) throw new Error(error.message);
-  const markdown = await blob.text();
+  const markdown = await withTimeout(`Read converted output for ${input.originalFilename}`, STORAGE_TEXT_READ_TIMEOUT_MS, () => blob.text());
 
   try {
     await input.admin.storage.from('docling-files').remove([outputObjectPath]);
@@ -1455,17 +1491,27 @@ async function collectUploadTexts(input: {
   uploads: PipelineUploadInput[];
   requesterUserId: string;
   admin: ReturnType<typeof getAdminSupabaseClient>;
+  onProgress?: (event: { index: number; total: number; name: string; action: string; sourceKind?: UploadExtractionSourceKind }) => Promise<void> | void;
 }): Promise<CollectedUploadText[]> {
   const out: CollectedUploadText[] = [];
+  const uploads = input.uploads.slice(0, MAX_UPLOADS);
+  const total = uploads.length;
 
-  for (const upload of input.uploads.slice(0, MAX_UPLOADS)) {
-    const { data: blob, error } = await input.admin.storage.from('docling-files').download(upload.objectPath);
+  for (let index = 0; index < uploads.length; index += 1) {
+    const upload = uploads[index]!;
+    await input.onProgress?.({ index: index + 1, total, name: upload.name, action: 'download_input' });
+    const { data: blob, error } = await withTimeout(
+      `Download upload ${upload.name}`,
+      STORAGE_DOWNLOAD_TIMEOUT_MS,
+      () => input.admin.storage.from('docling-files').download(upload.objectPath),
+    );
     if (error) throw new Error(error.message);
 
     let text = '';
     let sourceKind: UploadExtractionSourceKind = 'docling';
     if (isLikelyTextFile(upload.name, upload.mimeType)) {
-      text = clipText(await blob.text(), MAX_UPLOAD_TEXT);
+      await input.onProgress?.({ index: index + 1, total, name: upload.name, action: 'read_text', sourceKind: 'text' });
+      text = clipText(await withTimeout(`Read upload ${upload.name}`, STORAGE_TEXT_READ_TIMEOUT_MS, () => blob.text()), MAX_UPLOAD_TEXT);
       sourceKind = 'text';
     } else {
       text = await convertViaDocling({
@@ -1473,10 +1519,14 @@ async function collectUploadTexts(input: {
         objectPath: upload.objectPath,
         originalFilename: upload.name,
         admin: input.admin,
+        onProgress: async (action) => {
+          await input.onProgress?.({ index: index + 1, total, name: upload.name, action, sourceKind: 'docling' });
+        },
       });
       sourceKind = 'docling';
     }
 
+    await input.onProgress?.({ index: index + 1, total, name: upload.name, action: 'analyze', sourceKind });
     const clippedText = clipText(text, MAX_UPLOAD_TEXT);
 
     out.push({
@@ -1494,6 +1544,8 @@ async function collectUploadTexts(input: {
         size: upload.size,
       }),
     });
+
+    await input.onProgress?.({ index: index + 1, total, name: upload.name, action: 'done', sourceKind });
   }
 
   return out;
@@ -2542,6 +2594,12 @@ export async function runProjectPipelineJob(job: AsyncJobRow): Promise<Record<st
     }
   };
 
+  const prepareInputsProgressPct = (index: number, total: number, phase: number) => {
+    const safeTotal = Math.max(1, total);
+    const safePhase = Math.max(0, Math.min(0.99, phase));
+    return 3 + Math.floor((((Math.max(1, index) - 1) + safePhase) / safeTotal) * 7);
+  };
+
   await ensureNotCancelled();
   await setStage('prepare_inputs', 3, { uploadCount: uploads.length, generationProvider });
 
@@ -2549,6 +2607,38 @@ export async function runProjectPipelineJob(job: AsyncJobRow): Promise<Record<st
     uploads,
     requesterUserId,
     admin,
+    onProgress: async (event) => {
+      const phaseMap: Record<string, number> = {
+        download_input: 0.08,
+        read_text: 0.28,
+        convert_docling: 0.45,
+        download_converted: 0.72,
+        analyze: 0.88,
+        done: 0.98,
+      };
+      const phase = phaseMap[event.action] ?? 0.1;
+      await setStage(
+        'prepare_inputs',
+        prepareInputsProgressPct(event.index, event.total, phase),
+        {
+          sourceProgress: {
+            updatedAt: nowIso(),
+            index: event.index,
+            total: event.total,
+            name: safeFileName(event.name),
+            action: event.action,
+            sourceKind: event.sourceKind || '',
+          },
+        },
+        {
+          kind: 'source_progress',
+          fileIndex: event.index,
+          fileTotal: event.total,
+          fileName: safeFileName(event.name),
+          action: event.action,
+        },
+      );
+    },
   });
 
   const usableUploadTexts = uploadTexts.filter((item) => !item.analysis.lowSignal);

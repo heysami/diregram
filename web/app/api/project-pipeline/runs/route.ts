@@ -241,6 +241,8 @@ export async function GET(request: Request) {
       const sourceMonitorState =
         state.sourceMonitor && typeof state.sourceMonitor === 'object' ? (state.sourceMonitor as Record<string, unknown>) : {};
       const sourceRows = Array.isArray(sourceMonitorState.sources) ? sourceMonitorState.sources : [];
+      const sourceProgressState =
+        state.sourceProgress && typeof state.sourceProgress === 'object' ? (state.sourceProgress as Record<string, unknown>) : {};
       const sourceMonitor = {
         updatedAt: clampText(sourceMonitorState.updatedAt, 80) || '',
         usableCount: Number(sourceMonitorState.usableCount || 0),
@@ -272,6 +274,14 @@ export async function GET(request: Request) {
         singleDiagramFileId: String(result.singleDiagramFileId || ''),
         primaryDiagramFileId: String(result.primaryDiagramFileId || ''),
         timeline,
+        sourceProgress: {
+          updatedAt: clampText(sourceProgressState.updatedAt, 80) || '',
+          index: Number(sourceProgressState.index || 0),
+          total: Number(sourceProgressState.total || 0),
+          name: clampText(sourceProgressState.name, 180) || '',
+          action: clampText(sourceProgressState.action, 80) || '',
+          sourceKind: clampText(sourceProgressState.sourceKind, 40) || '',
+        },
         sourceMonitor,
         diagramMonitor: {
           attempt: Number(monitor.attempt || 0),

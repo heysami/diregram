@@ -31,6 +31,14 @@ type PipelineRunRow = {
     errorCount: number;
     warningCount: number;
   }>;
+  sourceProgress: {
+    updatedAt: string;
+    index: number;
+    total: number;
+    name: string;
+    action: string;
+    sourceKind: string;
+  };
   sourceMonitor: {
     updatedAt: string;
     usableCount: number;
@@ -141,6 +149,10 @@ function canDeleteRun(status: string): boolean {
   return status === 'failed' || status === 'cancelled';
 }
 
+function canCancelRun(status: string): boolean {
+  return status === 'queued' || status === 'running';
+}
+
 export default function PipelineClient({ projectId }: { projectId: string }) {
   const router = useRouter();
   const { supabase, user, ready } = useAuth();
@@ -152,6 +164,7 @@ export default function PipelineClient({ projectId }: { projectId: string }) {
   const [loadingRuns, setLoadingRuns] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [deletingRunId, setDeletingRunId] = useState<string>('');
+  const [cancelingRunId, setCancelingRunId] = useState<string>('');
   const [generationProvider, setGenerationProvider] = useState<PipelineGenerationProvider>('claude');
 
   const canRun = useMemo(() => Boolean(projectId) && files.length > 0 && !busy && !!supabase && !!user, [projectId, files.length, busy, supabase, user]);
@@ -198,6 +211,24 @@ export default function PipelineClient({ projectId }: { projectId: string }) {
                 }))
                 .slice(-160)
             : [],
+          sourceProgress:
+            r.sourceProgress && typeof r.sourceProgress === 'object'
+              ? {
+                  updatedAt: String((r.sourceProgress as Record<string, unknown>).updatedAt || ''),
+                  index: Number((r.sourceProgress as Record<string, unknown>).index || 0),
+                  total: Number((r.sourceProgress as Record<string, unknown>).total || 0),
+                  name: String((r.sourceProgress as Record<string, unknown>).name || ''),
+                  action: String((r.sourceProgress as Record<string, unknown>).action || ''),
+                  sourceKind: String((r.sourceProgress as Record<string, unknown>).sourceKind || ''),
+                }
+              : {
+                  updatedAt: '',
+                  index: 0,
+                  total: 0,
+                  name: '',
+                  action: '',
+                  sourceKind: '',
+                },
           sourceMonitor:
             r.sourceMonitor && typeof r.sourceMonitor === 'object'
               ? {
@@ -330,6 +361,22 @@ export default function PipelineClient({ projectId }: { projectId: string }) {
       setError(e instanceof Error ? e.message : 'Failed to delete run');
     } finally {
       setDeletingRunId('');
+    }
+  };
+
+  const cancelRun = async (run: PipelineRunRow) => {
+    if (!canCancelRun(run.status) || cancelingRunId) return;
+    setCancelingRunId(run.id);
+    setError(null);
+    try {
+      const res = await fetch(`/api/async-jobs/${encodeURIComponent(run.id)}/cancel`, { method: 'POST' });
+      const json = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) throw new Error(String(json.error || `Failed (${res.status})`));
+      await loadRuns();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to cancel run');
+    } finally {
+      setCancelingRunId('');
     }
   };
 
@@ -510,7 +557,19 @@ export default function PipelineClient({ projectId }: { projectId: string }) {
 
         {currentRun ? (
         <div className="mac-window mac-double-outline p-4 space-y-3">
-          <div className="text-sm font-bold tracking-tight">Live monitor</div>
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-sm font-bold tracking-tight">Live monitor</div>
+            {canCancelRun(currentRun.status) ? (
+              <button
+                type="button"
+                className="mac-btn h-8"
+                onClick={() => void cancelRun(currentRun)}
+                disabled={cancelingRunId === currentRun.id}
+              >
+                {cancelingRunId === currentRun.id ? 'Canceling…' : 'Cancel run'}
+              </button>
+            ) : null}
+          </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-xs">
             <div className="mac-double-outline p-2">
               <div className="opacity-70">Run ID</div>
@@ -550,6 +609,22 @@ export default function PipelineClient({ projectId }: { projectId: string }) {
               return formatDurationMs(endMs - startMs);
             })()}
           </div>
+
+          {currentRun.step === 'prepare_inputs' && currentRun.sourceProgress.name ? (
+            <div className="mac-double-outline p-2 text-xs">
+              <div className="font-semibold">Preparing current file</div>
+              <div className="mt-1">
+                {Math.max(0, Math.floor(currentRun.sourceProgress.index || 0))}/{Math.max(0, Math.floor(currentRun.sourceProgress.total || 0))} ·{' '}
+                {currentRun.sourceProgress.name}
+              </div>
+              <div className="opacity-70">
+                {currentRun.sourceProgress.action || 'working'}
+                {currentRun.sourceProgress.sourceKind ? ` · ${currentRun.sourceProgress.sourceKind}` : ''}
+                {' · '}
+                updated {formatDateTime(currentRun.sourceProgress.updatedAt || currentRun.updatedAt)}
+              </div>
+            </div>
+          ) : null}
 
           <div className="space-y-2">
             <div className="text-xs font-semibold">Source extraction</div>
