@@ -468,7 +468,7 @@ function applyTargetedPatches(markdown: string, targets: MarkdownFixTarget[], pa
   const ordered = Array.from(uniqueByTarget.values()).sort((a, b) => b.target.startLine - a.target.startLine);
   const next = [...lines];
   ordered.forEach(({ patch, target }) => {
-    const replacementText = stripFenceOnlyLines(normalizeNewlines(patch.replacementMarkdown)).trimEnd();
+    const replacementText = unwrapOuterDiagramFence(normalizeNewlines(patch.replacementMarkdown)).trimEnd();
     const replacementLines = replacementText.length ? replacementText.split('\n') : [];
     const startIdx = Math.max(0, target.startLine - 1);
     const endIdx = Math.max(startIdx - 1, target.endLine - 1);
@@ -501,6 +501,80 @@ function estimateNodeLineCount(markdown: string): number {
   return count;
 }
 
+function extractNodeSectionLines(markdown: string): string[] {
+  const lines = normalizeNewlines(markdown).split('\n');
+  const separator = findSeparatorIndexOutsideFences(lines);
+  const sectionEnd = separator === -1 ? lines.length : separator;
+  let inFence = false;
+  const out: string[] = [];
+
+  for (let i = 0; i < sectionEnd; i += 1) {
+    const line = String(lines[i] || '');
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    if (/^```/.test(trimmed)) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence || trimmed === '---' || /^\/\//.test(trimmed)) continue;
+    out.push(line);
+  }
+
+  return out;
+}
+
+function stripNodeSyntax(line: string): string {
+  return String(line || '')
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/\s+#(?:flow|flowtab|systemflow)#/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function isJsonishNodeLine(line: string): boolean {
+  const core = stripNodeSyntax(line);
+  if (!core) return false;
+  if (/^[\[{]/.test(core)) return true;
+  if (/^[\]}]/.test(core)) return true;
+  if (/^"[^"]+"\s*:/.test(core)) return true;
+  if (/^[\]}][,]?$/.test(core)) return true;
+  return false;
+}
+
+function assessDiagramIntegrity(markdown: string): string[] {
+  const nodeLines = extractNodeSectionLines(markdown);
+  if (!nodeLines.length) {
+    return ['No human-readable node tree exists before the metadata separator.'];
+  }
+
+  const jsonishCount = nodeLines.filter(isJsonishNodeLine).length;
+  const humanReadableCount = nodeLines.filter((line) => {
+    const core = stripNodeSyntax(line);
+    if (!core || isJsonishNodeLine(line)) return false;
+    const letters = (core.match(/[A-Za-z]/g) || []).length;
+    return letters >= 3;
+  }).length;
+  const humanRootCount = nodeLines.filter((line) => {
+    if (/^\s/.test(line)) return false;
+    const core = stripNodeSyntax(line);
+    if (!core || isJsonishNodeLine(line)) return false;
+    const letters = (core.match(/[A-Za-z]/g) || []).length;
+    return letters >= 3;
+  }).length;
+
+  const issues: string[] = [];
+  if (humanReadableCount === 0) {
+    issues.push('No human-readable node lines were detected in the tree section.');
+  }
+  if (humanRootCount === 0) {
+    issues.push('No human-readable top-level root nodes were detected.');
+  }
+  if (nodeLines.length >= 3 && jsonishCount / nodeLines.length >= 0.5) {
+    issues.push('The tree section is dominated by JSON-like lines, which indicates metadata was promoted into the node tree.');
+  }
+  return issues;
+}
+
 function isExcessiveNodeRemoval(currentCount: number, candidateCount: number): boolean {
   const removed = currentCount - candidateCount;
   if (removed <= 0) return false;
@@ -517,8 +591,13 @@ function shouldAcceptCandidateValidation(input: {
   const currentNodeCount = estimateNodeLineCount(input.currentMarkdown);
   const candidateNodeCount = estimateNodeLineCount(input.candidateMarkdown);
   const excessiveRemoval = isExcessiveNodeRemoval(currentNodeCount, candidateNodeCount);
+  const candidateIntegrityIssues = assessDiagramIntegrity(input.candidateMarkdown);
 
   if (excessiveRemoval) {
+    return false;
+  }
+
+  if (candidateIntegrityIssues.length) {
     return false;
   }
 
@@ -571,90 +650,23 @@ function ensureNodeLinkMarkers(markdown: string): string {
   return lines.join('\n').trimEnd() + '\n';
 }
 
-type FencedMarkdownBlock = {
-  lang: string;
-  body: string;
-  closed: boolean;
-};
-
-function scanFencedMarkdownBlocks(text: string): FencedMarkdownBlock[] {
-  const lines = String(text || '').replace(/\r\n?/g, '\n').split('\n');
-  const out: FencedMarkdownBlock[] = [];
-  let openLang = '';
-  let body: string[] | null = null;
-
-  for (const line of lines) {
-    const fence = line.match(/^\s*```([^\s`]*)\s*$/);
-    if (!fence) {
-      if (body) body.push(line);
-      continue;
-    }
-
-    if (!body) {
-      openLang = normalizeText(fence[1]).toLowerCase();
-      body = [];
-      continue;
-    }
-
-    out.push({
-      lang: openLang,
-      body: body.join('\n').trim(),
-      closed: true,
-    });
-    openLang = '';
-    body = null;
+function unwrapOuterDiagramFence(text: string): string {
+  const normalized = normalizeNewlines(text).trim();
+  const m = normalized.match(/^```([^\s`]*)\s*\n([\s\S]*?)\n```\s*$/);
+  if (!m) return normalized;
+  const lang = normalizeText(m[1]).toLowerCase();
+  if (lang && lang !== 'diregram' && !lang.includes('diregram') && lang !== 'markdown' && lang !== 'md') {
+    return normalized;
   }
-
-  if (body) {
-    out.push({
-      lang: openLang,
-      body: body.join('\n').trim(),
-      closed: false,
-    });
-  }
-
-  return out;
-}
-
-function preferredFencedBody(text: string): string {
-  const blocks = scanFencedMarkdownBlocks(text).filter((b) => Boolean(normalizeText(b.body)));
-  if (!blocks.length) return '';
-  const score = (lang: string) => {
-    if (lang === 'diregram') return 0;
-    if (lang.includes('diregram')) return 1;
-    if (lang === 'markdown' || lang === 'md') return 2;
-    if (!lang) return 3;
-    return 4;
-  };
-  const sorted = [...blocks].sort((a, b) => {
-    const sa = score(a.lang);
-    const sb = score(b.lang);
-    if (sa !== sb) return sa - sb;
-    if (a.closed !== b.closed) return a.closed ? -1 : 1;
-    return b.body.length - a.body.length;
-  });
-  return normalizeText(sorted[0]?.body);
-}
-
-function stripFenceOnlyLines(text: string): string {
-  return String(text || '')
-    .replace(/\r\n?/g, '\n')
-    .split('\n')
-    .filter((line) => !/^\s*```[^\n]*$/.test(line))
-    .join('\n')
-    .trim();
+  return String(m[2] || '').trim();
 }
 
 function sanitizeDiagramMarkdown(raw: string): string {
-  let text = String(raw || '').replace(/\r\n?/g, '\n').trim();
+  let text = normalizeNewlines(raw).trim();
   if (!text) return makeStarterDiagramMarkdown();
-  const fencedBody = preferredFencedBody(text);
-  if (fencedBody) {
-    text = fencedBody;
-  }
-  const unfenced = stripFenceOnlyLines(text);
-  if (!unfenced) return makeStarterDiagramMarkdown();
-  return ensureNodeLinkMarkers(unfenced);
+  text = unwrapOuterDiagramFence(text);
+  if (!text) return makeStarterDiagramMarkdown();
+  return ensureNodeLinkMarkers(text);
 }
 
 function flattenNodes(roots: ReturnType<typeof parseNexusMarkdown>) {
@@ -980,7 +992,8 @@ async function generateSingleDiagram(input: {
 
   for (let attempt = 0; attempt < MAX_DIAGRAM_REPAIR_ATTEMPTS; attempt += 1) {
     let validation = validateNexusMarkdownImport(markdown);
-    if (!validation.errors.length) return markdown;
+    let integrityIssues = assessDiagramIntegrity(markdown);
+    if (!validation.errors.length && !integrityIssues.length) return markdown;
     await emitMonitor({
       attempt: attempt + 1,
       mode: 'attempt_start',
@@ -991,6 +1004,7 @@ async function generateSingleDiagram(input: {
     const localRepair = sanitizeDiagramMarkdown(markdown);
     if (localRepair !== markdown) {
       const localValidation = validateNexusMarkdownImport(localRepair);
+      const localIntegrityIssues = assessDiagramIntegrity(localRepair);
       markdown = localRepair;
       await emitMonitor({
         attempt: attempt + 1,
@@ -998,8 +1012,9 @@ async function generateSingleDiagram(input: {
         markdown,
         validation: localValidation,
       });
-      if (!localValidation.errors.length) return markdown;
+      if (!localValidation.errors.length && !localIntegrityIssues.length) return markdown;
       validation = localValidation;
+      integrityIssues = localIntegrityIssues;
     }
 
     const targeted = await repairDiagramWithTargetedPatches({
@@ -1010,13 +1025,14 @@ async function generateSingleDiagram(input: {
     });
     if (targeted && targeted !== markdown) {
       const targetedValidation = validateNexusMarkdownImport(targeted);
+      const targetedIntegrityIssues = assessDiagramIntegrity(targeted);
       await emitMonitor({
         attempt: attempt + 1,
         mode: 'targeted_patch',
         markdown: targeted,
         validation: targetedValidation,
       });
-      if (!targetedValidation.errors.length) return targeted;
+      if (!targetedValidation.errors.length && !targetedIntegrityIssues.length) return targeted;
       if (
         shouldAcceptCandidateValidation({
           current: validation,
@@ -1031,6 +1047,7 @@ async function generateSingleDiagram(input: {
     }
 
     const errorSummary = summarizeIssues(validation.errors.map((x) => `${x.code}: ${x.message}`));
+    const integritySummary = summarizeIssues(integrityIssues);
     const detailedHints = validation.errors
       .slice(0, MAX_DIAGRAM_FIX_ISSUES)
       .map((issue, idx) => `${idx + 1}. ${issue.code}: ${normalizeText(issue.message)}\n   Fix hint: ${fixInstructionForValidationIssue(issue)}`)
@@ -1059,6 +1076,9 @@ async function generateSingleDiagram(input: {
             'Fix these validator issues:',
             errorSummary,
             '',
+            integrityIssues.length ? 'Fix these diagram integrity issues:' : '',
+            integrityIssues.length ? integritySummary : '',
+            integrityIssues.length ? '' : '',
             'Validator report:',
             validation.aiFriendlyReport,
             '',
@@ -1076,13 +1096,14 @@ async function generateSingleDiagram(input: {
     });
     const repairedMarkdown = sanitizeDiagramMarkdown(repaired);
     const repairedValidation = validateNexusMarkdownImport(repairedMarkdown);
+    const repairedIntegrityIssues = assessDiagramIntegrity(repairedMarkdown);
     await emitMonitor({
       attempt: attempt + 1,
       mode: 'full_repair',
       markdown: repairedMarkdown,
       validation: repairedValidation,
     });
-    if (!repairedValidation.errors.length) return repairedMarkdown;
+    if (!repairedValidation.errors.length && !repairedIntegrityIssues.length) return repairedMarkdown;
     if (
       shouldAcceptCandidateValidation({
         current: validation,
@@ -1096,10 +1117,14 @@ async function generateSingleDiagram(input: {
   }
 
   const finalValidation = validateNexusMarkdownImport(markdown);
+  const finalIntegrityIssues = assessDiagramIntegrity(markdown);
   if (finalValidation.errors.length) {
     throw new Error(
       `Diagram validation failed after repairs: ${summarizeIssues(finalValidation.errors.map((x) => `${x.code}: ${x.message}`))}`,
     );
+  }
+  if (finalIntegrityIssues.length) {
+    throw new Error(`Diagram integrity failed after repairs: ${summarizeIssues(finalIntegrityIssues)}`);
   }
   return markdown;
 }
