@@ -1,8 +1,20 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { AI_PROMPT } from '@/lib/ai-guides/diagram-full-prompt';
 import { makeStarterDiagramMarkdown } from '@/lib/diagram-starter';
 import { makeStarterGridMarkdown } from '@/lib/grid-starter';
 import { makeStarterVisionMarkdown } from '@/lib/vision-starter';
-import { PIPELINE_DIAGRAM_REPAIR_POLICY } from '@/lib/ai-guides/pipeline-diagram-repair-policy';
+import {
+  POST_GEN_CHECKLIST_COMPLETENESS,
+  POST_GEN_CHECKLIST_CONDITIONAL,
+  POST_GEN_CHECKLIST_DATA_OBJECTS,
+  POST_GEN_CHECKLIST_EXPANDED_NODES,
+  POST_GEN_CHECKLIST_IA,
+  POST_GEN_CHECKLIST_PROCESS_FLOWS,
+  POST_GEN_CHECKLIST_SINGLE_SCREEN_STEPS,
+  POST_GEN_CHECKLIST_SWIMLANE,
+  POST_GEN_CHECKLIST_SYSTEM_FLOW,
+  POST_GEN_CHECKLIST_TAGS,
+} from '@/lib/ai-checklists/post-generation-index';
 import { loadGridDoc, saveGridDoc, type GridDoc, type GridSheetV1 } from '@/lib/gridjson';
 import { upsertHeader } from '@/lib/nexus-doc-header';
 import { parseNexusMarkdown } from '@/lib/nexus-parser';
@@ -48,9 +60,43 @@ const MAX_DIAGRAM_FIX_ISSUES = 12;
 const MAX_DIAGRAM_FIX_CONTEXT_CHARS = 6000;
 const MAX_DIAGRAM_FIX_REPLACEMENT_CHARS = 20_000;
 
-const FLOW_MARKER_RE = /#flow#|#flowtab#|#systemflow#/;
 const RN_RE = /<!--\s*rn:(\d+)\s*-->/;
-const EXPID_RE = /<!--\s*expid:(\d+)\s*-->/;
+const PIPELINE_DIAGRAM_CONTENT_CHECKLIST = [
+  'Run the repository content verification sequence below in order. This is the build checklist for diagram quality and completeness, not the validator:',
+  '',
+  '1. Data Relationship',
+  POST_GEN_CHECKLIST_DATA_OBJECTS,
+  '',
+  '2. IA + Expanded Nodes',
+  POST_GEN_CHECKLIST_IA,
+  '',
+  POST_GEN_CHECKLIST_EXPANDED_NODES,
+  '',
+  '3. Swimlane',
+  POST_GEN_CHECKLIST_SWIMLANE,
+  '',
+  '4. Tech Flow',
+  POST_GEN_CHECKLIST_SYSTEM_FLOW,
+  '',
+  '5. Tags + Process Flow + Conditional',
+  POST_GEN_CHECKLIST_TAGS,
+  '',
+  POST_GEN_CHECKLIST_PROCESS_FLOWS,
+  '',
+  POST_GEN_CHECKLIST_SINGLE_SCREEN_STEPS,
+  '',
+  POST_GEN_CHECKLIST_CONDITIONAL,
+  '',
+  '6. Completeness Gate',
+  POST_GEN_CHECKLIST_COMPLETENESS,
+].join('\n');
+const PIPELINE_DIAGRAM_BUILD_CHECKLIST = [
+  'Use the repository diagram generation guidance below as the build contract.',
+  AI_PROMPT,
+  'Use the repository content checklist below as the source of truth for scope, correctness, and completeness. Build missing detail instead of deleting scope.',
+  PIPELINE_DIAGRAM_CONTENT_CHECKLIST,
+  'Treat validator issues as a separate technical import gate. If validator issues appear, repair structure/linkage/metadata while preserving and extending the content required by the build checklist.',
+].join('\n\n');
 
 type PipelineUploadInput = {
   objectPath: string;
@@ -472,18 +518,16 @@ function shouldAcceptCandidateValidation(input: {
   const candidateNodeCount = estimateNodeLineCount(input.candidateMarkdown);
   const excessiveRemoval = isExcessiveNodeRemoval(currentNodeCount, candidateNodeCount);
 
-  if (excessiveRemoval && input.candidate.errors.length > 0) {
+  if (excessiveRemoval) {
     return false;
   }
 
   if (input.candidate.errors.length < input.current.errors.length) {
-    if (excessiveRemoval && input.candidate.errors.length !== 0) return false;
     return true;
   }
   if (input.candidate.errors.length > input.current.errors.length) return false;
 
   if (input.candidate.warnings.length < input.current.warnings.length) {
-    if (excessiveRemoval) return false;
     return true;
   }
   if (input.candidate.warnings.length > input.current.warnings.length) return false;
@@ -498,14 +542,9 @@ function ensureNodeLinkMarkers(markdown: string): string {
   const nodeSectionEnd = separator === -1 ? lines.length : separator;
 
   const existingRn = extractRunningNumbersFromMarkdown(lines.join('\n'));
-  const existingExp = extractExpandedIdsFromMarkdown(lines.join('\n'));
   let nextRn = 1;
-  let nextExp = 1;
   existingRn.forEach((v) => {
     if (v >= nextRn) nextRn = v + 1;
-  });
-  existingExp.forEach((v) => {
-    if (v >= nextExp) nextExp = v + 1;
   });
 
   let inFence = false;
@@ -520,16 +559,10 @@ function ensureNodeLinkMarkers(markdown: string): string {
 
     let nextLine = line.trimEnd();
     const hasRn = RN_RE.test(nextLine);
-    const hasExp = EXPID_RE.test(nextLine);
 
     if (!hasRn) {
       nextLine = `${nextLine} <!-- rn:${nextRn} -->`;
       nextRn += 1;
-    }
-
-    if (!hasExp && FLOW_MARKER_RE.test(nextLine)) {
-      nextLine = `${nextLine} <!-- expid:${nextExp} -->`;
-      nextExp += 1;
     }
 
     lines[i] = nextLine;
@@ -834,16 +867,18 @@ async function repairDiagramWithTargetedPatches(input: {
     '}',
     '',
     'Rules:',
-    '- Follow this repair policy strictly:',
-    PIPELINE_DIAGRAM_REPAIR_POLICY,
-    '',
     '- Only patch targetIds listed below.',
     '- Do not add or leave triple-backtick fence lines unless explicitly required for a metadata block.',
     '- Preserve unaffected sections.',
     '- Keep Diregram node indentation valid (2 spaces per level).',
+    '- Use the repository content checklist to build missing scope and detail.',
+    '- Treat validator issues as technical repair signals only. Do not remove scope to silence errors.',
     '',
     `Current markdown hash: ${hashMarkdown(input.markdown)}`,
-    'Validator report:',
+    'Repository content checklist context:',
+    PIPELINE_DIAGRAM_CONTENT_CHECKLIST,
+    '',
+    'Technical validator report:',
     input.validation.aiFriendlyReport,
     '',
     'Issues with fix hints:',
@@ -862,6 +897,8 @@ async function repairDiagramWithTargetedPatches(input: {
       'You are a Diregram markdown repair assistant.',
       'Output JSON only, exactly matching the requested schema.',
       'Do not return markdown fences.',
+      'Use the repository content checklist to preserve and build the diagram scope.',
+      'Treat validator feedback as a technical repair gate, not as the definition of scope.',
       'Do not shrink scope to pass validation; preserve generated node coverage and prefer additive fixes.',
     ].join('\n'),
     messages: [{ role: 'user', content: prompt }],
@@ -905,10 +942,12 @@ async function generateSingleDiagram(input: {
   const system = [
     'You generate ONE Diregram diagram markdown file.',
     'Output only markdown (no prose, no code fences).',
-    'Use 2-space indentation for hierarchy.',
-    'Include one coherent comprehensive diagram so all downstream artifacts can link to it.',
-    'Use #flow# where process nodes are needed.',
-    'Do not output per-epic separate diagrams.',
+    'Use the repository diagram guidance and post-generation checklist below as the source of truth.',
+    'Use the repository content checklist as the build contract.',
+    'Treat technical validation as a later import gate, not as the definition of what content should exist.',
+    'Build missing structure/metadata when required; do not delete scope to satisfy technical validation.',
+    '',
+    PIPELINE_DIAGRAM_BUILD_CHECKLIST,
   ].join('\n');
 
   let markdown = makeStarterDiagramMarkdown();
@@ -924,6 +963,7 @@ async function generateSingleDiagram(input: {
         content: [
           'Create one comprehensive diagram from these uploaded sources.',
           'Ensure line-level linking anchors are possible.',
+          'Keep the node tree readable and structurally complete.',
           '',
           sourceText || '(no upload text found)',
         ].join('\n'),
@@ -1002,6 +1042,8 @@ async function generateSingleDiagram(input: {
       temperature: 0.1,
       system: [
         'Repair the provided Diregram diagram markdown so it is import-valid.',
+        'Use the repository content checklist as the source of truth for content and completeness.',
+        'Treat validator feedback as a technical repair gate only.',
         'Do not remove major content unless required to fix parser/validator errors.',
         'Never "shrink to pass" by deleting generated nodes/branches; prefer additive completion and relinking.',
         'Use validator line hints and keep unaffected content unchanged.',
@@ -1023,8 +1065,8 @@ async function generateSingleDiagram(input: {
             'Issue-specific repair hints:',
             detailedHints,
             '',
-            'Repair policy:',
-            PIPELINE_DIAGRAM_REPAIR_POLICY,
+            'Repository content checklist context:',
+            PIPELINE_DIAGRAM_CONTENT_CHECKLIST,
             '',
             'Markdown to repair:',
             markdown,

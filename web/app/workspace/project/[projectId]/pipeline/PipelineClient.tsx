@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, Loader2, Upload } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
@@ -119,6 +119,8 @@ export default function PipelineClient({ projectId }: { projectId: string }) {
   const [runs, setRuns] = useState<PipelineRunRow[]>([]);
   const [loadingRuns, setLoadingRuns] = useState(false);
   const [selectedRunId, setSelectedRunId] = useState<string>('');
+  const [monitorHighlight, setMonitorHighlight] = useState(false);
+  const monitorRef = useRef<HTMLDivElement | null>(null);
 
   const canRun = useMemo(() => Boolean(projectId) && files.length > 0 && !busy && !!supabase && !!user, [projectId, files.length, busy, supabase, user]);
   const selectedBytes = useMemo(() => files.reduce((sum, f) => sum + Number(f.size || 0), 0), [files]);
@@ -230,6 +232,15 @@ export default function PipelineClient({ projectId }: { projectId: string }) {
 
   const removeFile = (index: number) => {
     setFiles((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const openMonitorForRun = (runId: string) => {
+    setSelectedRunId(runId);
+    setMonitorHighlight(true);
+    window.setTimeout(() => setMonitorHighlight(false), 1200);
+    window.setTimeout(() => {
+      monitorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 30);
   };
 
   const uploadAndRun = async () => {
@@ -384,7 +395,7 @@ export default function PipelineClient({ projectId }: { projectId: string }) {
               <div
                 key={run.id}
                 className={`mac-double-outline p-3 text-xs space-y-1 cursor-pointer ${isSelected ? 'ring-2 ring-black/30' : ''}`}
-                onClick={() => setSelectedRunId(run.id)}
+                onClick={() => openMonitorForRun(run.id)}
               >
                 <div className="flex items-center justify-between gap-3">
                   <div className="font-semibold">{run.id}</div>
@@ -393,7 +404,7 @@ export default function PipelineClient({ projectId }: { projectId: string }) {
                 <div className="opacity-70">{run.step || 'queued'} ({Math.max(0, Math.min(100, Math.floor(run.progressPct || 0)))}%)</div>
                 {run.error ? <div>Error: {run.error}</div> : null}
                 <div className="flex items-center gap-2">
-                  <button type="button" className="mac-btn h-7" onClick={() => setSelectedRunId(run.id)}>
+                  <button type="button" className="mac-btn h-7" onClick={() => openMonitorForRun(run.id)}>
                     Monitor
                   </button>
                   {diagramId ? (
@@ -414,7 +425,7 @@ export default function PipelineClient({ projectId }: { projectId: string }) {
       </div>
 
       {selectedRun ? (
-        <div className="mac-window mac-double-outline p-4 space-y-3 max-w-[980px]">
+        <div ref={monitorRef} className={`mac-window mac-double-outline p-4 space-y-3 max-w-[980px] ${monitorHighlight ? 'ring-2 ring-black/40' : ''}`}>
           <div className="text-sm font-bold tracking-tight">Live monitor</div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-xs">
             <div className="mac-double-outline p-2">
