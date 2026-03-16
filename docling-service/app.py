@@ -39,6 +39,38 @@ def _env_mb_limit(name: str, default_mb: int) -> int:
     return max(1, mb) * 1024 * 1024
 
 
+def _build_docling_converter(suffix: str):
+    # Import Docling lazily so the server can start with low memory.
+    from docling.datamodel.base_models import InputFormat
+    from docling.datamodel.pipeline_options import PdfPipelineOptions
+    from docling.document_converter import DocumentConverter, PdfFormatOption
+
+    if suffix.lower() != ".pdf":
+        return DocumentConverter()
+
+    pipeline_options = PdfPipelineOptions()
+    pipeline_options.do_ocr = False
+    pipeline_options.do_picture_classification = False
+    pipeline_options.do_picture_description = False
+    pipeline_options.generate_page_images = False
+    pipeline_options.generate_picture_images = False
+
+    if hasattr(pipeline_options, "generate_table_images"):
+        pipeline_options.generate_table_images = False
+    if hasattr(pipeline_options, "generate_parsed_pages"):
+        pipeline_options.generate_parsed_pages = False
+    if hasattr(pipeline_options, "force_backend_text"):
+        pipeline_options.force_backend_text = True
+
+    return DocumentConverter(
+        format_options={
+            InputFormat.PDF: PdfFormatOption(
+                pipeline_options=pipeline_options,
+            )
+        }
+    )
+
+
 class ConvertRequest(BaseModel):
     userId: str = Field(..., min_length=1)
     bucketId: str = Field(default="docling-files", min_length=1)
@@ -114,10 +146,7 @@ def convert(req: ConvertRequest):
             in_path = Path(td) / f"input{suffix}"
             in_path.write_bytes(input_bytes)
 
-            # Import Docling lazily so the server can start with low memory.
-            from docling.document_converter import DocumentConverter
-
-            converter = DocumentConverter()
+            converter = _build_docling_converter(suffix)
             result = converter.convert(str(in_path))
 
             if req.outputFormat == "markdown":

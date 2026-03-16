@@ -238,6 +238,33 @@ export async function GET(request: Request) {
       const monitor = state.diagramMonitor && typeof state.diagramMonitor === 'object' ? (state.diagramMonitor as Record<string, unknown>) : {};
       const monitorErrors = Array.isArray(monitor.errors) ? monitor.errors.map((x) => clampText(x, 260)).filter(Boolean).slice(0, 10) : [];
       const monitorWarnings = Array.isArray(monitor.warnings) ? monitor.warnings.map((x) => clampText(x, 260)).filter(Boolean).slice(0, 10) : [];
+      const sourceMonitorState =
+        state.sourceMonitor && typeof state.sourceMonitor === 'object' ? (state.sourceMonitor as Record<string, unknown>) : {};
+      const sourceRows = Array.isArray(sourceMonitorState.sources) ? sourceMonitorState.sources : [];
+      const sourceMonitor = {
+        updatedAt: clampText(sourceMonitorState.updatedAt, 80) || '',
+        usableCount: Number(sourceMonitorState.usableCount || 0),
+        blockedCount: Number(sourceMonitorState.blockedCount || 0),
+        sources: sourceRows
+          .map((item) => (item && typeof item === 'object' ? (item as Record<string, unknown>) : null))
+          .filter((item): item is Record<string, unknown> => item !== null)
+          .map((item) => ({
+            name: clampText(item.name, 180) || 'document',
+            sourceKind: clampText(item.sourceKind, 40) || 'text',
+            mimeType: clampText(item.mimeType, 120) || '',
+            size: Number(item.size || 0),
+            charCount: Number(item.charCount || 0),
+            lineCount: Number(item.lineCount || 0),
+            wordCount: Number(item.wordCount || 0),
+            alphaRatio: Number(item.alphaRatio || 0),
+            lowSignal: Boolean(item.lowSignal),
+            warnings: Array.isArray(item.warnings)
+              ? (item.warnings as unknown[]).map((x) => clampText(x, 220)).filter(Boolean).slice(0, 6)
+              : [],
+            previewText: clampText(item.previewText, 1800),
+          }))
+          .slice(0, 12),
+      };
 
       return {
         ...summary,
@@ -245,6 +272,7 @@ export async function GET(request: Request) {
         singleDiagramFileId: String(result.singleDiagramFileId || ''),
         primaryDiagramFileId: String(result.primaryDiagramFileId || ''),
         timeline,
+        sourceMonitor,
         diagramMonitor: {
           attempt: Number(monitor.attempt || 0),
           mode: clampText(monitor.mode, 80) || '',

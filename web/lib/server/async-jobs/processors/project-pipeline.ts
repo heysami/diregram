@@ -160,6 +160,28 @@ type PipelineUploadInput = {
   mimeType: string;
 };
 
+type UploadExtractionSourceKind = 'text' | 'docling';
+
+type UploadExtractionAnalysis = {
+  charCount: number;
+  lineCount: number;
+  wordCount: number;
+  alphaRatio: number;
+  preview: string;
+  warnings: string[];
+  lowSignal: boolean;
+};
+
+type CollectedUploadText = {
+  name: string;
+  objectPath: string;
+  text: string;
+  sourceKind: UploadExtractionSourceKind;
+  mimeType: string;
+  size: number;
+  analysis: UploadExtractionAnalysis;
+};
+
 type AgentOutputRecord = {
   agent: SwarmAgentName;
   recommendations: Array<{
@@ -227,6 +249,62 @@ function safeFileName(name: string) {
     .replace(/[^\w.\- ()\[\]]+/g, '_')
     .replace(/\s+/g, ' ')
     .slice(0, 160);
+}
+
+function analyzeExtractedText(input: {
+  name: string;
+  text: string;
+  sourceKind: UploadExtractionSourceKind;
+  mimeType: string;
+  size: number;
+}): UploadExtractionAnalysis {
+  const normalized = normalizeNewlines(input.text);
+  const collapsed = normalized.replace(/\s+/g, ' ').trim();
+  const lines = normalized.split('\n');
+  const lineCount = lines.filter((line) => line.trim()).length;
+  const charCount = collapsed.length;
+  const wordCount = (collapsed.match(/[A-Za-z0-9][A-Za-z0-9/_-]*/g) || []).length;
+  const alphaCount = (collapsed.match(/[A-Za-z]/g) || []).length;
+  const alphaRatio = charCount > 0 ? alphaCount / charCount : 0;
+  const replacementCharCount = (collapsed.match(/\uFFFD/g) || []).length;
+  const preview = lines.slice(0, 40).join('\n').slice(0, 1800);
+  const warnings: string[] = [];
+
+  if (!collapsed) {
+    warnings.push('No extractable text returned.');
+  }
+
+  if (input.sourceKind === 'docling') {
+    if (input.size > 8 * 1024 && (charCount < 180 || wordCount < 35)) {
+      warnings.push('Very little readable text was extracted for the uploaded file size.');
+    }
+    if (charCount >= 220 && alphaRatio < 0.28) {
+      warnings.push('Extracted text has unusually low readable-prose density.');
+    }
+    if (replacementCharCount >= 5) {
+      warnings.push('Extracted text contains replacement characters, suggesting OCR or encoding issues.');
+    }
+    if (charCount >= 1 && charCount < 600) {
+      warnings.push('Converted output is short; verify the extracted text before trusting generation.');
+    }
+  }
+
+  const lowSignal =
+    input.sourceKind === 'docling' &&
+    (!collapsed ||
+      (input.size > 8 * 1024 && (charCount < 180 || wordCount < 35)) ||
+      (charCount >= 220 && alphaRatio < 0.28) ||
+      replacementCharCount >= 12);
+
+  return {
+    charCount,
+    lineCount,
+    wordCount,
+    alphaRatio,
+    preview,
+    warnings,
+    lowSignal,
+  };
 }
 
 function summarizeIssues(messages: string[], maxItems = 14): string {
@@ -1345,16 +1423,18 @@ async function collectUploadTexts(input: {
   uploads: PipelineUploadInput[];
   requesterUserId: string;
   admin: ReturnType<typeof getAdminSupabaseClient>;
-}): Promise<Array<{ name: string; objectPath: string; text: string }>> {
-  const out: Array<{ name: string; objectPath: string; text: string }> = [];
+}): Promise<CollectedUploadText[]> {
+  const out: CollectedUploadText[] = [];
 
   for (const upload of input.uploads.slice(0, MAX_UPLOADS)) {
     const { data: blob, error } = await input.admin.storage.from('docling-files').download(upload.objectPath);
     if (error) throw new Error(error.message);
 
     let text = '';
+    let sourceKind: UploadExtractionSourceKind = 'docling';
     if (isLikelyTextFile(upload.name, upload.mimeType)) {
       text = clipText(await blob.text(), MAX_UPLOAD_TEXT);
+      sourceKind = 'text';
     } else {
       text = await convertViaDocling({
         userId: input.requesterUserId,
@@ -1362,12 +1442,25 @@ async function collectUploadTexts(input: {
         originalFilename: upload.name,
         admin: input.admin,
       });
+      sourceKind = 'docling';
     }
+
+    const clippedText = clipText(text, MAX_UPLOAD_TEXT);
 
     out.push({
       name: safeFileName(upload.name),
       objectPath: upload.objectPath,
-      text: clipText(text, MAX_UPLOAD_TEXT),
+      text: clippedText,
+      sourceKind,
+      mimeType: upload.mimeType,
+      size: upload.size,
+      analysis: analyzeExtractedText({
+        name: upload.name,
+        text: clippedText,
+        sourceKind,
+        mimeType: upload.mimeType,
+        size: upload.size,
+      }),
     });
   }
 
@@ -2426,12 +2519,64 @@ export async function runProjectPipelineJob(job: AsyncJobRow): Promise<Record<st
     admin,
   });
 
+  const usableUploadTexts = uploadTexts.filter((item) => !item.analysis.lowSignal);
+  const blockedUploadTexts = uploadTexts.filter((item) => item.analysis.lowSignal);
+
   await ensureNotCancelled();
-  await setStage('generate_single_diagram', 16, { sourceCount: uploadTexts.length });
+  await setStage(
+    'prepare_inputs',
+    10,
+    {
+      sourceMonitor: {
+        updatedAt: nowIso(),
+        usableCount: usableUploadTexts.length,
+        blockedCount: blockedUploadTexts.length,
+        sources: uploadTexts.slice(0, 12).map((item) => ({
+          name: item.name,
+          sourceKind: item.sourceKind,
+          mimeType: item.mimeType,
+          size: item.size,
+          charCount: item.analysis.charCount,
+          lineCount: item.analysis.lineCount,
+          wordCount: item.analysis.wordCount,
+          alphaRatio: item.analysis.alphaRatio,
+          lowSignal: item.analysis.lowSignal,
+          warnings: item.analysis.warnings.slice(0, 4),
+          previewText: item.analysis.preview,
+        })),
+      },
+    },
+    {
+      kind: 'source_extraction',
+      usableCount: usableUploadTexts.length,
+      blockedCount: blockedUploadTexts.length,
+    },
+  );
+
+  if (!usableUploadTexts.length) {
+    const detail = uploadTexts
+      .map((item) => {
+        const reasons = item.analysis.warnings.length ? item.analysis.warnings.join(' ') : 'Converted text quality was too weak.';
+        return `${item.name}: ${reasons}`;
+      })
+      .join(' | ');
+    throw new Error(
+      `Unable to extract reliable text from the uploaded files. ${detail} Convert DOC/PDF files to DOCX or text-based PDF, or upload markdown/text instead.`,
+    );
+  }
+
+  await ensureNotCancelled();
+  await setStage('generate_single_diagram', 16, {
+    sourceCount: usableUploadTexts.length,
+    ignoredSourceCount: blockedUploadTexts.length,
+  });
 
   const diagramMarkdown = await generateSingleDiagram({
     generation,
-    uploadTexts: uploadTexts.map((x) => ({ name: x.name, text: x.text })),
+    uploadTexts: usableUploadTexts.map((x) => ({
+      name: x.sourceKind === 'docling' ? `${x.name} (converted)` : x.name,
+      text: x.text,
+    })),
     onMonitorUpdate: async (event) => {
       const preview = normalizeNewlines(event.markdown).split('\n').slice(0, 260).join('\n').slice(0, 20_000);
       const errors = event.validation.errors

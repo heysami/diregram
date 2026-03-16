@@ -8,6 +8,13 @@ Internal document conversion service used by the Diregram web app.
 - Runs Docling conversion
 - Uploads the result back to the same bucket under `docling/<userId>/out/...`
 
+PDF conversion runs in a conservative text-only mode:
+- OCR is disabled
+- picture extraction/classification/description is disabled
+- embedded text is preferred when available
+
+This prevents image-heavy PDFs from producing misleading extracted content. Image-only scanned PDFs may return little or no usable text.
+
 ## Environment
 
 Set these env vars (server-only):

@@ -31,6 +31,24 @@ type PipelineRunRow = {
     errorCount: number;
     warningCount: number;
   }>;
+  sourceMonitor: {
+    updatedAt: string;
+    usableCount: number;
+    blockedCount: number;
+    sources: Array<{
+      name: string;
+      sourceKind: string;
+      mimeType: string;
+      size: number;
+      charCount: number;
+      lineCount: number;
+      wordCount: number;
+      alphaRatio: number;
+      lowSignal: boolean;
+      warnings: string[];
+      previewText: string;
+    }>;
+  };
   diagramMonitor: {
     attempt: number;
     mode: string;
@@ -180,6 +198,40 @@ export default function PipelineClient({ projectId }: { projectId: string }) {
                 }))
                 .slice(-160)
             : [],
+          sourceMonitor:
+            r.sourceMonitor && typeof r.sourceMonitor === 'object'
+              ? {
+                  updatedAt: String((r.sourceMonitor as Record<string, unknown>).updatedAt || ''),
+                  usableCount: Number((r.sourceMonitor as Record<string, unknown>).usableCount || 0),
+                  blockedCount: Number((r.sourceMonitor as Record<string, unknown>).blockedCount || 0),
+                  sources: Array.isArray((r.sourceMonitor as Record<string, unknown>).sources)
+                    ? ((r.sourceMonitor as Record<string, unknown>).sources as unknown[])
+                        .map((item) => (item && typeof item === 'object' ? (item as Record<string, unknown>) : null))
+                        .filter((item): item is Record<string, unknown> => item !== null)
+                        .map((item) => ({
+                          name: String(item.name || 'document'),
+                          sourceKind: String(item.sourceKind || 'text'),
+                          mimeType: String(item.mimeType || ''),
+                          size: Number(item.size || 0),
+                          charCount: Number(item.charCount || 0),
+                          lineCount: Number(item.lineCount || 0),
+                          wordCount: Number(item.wordCount || 0),
+                          alphaRatio: Number(item.alphaRatio || 0),
+                          lowSignal: Boolean(item.lowSignal),
+                          warnings: Array.isArray(item.warnings)
+                            ? item.warnings.map((x) => String(x || '')).filter(Boolean).slice(0, 6)
+                            : [],
+                          previewText: String(item.previewText || ''),
+                        }))
+                        .slice(0, 12)
+                    : [],
+                }
+              : {
+                  updatedAt: '',
+                  usableCount: 0,
+                  blockedCount: 0,
+                  sources: [],
+                },
           diagramMonitor:
             r.diagramMonitor && typeof r.diagramMonitor === 'object'
               ? {
@@ -497,6 +549,50 @@ export default function PipelineClient({ projectId }: { projectId: string }) {
               if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs < startMs) return '-';
               return formatDurationMs(endMs - startMs);
             })()}
+          </div>
+
+          <div className="space-y-2">
+            <div className="text-xs font-semibold">Source extraction</div>
+            <div className="text-xs opacity-70">
+              usable {Math.max(0, Math.floor(currentRun.sourceMonitor.usableCount || 0))} · blocked{' '}
+              {Math.max(0, Math.floor(currentRun.sourceMonitor.blockedCount || 0))} · updated{' '}
+              {formatDateTime(currentRun.sourceMonitor.updatedAt || currentRun.updatedAt)}
+            </div>
+            {currentRun.sourceMonitor.sources.length > 0 ? (
+              <div className="max-h-64 overflow-auto space-y-2">
+                {currentRun.sourceMonitor.sources.map((source, idx) => (
+                  <div key={`${source.name}-${idx}`} className="mac-double-outline p-2 text-xs space-y-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="font-semibold truncate">{source.name}</div>
+                        <div className="opacity-70">
+                          {source.sourceKind} · {source.mimeType || 'unknown mime'} · {formatBytes(source.size)}
+                        </div>
+                      </div>
+                      <div className={`mac-double-outline px-2 py-1 ${source.lowSignal ? 'bg-red-100 border-red-700' : 'bg-black/5'}`}>
+                        {source.lowSignal ? 'low signal' : 'usable'}
+                      </div>
+                    </div>
+                    <div className="opacity-70">
+                      {Math.max(0, Math.floor(source.wordCount || 0))} words · {Math.max(0, Math.floor(source.lineCount || 0))} lines ·{' '}
+                      {Math.max(0, Math.floor(source.charCount || 0))} chars
+                    </div>
+                    {source.warnings.length > 0 ? (
+                      <div className="space-y-1">
+                        {source.warnings.map((msg, warningIdx) => (
+                          <div key={`${source.name}-warn-${warningIdx}`}>- {msg}</div>
+                        ))}
+                      </div>
+                    ) : null}
+                    <pre className="mac-double-outline p-2 text-[11px] leading-relaxed overflow-auto max-h-36 whitespace-pre-wrap">
+                      {source.previewText || 'No extracted text preview.'}
+                    </pre>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-xs opacity-70">No extracted source snapshot yet.</div>
+            )}
           </div>
 
           <div className="space-y-2">
