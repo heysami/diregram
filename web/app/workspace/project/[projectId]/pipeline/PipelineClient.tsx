@@ -1,8 +1,8 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, Loader2, Upload } from 'lucide-react';
+import { ArrowLeft, History, Loader2, Trash2, Upload, X } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 import { ensureOpenAiApiKeyWithPrompt } from '@/lib/openai-key-browser';
 import { ensureClaudeApiKeyWithPrompt } from '@/lib/claude-key-browser';
@@ -109,6 +109,14 @@ function formatDurationMs(ms: number): string {
   return `${s}s`;
 }
 
+function isRunActive(status: string): boolean {
+  return status === 'queued' || status === 'running';
+}
+
+function canDeleteRun(status: string): boolean {
+  return status === 'failed' || status === 'cancelled';
+}
+
 export default function PipelineClient({ projectId }: { projectId: string }) {
   const router = useRouter();
   const { supabase, user, ready } = useAuth();
@@ -118,20 +126,13 @@ export default function PipelineClient({ projectId }: { projectId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [runs, setRuns] = useState<PipelineRunRow[]>([]);
   const [loadingRuns, setLoadingRuns] = useState(false);
-  const [selectedRunId, setSelectedRunId] = useState<string>('');
-  const [monitorHighlight, setMonitorHighlight] = useState(false);
-  const monitorRef = useRef<HTMLDivElement | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [deletingRunId, setDeletingRunId] = useState<string>('');
 
   const canRun = useMemo(() => Boolean(projectId) && files.length > 0 && !busy && !!supabase && !!user, [projectId, files.length, busy, supabase, user]);
   const selectedBytes = useMemo(() => files.reduce((sum, f) => sum + Number(f.size || 0), 0), [files]);
-  const selectedRun = useMemo(() => {
-    if (!runs.length) return null;
-    if (selectedRunId) {
-      const found = runs.find((r) => r.id === selectedRunId);
-      if (found) return found;
-    }
-    return runs[0] || null;
-  }, [runs, selectedRunId]);
+  const currentRun = useMemo(() => runs.find((run) => isRunActive(run.status)) || runs[0] || null, [runs]);
+  const historyRuns = useMemo(() => (currentRun ? runs.filter((run) => run.id !== currentRun.id) : runs), [runs, currentRun]);
 
   const loadRuns = async () => {
     if (!projectId) return;
@@ -205,9 +206,6 @@ export default function PipelineClient({ projectId }: { projectId: string }) {
         }))
         .filter((r) => Boolean(r.id));
       setRuns(parsed);
-      if (parsed.length && !parsed.some((r) => r.id === selectedRunId)) {
-        setSelectedRunId(parsed[0]!.id);
-      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load runs');
     } finally {
@@ -234,13 +232,29 @@ export default function PipelineClient({ projectId }: { projectId: string }) {
     setFiles((prev) => prev.filter((_, i) => i !== index));
   };
 
-  const openMonitorForRun = (runId: string) => {
-    setSelectedRunId(runId);
-    setMonitorHighlight(true);
-    window.setTimeout(() => setMonitorHighlight(false), 1200);
-    window.setTimeout(() => {
-      monitorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }, 30);
+  const deleteRun = async (run: PipelineRunRow) => {
+    if (!canDeleteRun(run.status) || deletingRunId) return;
+    const confirmed = window.confirm(`Delete run ${run.id}? This only removes the failed/cancelled run record from history.`);
+    if (!confirmed) return;
+    setDeletingRunId(run.id);
+    setError(null);
+    try {
+      const res = await fetch('/api/project-pipeline/runs', {
+        method: 'DELETE',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          projectFolderId: projectId,
+          jobId: run.id,
+        }),
+      });
+      const json = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) throw new Error(String(json.error || `Failed (${res.status})`));
+      await loadRuns();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to delete run');
+    } finally {
+      setDeletingRunId('');
+    }
   };
 
   const uploadAndRun = async () => {
@@ -320,148 +334,117 @@ export default function PipelineClient({ projectId }: { projectId: string }) {
         <div className="text-xs font-semibold opacity-70">Project pipeline</div>
       </div>
 
-      <div className="mac-window mac-double-outline p-4 space-y-3 max-w-[980px]">
-        <div className="text-sm font-bold tracking-tight">Upload files and run auto-pipeline</div>
-        <div className="text-xs opacity-80">
-          This run generates one linked diagram, swarm outputs, story grid, vision design system, TSX component stubs, epic notes, and refreshes RAG.
-        </div>
-        <input
-          type="file"
-          multiple
-          className="text-xs"
-          onChange={(e) => {
-            const next = Array.from(e.target.files || []);
-            if (!next.length) return;
-            setFiles((prev) => {
-              const key = (f: File) => `${f.name}|${f.size}|${f.lastModified}`;
-              const seen = new Set(prev.map(key));
-              const merged = [...prev];
-              for (const file of next) {
-                const k = key(file);
-                if (seen.has(k)) continue;
-                seen.add(k);
-                merged.push(file);
-              }
-              return merged;
-            });
-            setError(null);
-            e.currentTarget.value = '';
-          }}
-          disabled={busy}
-        />
-        {files.length > 0 ? (
-          <div className="space-y-2">
-            <div className="text-xs opacity-80">
-              {files.length} file(s) selected · {formatBytes(selectedBytes)}
-            </div>
-            <div className="max-h-48 overflow-auto mac-double-outline p-2 space-y-1">
-              {files.map((file, index) => (
-                <div key={`${file.name}-${file.size}-${file.lastModified}-${index}`} className="flex items-center justify-between gap-2 text-xs">
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate">{file.name}</div>
-                    <div className="opacity-60">{formatBytes(file.size)}</div>
-                  </div>
-                  <button type="button" className="mac-btn h-7" onClick={() => removeFile(index)} disabled={busy}>
-                    Remove
-                  </button>
-                </div>
-              ))}
-            </div>
-            <div>
-              <button type="button" className="mac-btn h-7" onClick={() => setFiles([])} disabled={busy}>
-                Clear all
-              </button>
-            </div>
-          </div>
-        ) : null}
-        {error ? <div className="text-xs mac-double-outline p-2">Error: {error}</div> : null}
-        <div>
-          <button type="button" className="mac-btn mac-btn--primary h-8 flex items-center gap-1.5" disabled={!canRun} onClick={uploadAndRun}>
-            {busy ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
-            {busy ? 'Running…' : 'Upload and run pipeline'}
-          </button>
-        </div>
-      </div>
-
-      <div className="mac-window mac-double-outline p-4 space-y-3 max-w-[980px]">
-        <div className="text-sm font-bold tracking-tight">Run history</div>
-        {loadingRuns ? <div className="text-xs opacity-70">Loading…</div> : null}
-        {!loadingRuns && runs.length === 0 ? <div className="text-xs opacity-70">No runs yet.</div> : null}
-        <div className="space-y-2">
-          {runs.map((run) => {
-            const diagramId = run.primaryDiagramFileId || run.singleDiagramFileId;
-            const isSelected = selectedRun?.id === run.id;
-            return (
-              <div
-                key={run.id}
-                className={`mac-double-outline p-3 text-xs space-y-1 cursor-pointer ${isSelected ? 'ring-2 ring-black/30' : ''}`}
-                onClick={() => openMonitorForRun(run.id)}
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <div className="font-semibold">{run.id}</div>
-                  <div className="opacity-70">{run.status}</div>
-                </div>
-                <div className="opacity-70">{run.step || 'queued'} ({Math.max(0, Math.min(100, Math.floor(run.progressPct || 0)))}%)</div>
-                {run.error ? <div>Error: {run.error}</div> : null}
-                <div className="flex items-center gap-2">
-                  <button type="button" className="mac-btn h-7" onClick={() => openMonitorForRun(run.id)}>
-                    Monitor
-                  </button>
-                  {diagramId ? (
-                    <button
-                      type="button"
-                      className="mac-btn h-7"
-                      onClick={() => router.push(`/editor?file=${encodeURIComponent(diagramId)}`)}
-                    >
-                      Open primary diagram
-                    </button>
-                  ) : null}
-                  <div className="opacity-60">{new Date(run.createdAt).toLocaleString()}</div>
-                </div>
+      <div className="grid gap-4 xl:grid-cols-[420px_minmax(0,1fr)] items-start">
+        <div className="mac-window mac-double-outline p-4 space-y-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="space-y-1">
+              <div className="text-sm font-bold tracking-tight">Upload files and run auto-pipeline</div>
+              <div className="text-xs opacity-80">
+                This run generates one linked diagram, swarm outputs, story grid, vision design system, TSX component stubs, epic notes, and refreshes RAG.
               </div>
-            );
-          })}
+            </div>
+            <button type="button" className="mac-btn h-8 flex items-center gap-1.5" onClick={() => setHistoryOpen(true)}>
+              <History size={14} />
+              History
+            </button>
+          </div>
+          <input
+            type="file"
+            multiple
+            className="text-xs"
+            onChange={(e) => {
+              const next = Array.from(e.target.files || []);
+              if (!next.length) return;
+              setFiles((prev) => {
+                const key = (f: File) => `${f.name}|${f.size}|${f.lastModified}`;
+                const seen = new Set(prev.map(key));
+                const merged = [...prev];
+                for (const file of next) {
+                  const k = key(file);
+                  if (seen.has(k)) continue;
+                  seen.add(k);
+                  merged.push(file);
+                }
+                return merged;
+              });
+              setError(null);
+              e.currentTarget.value = '';
+            }}
+            disabled={busy}
+          />
+          {files.length > 0 ? (
+            <div className="space-y-2">
+              <div className="text-xs opacity-80">
+                {files.length} file(s) selected · {formatBytes(selectedBytes)}
+              </div>
+              <div className="max-h-48 overflow-auto mac-double-outline p-2 space-y-1">
+                {files.map((file, index) => (
+                  <div key={`${file.name}-${file.size}-${file.lastModified}-${index}`} className="flex items-center justify-between gap-2 text-xs">
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate">{file.name}</div>
+                      <div className="opacity-60">{formatBytes(file.size)}</div>
+                    </div>
+                    <button type="button" className="mac-btn h-7" onClick={() => removeFile(index)} disabled={busy}>
+                      Remove
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <div>
+                <button type="button" className="mac-btn h-7" onClick={() => setFiles([])} disabled={busy}>
+                  Clear all
+                </button>
+              </div>
+            </div>
+          ) : null}
+          {error ? <div className="text-xs mac-double-outline p-2">Error: {error}</div> : null}
+          <div className="flex items-center gap-2">
+            <button type="button" className="mac-btn mac-btn--primary h-8 flex items-center gap-1.5" disabled={!canRun} onClick={uploadAndRun}>
+              {busy ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
+              {busy ? 'Running…' : 'Upload and run pipeline'}
+            </button>
+            {loadingRuns ? <div className="text-xs opacity-60">Refreshing runs…</div> : null}
+          </div>
         </div>
-      </div>
 
-      {selectedRun ? (
-        <div ref={monitorRef} className={`mac-window mac-double-outline p-4 space-y-3 max-w-[980px] ${monitorHighlight ? 'ring-2 ring-black/40' : ''}`}>
+        {currentRun ? (
+        <div className="mac-window mac-double-outline p-4 space-y-3">
           <div className="text-sm font-bold tracking-tight">Live monitor</div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-xs">
             <div className="mac-double-outline p-2">
               <div className="opacity-70">Run ID</div>
-              <div className="font-semibold break-all">{selectedRun.id}</div>
+              <div className="font-semibold break-all">{currentRun.id}</div>
             </div>
             <div className="mac-double-outline p-2">
               <div className="opacity-70">Status</div>
-              <div className="font-semibold">{selectedRun.status}</div>
+              <div className="font-semibold">{currentRun.status}</div>
             </div>
             <div className="mac-double-outline p-2">
               <div className="opacity-70">Current step</div>
-              <div className="font-semibold">{selectedRun.step || '-'}</div>
+              <div className="font-semibold">{currentRun.step || '-'}</div>
             </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-xs">
             <div className="mac-double-outline p-2">
               <div className="opacity-70">Created</div>
-              <div>{formatDateTime(selectedRun.createdAt)}</div>
+              <div>{formatDateTime(currentRun.createdAt)}</div>
             </div>
             <div className="mac-double-outline p-2">
               <div className="opacity-70">Started</div>
-              <div>{formatDateTime(selectedRun.startedAt)}</div>
+              <div>{formatDateTime(currentRun.startedAt)}</div>
             </div>
             <div className="mac-double-outline p-2">
               <div className="opacity-70">Finished</div>
-              <div>{formatDateTime(selectedRun.finishedAt)}</div>
+              <div>{formatDateTime(currentRun.finishedAt)}</div>
             </div>
           </div>
 
           <div className="text-xs opacity-80">
             Duration:{' '}
             {(() => {
-              const startMs = Date.parse(String(selectedRun.startedAt || selectedRun.createdAt || ''));
-              const endMs = selectedRun.finishedAt ? Date.parse(selectedRun.finishedAt) : Date.now();
+              const startMs = Date.parse(String(currentRun.startedAt || currentRun.createdAt || ''));
+              const endMs = currentRun.finishedAt ? Date.parse(currentRun.finishedAt) : Date.now();
               if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs < startMs) return '-';
               return formatDurationMs(endMs - startMs);
             })()}
@@ -471,10 +454,10 @@ export default function PipelineClient({ projectId }: { projectId: string }) {
             <div className="text-xs font-semibold">Stage timeline</div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
               {PIPELINE_STAGE_ORDER.map((stage, idx) => {
-                const currentIndex = stageIndex(selectedRun.step);
-                const done = selectedRun.status === 'succeeded' ? true : currentIndex > idx;
-                const active = selectedRun.status === 'running' && currentIndex === idx;
-                const failed = selectedRun.status === 'failed' && currentIndex === idx;
+                const currentIndex = stageIndex(currentRun.step);
+                const done = currentRun.status === 'succeeded' ? true : currentIndex > idx;
+                const active = currentRun.status === 'running' && currentIndex === idx;
+                const failed = currentRun.status === 'failed' && currentIndex === idx;
                 const classes = failed
                   ? 'border-red-700 bg-red-100'
                   : active
@@ -497,8 +480,8 @@ export default function PipelineClient({ projectId }: { projectId: string }) {
           <div className="space-y-2">
             <div className="text-xs font-semibold">Attempt log</div>
             <div className="max-h-44 overflow-auto mac-double-outline p-2 space-y-1 text-xs">
-              {(selectedRun.timeline || []).length === 0 ? <div className="opacity-70">No timeline events yet.</div> : null}
-              {(selectedRun.timeline || []).slice().reverse().map((event, i) => (
+              {(currentRun.timeline || []).length === 0 ? <div className="opacity-70">No timeline events yet.</div> : null}
+              {(currentRun.timeline || []).slice().reverse().map((event, i) => (
                 <div key={`${event.at}-${event.kind}-${i}`} className="mac-double-outline p-2">
                   <div className="flex items-center justify-between gap-2">
                     <div className="font-semibold">
@@ -522,33 +505,100 @@ export default function PipelineClient({ projectId }: { projectId: string }) {
           <div className="space-y-2">
             <div className="text-xs font-semibold">Diagram markdown (live WIP)</div>
             <div className="text-xs opacity-70">
-              attempt {selectedRun.diagramMonitor.attempt || 0} · mode {selectedRun.diagramMonitor.mode || '-'} · lines{' '}
-              {Math.max(0, Math.floor(selectedRun.diagramMonitor.lineCount || 0))} · updated {formatDateTime(selectedRun.diagramMonitor.updatedAt || selectedRun.updatedAt)}
+              attempt {currentRun.diagramMonitor.attempt || 0} · mode {currentRun.diagramMonitor.mode || '-'} · lines{' '}
+              {Math.max(0, Math.floor(currentRun.diagramMonitor.lineCount || 0))} · updated {formatDateTime(currentRun.diagramMonitor.updatedAt || currentRun.updatedAt)}
             </div>
-            {(selectedRun.diagramMonitor.errors || []).length > 0 ? (
+            {(currentRun.diagramMonitor.errors || []).length > 0 ? (
               <div className="mac-double-outline p-2 text-xs">
                 <div className="font-semibold">Current validator errors</div>
                 <div className="space-y-1 mt-1">
-                  {selectedRun.diagramMonitor.errors.map((msg, i) => (
+                  {currentRun.diagramMonitor.errors.map((msg, i) => (
                     <div key={`err-${i}`}>- {msg}</div>
                   ))}
                 </div>
               </div>
             ) : null}
-            {(selectedRun.diagramMonitor.warnings || []).length > 0 ? (
+            {(currentRun.diagramMonitor.warnings || []).length > 0 ? (
               <div className="mac-double-outline p-2 text-xs">
                 <div className="font-semibold">Current validator warnings</div>
                 <div className="space-y-1 mt-1">
-                  {selectedRun.diagramMonitor.warnings.map((msg, i) => (
+                  {currentRun.diagramMonitor.warnings.map((msg, i) => (
                     <div key={`warn-${i}`}>- {msg}</div>
                   ))}
                 </div>
               </div>
             ) : null}
             <pre className="mac-double-outline p-3 text-[11px] leading-relaxed overflow-auto max-h-[420px] whitespace-pre-wrap">
-              {selectedRun.diagramMonitor.previewMarkdown || 'No WIP markdown snapshot yet for this run.'}
+              {currentRun.diagramMonitor.previewMarkdown || 'No WIP markdown snapshot yet for this run.'}
             </pre>
-            {selectedRun.error ? <div className="text-xs mac-double-outline p-2">Final error: {selectedRun.error}</div> : null}
+            {currentRun.error ? <div className="text-xs mac-double-outline p-2">Final error: {currentRun.error}</div> : null}
+          </div>
+        </div>
+        ) : (
+        <div className="mac-window mac-double-outline p-4 space-y-2">
+          <div className="text-sm font-bold tracking-tight">Live monitor</div>
+          <div className="text-xs opacity-70">No current run yet. Start a pipeline run to monitor it here.</div>
+        </div>
+        )}
+      </div>
+
+      {historyOpen ? (
+        <div className="fixed inset-0 z-50 bg-black/35 p-4 md:p-8">
+          <div className="mx-auto max-w-[1100px] mac-window mac-double-outline p-4 space-y-3 max-h-[calc(100vh-2rem)] overflow-hidden flex flex-col">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-bold tracking-tight">Past runs</div>
+                <div className="text-xs opacity-70">Failed or cancelled runs can be deleted from here.</div>
+              </div>
+              <button type="button" className="mac-btn h-8 flex items-center gap-1.5" onClick={() => setHistoryOpen(false)}>
+                <X size={14} />
+                Close
+              </button>
+            </div>
+            {loadingRuns ? <div className="text-xs opacity-70">Loading…</div> : null}
+            {!loadingRuns && historyRuns.length === 0 ? <div className="text-xs opacity-70">No past runs.</div> : null}
+            <div className="overflow-auto space-y-2 pr-1">
+              {historyRuns.map((run) => {
+                const diagramId = run.primaryDiagramFileId || run.singleDiagramFileId;
+                const deleting = deletingRunId === run.id;
+                return (
+                  <div key={run.id} className="mac-double-outline p-3 text-xs space-y-2">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="font-semibold break-all">{run.id}</div>
+                        <div className="opacity-70">
+                          {run.status} · {run.step || 'queued'} ({Math.max(0, Math.min(100, Math.floor(run.progressPct || 0)))}%)
+                        </div>
+                        <div className="opacity-60">{formatDateTime(run.createdAt)}</div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {diagramId ? (
+                          <button
+                            type="button"
+                            className="mac-btn h-7"
+                            onClick={() => router.push(`/editor?file=${encodeURIComponent(diagramId)}`)}
+                          >
+                            Open primary diagram
+                          </button>
+                        ) : null}
+                        {canDeleteRun(run.status) ? (
+                          <button
+                            type="button"
+                            className="mac-btn h-7 flex items-center gap-1.5"
+                            onClick={() => void deleteRun(run)}
+                            disabled={deleting}
+                          >
+                            {deleting ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+                            {deleting ? 'Deleting…' : 'Delete'}
+                          </button>
+                        ) : null}
+                      </div>
+                    </div>
+                    {run.error ? <div className="mac-double-outline p-2">Error: {run.error}</div> : null}
+                  </div>
+                );
+              })}
+            </div>
           </div>
         </div>
       ) : null}

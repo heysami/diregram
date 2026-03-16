@@ -6,6 +6,7 @@ import { useAuth } from '@/hooks/use-auth';
 import { normalizeLayoutDirection, type LayoutDirection } from '@/lib/layout-direction';
 import { fetchProfileDefaultLayoutDirection, updateProfileDefaultLayoutDirection } from '@/lib/layout-direction-supabase';
 import { DiregramMark } from '@/components/DiregramMark';
+import { loadClaudeApiKeyFromBrowser, saveClaudeApiKeyToBrowser } from '@/lib/claude-key-browser';
 import { loadOpenAiApiKeyFromBrowser, saveOpenAiApiKeyToBrowser } from '@/lib/openai-key-browser';
 
 type McpTargetClient = 'cursor' | 'codex' | 'claude_desktop' | 'claude_web';
@@ -23,6 +24,14 @@ function loadOpenAiKey(): string {
 
 function saveOpenAiKey(next: string) {
   saveOpenAiApiKeyToBrowser(next);
+}
+
+function loadClaudeKey(): string {
+  return loadClaudeApiKeyFromBrowser();
+}
+
+function saveClaudeKey(next: string) {
+  saveClaudeApiKeyToBrowser(next);
 }
 
 function normalizeTargetClient(input: string): McpTargetClient {
@@ -69,6 +78,7 @@ export default function AccountClient() {
   const [defaultLayoutDirection, setDefaultLayoutDirection] = useState<LayoutDirection>('horizontal');
   const [savingLayoutDirection, setSavingLayoutDirection] = useState(false);
   const [openAiKey, setOpenAiKey] = useState('');
+  const [claudeKey, setClaudeKey] = useState('');
   const [mcpTargetClient, setMcpTargetClient] = useState<McpTargetClient>('cursor');
   const [mcpOpenAiKey, setMcpOpenAiKey] = useState('');
   const [mcpProjects, setMcpProjects] = useState<McpProjectOption[]>([]);
@@ -80,9 +90,11 @@ export default function AccountClient() {
   const [sshError, setSshError] = useState<string | null>(null);
 
   useEffect(() => {
-    const key = loadOpenAiKey();
-    setOpenAiKey(key);
-    setMcpOpenAiKey(key);
+    const nextOpenAiKey = loadOpenAiKey();
+    const nextClaudeKey = loadClaudeKey();
+    setOpenAiKey(nextOpenAiKey);
+    setClaudeKey(nextClaudeKey);
+    setMcpOpenAiKey(nextOpenAiKey);
   }, []);
 
   useEffect(() => {
@@ -303,6 +315,48 @@ export default function AccountClient() {
                     </div>
                     <div className="text-[11px] opacity-70">
                       This key is used for “Build knowledge base (RAG)” and RAG queries. It is not uploaded to Supabase by default.
+                    </div>
+                  </div>
+                  <div className="space-y-1 border-t border-black/10 pt-2">
+                    <div>Claude API key (stored only in this browser)</div>
+                    <input
+                      className="mac-field w-full"
+                      value={claudeKey}
+                      placeholder="sk-ant-..."
+                      onChange={(e) => setClaudeKey(e.target.value)}
+                      type="password"
+                      autoComplete="off"
+                      spellCheck={false}
+                    />
+                    <div className="flex items-center justify-end gap-2 pt-1">
+                      <button
+                        type="button"
+                        className="mac-btn"
+                        onClick={() => {
+                          setClaudeKey('');
+                          saveClaudeKey('');
+                          setSavedToast('Cleared');
+                          window.setTimeout(() => setSavedToast(null), 1600);
+                        }}
+                      >
+                        Clear
+                      </button>
+                      <button
+                        type="button"
+                        className="mac-btn mac-btn--primary"
+                        onClick={() => {
+                          const next = claudeKey.trim();
+                          saveClaudeKey(next);
+                          setSavedToast(next ? 'Saved' : 'Cleared');
+                          window.setTimeout(() => setSavedToast(null), 1600);
+                        }}
+                      >
+                        Save
+                      </button>
+                    </div>
+                    <div className="text-[11px] opacity-70">
+                      This key is used for project auto-pipeline runs. It stays in this browser unless you separately set a server
+                      `CLAUDE_API_KEY`.
                     </div>
                   </div>
                 </div>

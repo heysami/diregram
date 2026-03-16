@@ -257,3 +257,66 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
+
+export async function DELETE(request: Request) {
+  try {
+    const origin = request.headers.get('origin');
+    const hostOrigin = new URL(request.url).origin;
+    if (origin && origin !== hostOrigin) {
+      return NextResponse.json({ error: 'Bad origin' }, { status: 403 });
+    }
+
+    const { user } = await getUserSupabaseClient();
+    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+    const body = (await request.json().catch(() => null)) as
+      | null
+      | {
+          projectFolderId?: unknown;
+          jobId?: unknown;
+        };
+
+    const projectFolderId = clampText(body?.projectFolderId, 120);
+    const jobId = clampText(body?.jobId, 120);
+    if (!projectFolderId) return NextResponse.json({ error: 'Missing projectFolderId' }, { status: 400 });
+    if (!jobId) return NextResponse.json({ error: 'Missing jobId' }, { status: 400 });
+
+    const admin = getAdminSupabaseClient();
+    const { data: folderData, error: folderErr } = await admin
+      .from('folders')
+      .select('id,owner_id,access')
+      .eq('id', projectFolderId)
+      .maybeSingle();
+    if (folderErr) return NextResponse.json({ error: folderErr.message }, { status: 500 });
+    if (!folderData) return NextResponse.json({ error: 'Project not found' }, { status: 404 });
+
+    const folder = folderData as FolderRow;
+    if (!canEditFolder(folder, user)) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+
+    const { data: jobData, error: jobErr } = await admin
+      .from('async_jobs')
+      .select('id,status,project_folder_id,kind')
+      .eq('id', jobId)
+      .maybeSingle();
+    if (jobErr) return NextResponse.json({ error: jobErr.message }, { status: 500 });
+    if (!jobData) return NextResponse.json({ error: 'Run not found' }, { status: 404 });
+
+    const job = jobData as { id: string; status: string; project_folder_id: string | null; kind: string };
+    if (job.kind !== 'project_pipeline' || job.project_folder_id !== projectFolderId) {
+      return NextResponse.json({ error: 'Run not found' }, { status: 404 });
+    }
+    if (!['failed', 'cancelled'].includes(String(job.status || ''))) {
+      return NextResponse.json({ error: 'Only failed or cancelled runs can be deleted' }, { status: 409 });
+    }
+
+    const { error: deleteErr } = await admin.from('async_jobs').delete().eq('id', jobId);
+    if (deleteErr) return NextResponse.json({ error: deleteErr.message }, { status: 500 });
+
+    return NextResponse.json({ ok: true, deletedId: jobId });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
+}
