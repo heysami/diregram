@@ -203,8 +203,40 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function sanitizeUnicodeText(input: unknown): string {
+  const raw = String(input || '');
+  let out = '';
+  for (let i = 0; i < raw.length; i += 1) {
+    const code = raw.charCodeAt(i);
+
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = i + 1 < raw.length ? raw.charCodeAt(i + 1) : 0;
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        out += raw[i] + raw[i + 1];
+        i += 1;
+      } else {
+        out += '\uFFFD';
+      }
+      continue;
+    }
+
+    if (code >= 0xdc00 && code <= 0xdfff) {
+      out += '\uFFFD';
+      continue;
+    }
+
+    if (code < 32 && code !== 9 && code !== 10 && code !== 13) {
+      out += ' ';
+      continue;
+    }
+
+    out += raw[i];
+  }
+  return out;
+}
+
 function normalizeText(input: unknown): string {
-  return String(input || '').trim();
+  return sanitizeUnicodeText(input).trim();
 }
 
 function clipText(input: unknown, maxChars: number): string {
@@ -313,7 +345,7 @@ function summarizeIssues(messages: string[], maxItems = 14): string {
 }
 
 function normalizeNewlines(input: unknown): string {
-  return String(input || '').replace(/\r\n?/g, '\n');
+  return sanitizeUnicodeText(input).replace(/\r\n?/g, '\n');
 }
 
 function hashMarkdown(text: string): string {
