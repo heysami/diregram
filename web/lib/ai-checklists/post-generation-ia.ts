@@ -11,7 +11,7 @@ AVOID:
   → AVOID generic ideas / conceptual prose as IA nodes
 
 ☐ Multi-portal IA roots (MUST):
-  → If the product has multiple portals/surfaces (public site, applicant portal, staff/admin portal, partner portal), EACH portal MUST be its own top-level IA root (indentation level 0).
+  → If the product has multiple portals/surfaces (public site, self-service portal, operations/admin portal, partner/vendor portal), EACH portal MUST be its own top-level IA root (indentation level 0).
   → Do NOT nest multiple portals under a single parent IA node.
 
 ☐ Layering rule:
@@ -33,4 +33,3 @@ AVOID:
     - ui-surface-public / ui-surface-portal / ui-surface-admin / ui-surface-partner
   → AVOID mixing multiple ui surfaces on one screen unless you intentionally support multiple surfaces (if so, annotate why).
 `;
-

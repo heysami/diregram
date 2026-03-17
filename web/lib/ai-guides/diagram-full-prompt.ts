@@ -50,7 +50,7 @@ Every node line must have a clear intent. Use the RIGHT editor/diagram for the R
 - Purpose: Sitemap / information architecture.
 - Structure: main navigation → sub-navigation → screens → screen content → functions.
 - Multiple portals/surfaces rule (MUST):
-  - If the product has multiple portals/surfaces (e.g. public site, applicant portal, staff/admin portal, partner portal), you MUST represent EACH portal as its OWN top-level IA root (indentation level 0).
+  - If the product has multiple portals/surfaces (e.g. public site, self-service portal, operations/admin portal, partner/vendor portal), you MUST represent EACH portal as its OWN top-level IA root (indentation level 0).
   - Do NOT nest multiple portals under a single parent IA node (it breaks filtering/tagging and makes mixed-surface navigation ambiguous).
 - End state: leaf nodes often become “functions” (capabilities). A function can THEN be modeled as a process flow by adding #flow# when you need step-by-step behavior.
 - Do NOT put step-by-step user journeys here unless the node is marked #flow#.
@@ -61,7 +61,7 @@ Every node line must have a clear intent. Use the RIGHT editor/diagram for the R
 - “Type” is NOT in the node line. If you need “validation” vs “branch” vs “step/action/time/end/goto”, you MUST encode it in metadata blocks (see process-node-type-* below).
 - UI-grounding rule (MUST):
   - Non-swimlane #flow# steps MUST be anchored to concrete UI and/or observable system actions.
-  - MUST NOT encode actors in node titles (NO "System:" / "Staff:" / "Applicant:" / "Partner:" prefixes). Actors must be machine-checkable via tags/swimlanes.
+  - MUST NOT encode actors in node titles (NO "<actor>:" prefixes such as "System:" or "Admissions Admin:"). Actors must be machine-checkable via tags/swimlanes.
   - AVOID purely conceptual chapter headings in non-swimlane flows (e.g. "Awareness", "Consideration", "Engagement") — those belong in Flow tab swimlanes and/or lifecycle hubs.
   - Exception (allowed conceptual nodes): decision/guard checks and routing constructs:
     - validation/branch questions (e.g. "Eligible?", "Payment successful?")
@@ -126,8 +126,14 @@ TAGS
   <!-- tags:tag-1,tag-2 -->
 - Tags are IDs (not names). If you invent new tag IDs, define them in a tag-store block (see metadata schemas below).
 - Tagging is NOT implied. It is explicit and mandatory for key node types (MUST):
-  - Every #flow# node line MUST include a <!-- tags:... --> comment with EXACTLY ONE actor tag from group tg-actors:
-    - actor-applicant, actor-staff, actor-system, actor-partner
+  - Every #flow# node line MUST include a <!-- tags:... --> comment with EXACTLY ONE actor tag from group tg-actors.
+  - Actor tags in tg-actors MUST be app-specific and use ids shaped like actor-<role-slug>.
+  - Do NOT default to a fixed actor list such as applicant/staff/system/partner unless those are genuinely the right roles for this product.
+  - Across tg-actors, include at least one concrete actor tag for each coverage class:
+    - self-service or external user role
+    - operational/admin role handling work, approvals, cases, or content
+    - platform/back-office/system role handling configuration, integrations, or automation
+  - These are coverage classes only. Do NOT literally emit umbrella tags unless they are the actual product terms.
   - Every IA screen node with <!-- expid:N --> MUST include a ui-surface tag from group tg-uiSurface (choose exactly one):
     - ui-surface-public, ui-surface-portal, ui-surface-admin, ui-surface-partner
   - DO NOT encode actors in titles; actors belong in tags + Flowtab swimlane lanes.
@@ -310,7 +316,7 @@ Modeling workflow (2 passes) (MUST; matches how teams actually work)
 - MUST include at least ONE architecture Tech Flow diagram in the document.
 - This architecture diagram is the merge target for multiple sequences (see below).
 - Reuse the SAME actors/portals/surfaces you already defined in IA:
-  - applicant portal / staff-admin portal / partner portal / public site
+  - self-service portal / operations portal / partner portal / public site
   - shared common modules (design system, auth, notifications, file store, analytics)
 - Group the diagram using zones[] (preferred):
   - Zone for each portal/surface
@@ -520,7 +526,7 @@ Schema:
   ],
   "tags": [
     { "id": "tag-ui-form", "groupId": "tg-uiType", "name": "form" },
-    { "id": "actor-applicant", "groupId": "tg-actors", "name": "applicant" },
+    { "id": "actor-domain-role", "groupId": "tg-actors", "name": "domain role" },
     { "id": "ui-surface-public", "groupId": "tg-uiSurface", "name": "public" }
   ]
 }
@@ -950,7 +956,7 @@ If you cannot guarantee correct reindexing, do NOT make structural edits.
 TO AVOID (hard don’ts)
 - Do NOT model “waiting” as a navigation node. Use lifecycle hubs or tracking/timeline content instead.
 - Do NOT duplicate the same feature in two places (avoid “second sitemap” inside hub variants).
-- Do NOT put staff-only workflows under applicant portal navigation; separate by role and tag appropriately.
+- Do NOT put operator-only workflows under self-service navigation; separate by role and tag appropriately.
 - Do NOT leave orphan data objects.
 
 Practical debug workflow (self-correct):
@@ -1432,8 +1438,12 @@ A) Technical Markdown Correctness (structural; must be import-ready)
   → tag-store MUST include required groups:
     - tg-actors (actors)
     - tg-uiSurface (ui surface) IF the markdown uses any <!-- expid:N -->
+  → tg-actors MUST be app-specific:
+    - Use ids shaped like actor-<role-slug>
+    - Do NOT default to applicant/staff/system/partner unless those are the true product roles
+    - Include at least one concrete actor tag for each coverage class: self-service/external user, operational/admin, platform/back-office/system
   → Actor prefixes MUST NOT appear in node titles:
-    - FAIL if a node title starts with "System:" / "Staff:" / "Applicant:" / "Partner:"
+    - FAIL if a node title starts with an actor prefix such as "System:" or "Admissions Admin:"
   → Every #flow# node line MUST include <!-- tags:... --> and EXACTLY ONE actor tag from tg-actors
   → Every screen node with <!-- expid:N --> MUST include at least one ui-surface tag from tg-uiSurface (prefer exactly one)
 
@@ -1481,7 +1491,7 @@ B) IA Correctness (main canvas non-#flow# area must be IA only)
     - ui-surface-public / ui-surface-portal / ui-surface-admin / ui-surface-partner
 
 ☐ Multi-portal IA roots (MUST):
-  → If the product has multiple portals/surfaces (public site, applicant portal, staff/admin portal, partner portal), EACH portal MUST be its own top-level IA root (indentation level 0).
+  → If the product has multiple portals/surfaces (public site, self-service portal, operations/admin portal, partner/vendor portal), EACH portal MUST be its own top-level IA root (indentation level 0).
   → Do NOT nest multiple portals under a single parent IA node.
 
 C) Swimlane Correctness + Coverage (journey map; must reflect main canvas processes)
@@ -1498,10 +1508,11 @@ C) Swimlane Correctness + Coverage (journey map; must reflect main canvas proces
   → Physical real-world touchpoint steps MUST NOT have \`\`\`flowtab-process-references\`\`\` entries.
 
 ☐ Actor semantics (MUST for #flow# nodes; recommend for Flowtab steps):
-  → MUST NOT encode actors in node titles (no "System:" / "Staff:" / "Applicant:" / "Partner:" prefixes)
-  → Every #flow# node line MUST declare EXACTLY ONE actor tag (tg-actors): actor-applicant/actor-staff/actor-system/actor-partner
+  → MUST NOT encode actors in node titles (no "<actor>:" prefixes such as "System:" or "Admissions Admin:")
+  → Every #flow# node line MUST declare EXACTLY ONE app-specific actor tag from tg-actors.
+  → Across tg-actors, include at least one concrete actor tag for each coverage class: self-service/external user, operational/admin, platform/back-office/system.
   → Swimlane lanes MUST represent those actor boundaries:
-    - If the journey involves multiple actors/users/systems/partners, EACH must have its own lane (one lane per actor/system). Do NOT combine actors in one lane.
+    - If the journey involves multiple actor roles or systems, EACH must have its own lane (one lane per actor/system). Do NOT combine actors in one lane.
     - If a lane label clearly implies an actor (e.g. "Admissions staff", "System"), placed nodes SHOULD have the matching actor tag
     - If a mismatch is intentional, add an annotation explaining it (handoff vs execution actor, shared responsibility, etc.)
 

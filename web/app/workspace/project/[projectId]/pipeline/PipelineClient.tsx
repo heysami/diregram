@@ -56,6 +56,7 @@ type PipelineRunRow = {
       wordCount: number;
       alphaRatio: number;
       lowSignal: boolean;
+      imageCount: number;
       warnings: string[];
       previewText: string;
     }>;
@@ -280,6 +281,7 @@ export default function PipelineClient({ projectId }: { projectId: string }) {
                           wordCount: Number(item.wordCount || 0),
                           alphaRatio: Number(item.alphaRatio || 0),
                           lowSignal: Boolean(item.lowSignal),
+                          imageCount: Number(item.imageCount || 0),
                           warnings: Array.isArray(item.warnings)
                             ? item.warnings.map((x) => String(x || '')).filter(Boolean).slice(0, 6)
                             : [],
@@ -701,10 +703,10 @@ export default function PipelineClient({ projectId }: { projectId: string }) {
                         {source.lowSignal ? 'low signal' : 'usable'}
                       </div>
                     </div>
-                    <div className="opacity-70">
-                      {Math.max(0, Math.floor(source.wordCount || 0))} words · {Math.max(0, Math.floor(source.lineCount || 0))} lines ·{' '}
-                      {Math.max(0, Math.floor(source.charCount || 0))} chars
-                    </div>
+                      <div className="opacity-70">
+                        {Math.max(0, Math.floor(source.wordCount || 0))} words · {Math.max(0, Math.floor(source.lineCount || 0))} lines ·{' '}
+                        {Math.max(0, Math.floor(source.charCount || 0))} chars · {Math.max(0, Math.floor(source.imageCount || 0))} images
+                      </div>
                     {source.warnings.length > 0 ? (
                       <div className="space-y-1">
                         {source.warnings.map((msg, warningIdx) => (

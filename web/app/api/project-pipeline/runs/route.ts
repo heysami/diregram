@@ -260,6 +260,7 @@ export async function GET(request: Request) {
             wordCount: Number(item.wordCount || 0),
             alphaRatio: Number(item.alphaRatio || 0),
             lowSignal: Boolean(item.lowSignal),
+            imageCount: Number(item.imageCount || 0),
             warnings: Array.isArray(item.warnings)
               ? (item.warnings as unknown[]).map((x) => clampText(x, 220)).filter(Boolean).slice(0, 6)
               : [],

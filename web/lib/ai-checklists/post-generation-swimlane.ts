@@ -11,10 +11,11 @@ AVOID:
   → Reminder: lane/stage changes must have a WHY (handoff / async wait / boundary)
 
 ☐ Actor semantics (MUST for #flow# nodes; recommend for Flowtab steps):
-  → MUST NOT encode actors in node titles (no "System:" / "Staff:" / "Applicant:" / "Partner:" prefixes)
-  → Every #flow# node line MUST declare EXACTLY ONE actor tag (tg-actors): actor-applicant/actor-staff/actor-system/actor-partner
+  → MUST NOT encode actors in node titles (no "<actor>:" prefixes such as "System:" or "Admissions Admin:")
+  → Every #flow# node line MUST declare EXACTLY ONE app-specific actor tag from tg-actors.
+  → Across tg-actors, include at least one concrete actor tag for each coverage class: self-service/external user, operational/admin, platform/back-office/system.
   → Swimlane lanes MUST represent actor boundaries:
-    - If the journey involves multiple actors/system/partners, EACH must have its own lane (one lane per actor/system). Do NOT combine actors in one lane.
+    - If the journey involves multiple actor roles or systems, EACH must have its own lane (one lane per actor/system). Do NOT combine actors in one lane.
     - If a lane label clearly implies an actor (e.g. "Admissions staff", "System"), placed nodes SHOULD have the matching actor tag
     - If a mismatch is intentional, add an annotation explaining it (handoff vs execution actor, shared responsibility, etc.)
 

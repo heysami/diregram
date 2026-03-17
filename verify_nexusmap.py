@@ -27,6 +27,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 REQUIRED_TAG_GROUP_ACTORS = "tg-actors"
 REQUIRED_TAG_GROUP_UI_SURFACE = "tg-uiSurface"
+LEGACY_ACTOR_TITLE_PREFIXES = ("system", "staff", "applicant", "partner")
 
 
 @dataclass(frozen=True)
@@ -136,19 +137,44 @@ def node_title_for_prefix_checks(raw_line: str) -> str:
     return s
 
 
-def expected_actor_for_lane_label(label: str) -> Optional[str]:
-    s = (label or "").lower()
-    if not s:
+def normalize_actor_matcher_token(raw: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", re.sub(r"^actor[-_\s]+", "", (raw or "").lower())).strip()
+
+
+def actor_match_candidates(tag_id: str, tag_name: str) -> List[str]:
+    out: List[str] = []
+    for value in (tag_name, re.sub(r"^actor-", "", tag_id or "")):
+        normalized = normalize_actor_matcher_token(value)
+        if normalized:
+            out.append(normalized)
+    return out
+
+
+def build_actor_title_prefix_re(actor_tags: List[Tuple[str, str]]) -> Optional[re.Pattern[str]]:
+    candidates = set(LEGACY_ACTOR_TITLE_PREFIXES)
+    for tag_id, tag_name in actor_tags:
+        candidates.update(actor_match_candidates(tag_id, tag_name))
+    parts = [re.escape(x) for x in sorted(candidates, key=len, reverse=True) if x]
+    if not parts:
         return None
-    if "system" in s:
-        return "actor-system"
-    if re.search(r"\b(staff|admin|reviewer|operator|agent)\b", s):
-        return "actor-staff"
-    if "partner" in s:
-        return "actor-partner"
-    if re.search(r"\b(applicant|customer|user|visitor|student)\b", s):
-        return "actor-applicant"
-    return None
+    return re.compile(rf"^({'|'.join(parts)})\s*:\s*", flags=re.I)
+
+
+def expected_actor_for_lane_label(label: str, actor_tags: List[Tuple[str, str]]) -> Optional[str]:
+    normalized_label = normalize_actor_matcher_token(label)
+    if not normalized_label:
+        return None
+    best: Optional[Tuple[str, int]] = None
+    for tag_id, tag_name in actor_tags:
+        for candidate in actor_match_candidates(tag_id, tag_name):
+            exact = normalized_label == candidate
+            overlaps = candidate in normalized_label or normalized_label in candidate
+            if not exact and not overlaps:
+                continue
+            score = (1000 if exact else 0) + len(candidate)
+            if best is None or score > best[1]:
+                best = (tag_id, score)
+    return best[0] if best else None
 
 
 def main() -> None:
@@ -187,6 +213,7 @@ def main() -> None:
     tag_store = blocks.get("tag-store")
     tag_id_to_group: Dict[str, str] = {}
     group_ids: set[str] = set()
+    actor_tag_defs: List[Tuple[str, str]] = []
     if isinstance(tag_store, dict):
         groups = tag_store.get("groups", [])
         tags = tag_store.get("tags", [])
@@ -200,8 +227,13 @@ def main() -> None:
                     continue
                 tid = t.get("id")
                 gid = t.get("groupId")
+                name = t.get("name")
                 if isinstance(tid, str) and isinstance(gid, str):
                     tag_id_to_group[tid] = gid
+                    if gid == REQUIRED_TAG_GROUP_ACTORS or tid.startswith("actor-"):
+                        actor_tag_defs.append((tid, name if isinstance(name, str) else tid))
+
+    actor_prefix_re = build_actor_title_prefix_re(actor_tag_defs)
 
     # Data objects: build attribute-id lookup for doattrs validation.
     data_objects = blocks.get("data-objects")
@@ -247,12 +279,14 @@ def main() -> None:
             continue
 
         title = node_title_for_prefix_checks(line)
-        if re.match(r"^(system|staff|applicant|partner)\s*:\s*", title, flags=re.I):
+        actor_prefix_match = actor_prefix_re.match(title) if actor_prefix_re else None
+        if actor_prefix_match:
+            matched_prefix = actor_prefix_match.group(1)
             issues.append(
                 Issue(
                     "error",
                     "ACTOR_PREFIX_IN_TITLE",
-                    f"Line {i+1} encodes an actor in the title ('System:/Staff:/Applicant:/Partner:'). Use actor tags + swimlanes instead.",
+                    f'Line {i+1} encodes an actor in the title ("{matched_prefix}:"). Use actor tags + swimlanes instead.',
                 )
             )
 
@@ -271,7 +305,7 @@ def main() -> None:
                 issues.append(Issue("error", "MISSING_REQUIRED_TAG_GROUP", f'tag-store missing required group "{REQUIRED_TAG_GROUP_ACTORS}".'))
             actor_tags = [tid for tid in tag_ids if tag_id_to_group.get(tid) == REQUIRED_TAG_GROUP_ACTORS or tid.startswith("actor-")]
             if len(actor_tags) == 0:
-                issues.append(Issue("error", "MISSING_ACTOR_TAG", f"Line {i+1} is #flow# but has no actor tag (group {REQUIRED_TAG_GROUP_ACTORS})."))
+                issues.append(Issue("error", "MISSING_ACTOR_TAG", f'Line {i+1} is #flow# but has no actor tag. Add exactly one app-specific actor tag from group "{REQUIRED_TAG_GROUP_ACTORS}".'))
             elif len(actor_tags) > 1:
                 issues.append(Issue("error", "MULTIPLE_ACTOR_TAGS", f"Line {i+1} is #flow# but has multiple actor tags: {', '.join(actor_tags)}"))
 
@@ -390,7 +424,7 @@ def main() -> None:
                 if not isinstance(lane_id, str):
                     continue
                 label = lane_label_by_id.get(lane_id, "")
-                expected = expected_actor_for_lane_label(label)
+                expected = expected_actor_for_lane_label(label, actor_tag_defs)
                 if not expected:
                     continue
                 m = re.match(r"^node-(\d+)$", node_id)
@@ -423,4 +457,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

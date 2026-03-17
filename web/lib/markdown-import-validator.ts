@@ -28,6 +28,8 @@ const REQUIRED_TAG_GROUPS = {
   uiSurface: 'tg-uiSurface',
 } as const;
 
+const LEGACY_ACTOR_TITLE_PREFIXES = ['system', 'staff', 'applicant', 'partner'];
+
 function stripHtmlComments(s: string): string {
   return s.replace(/<!--[\s\S]*?-->/g, '');
 }
@@ -47,6 +49,54 @@ function nodeTitleForPrefixChecks(rawLine: string): string {
   const noComments = stripHtmlComments(noIndent);
   const noMarkers = stripInlineMarkers(noComments);
   return noMarkers.replace(/\s+/g, ' ').trim();
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function normalizeActorMatcherToken(raw: string): string {
+  return String(raw || '')
+    .toLowerCase()
+    .replace(/^actor[-_\s]+/, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function getActorMatchCandidates(tag: { id: string; name: string }): string[] {
+  return [tag.name, tag.id.replace(/^actor-/, '')]
+    .map((value) => normalizeActorMatcherToken(value))
+    .filter(Boolean);
+}
+
+function buildActorPrefixRe(actorTags: Array<{ id: string; name: string }>): RegExp | null {
+  const candidates = new Set<string>(LEGACY_ACTOR_TITLE_PREFIXES);
+  actorTags.forEach((tag) => {
+    getActorMatchCandidates(tag).forEach((candidate) => candidates.add(candidate));
+  });
+  const parts = Array.from(candidates)
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length)
+    .map((candidate) => escapeRegExp(candidate));
+  if (!parts.length) return null;
+  return new RegExp(`^(${parts.join('|')})\\s*:\\s*`, 'i');
+}
+
+function expectedActorTagForLaneLabel(label: string, actorTags: Array<{ id: string; name: string }>): string | null {
+  const normalizedLabel = normalizeActorMatcherToken(label);
+  if (!normalizedLabel) return null;
+  let best: { id: string; score: number } | null = null;
+  for (const tag of actorTags) {
+    for (const candidate of getActorMatchCandidates(tag)) {
+      if (!candidate) continue;
+      const exact = normalizedLabel === candidate;
+      const overlaps = normalizedLabel.includes(candidate) || candidate.includes(normalizedLabel);
+      if (!exact && !overlaps) continue;
+      const score = (exact ? 1000 : 0) + candidate.length;
+      if (!best || score > best.score) best = { id: tag.id, score };
+    }
+  }
+  return best?.id || null;
 }
 
 function add(out: ImportValidationIssue[], severity: 'error' | 'warning', code: string, message: string) {
@@ -549,6 +599,7 @@ export function validateNexusMarkdownImport(markdown: string): ImportValidationR
   const tagIdToGroupId = new Map<string, string>();
   const groupIdsInStore = new Set<string>();
   const tagIdsByGroupId = new Map<string, Set<string>>();
+  const actorTagsInStore: Array<{ id: string; name: string }> = [];
   let warnedMissingTagStore = false;
   if (tagStore) {
     const groups = Array.isArray(tagStore.json?.groups) ? tagStore.json.groups : [];
@@ -575,6 +626,9 @@ export function validateNexusMarkdownImport(markdown: string): ImportValidationR
       tagIdToGroupId.set(t.id, t.groupId);
       if (!tagIdsByGroupId.has(t.groupId)) tagIdsByGroupId.set(t.groupId, new Set<string>());
       tagIdsByGroupId.get(t.groupId)!.add(t.id);
+      if (t.groupId === REQUIRED_TAG_GROUPS.actors || /^actor-/.test(t.id)) {
+        actorTagsInStore.push({ id: t.id, name: t.name });
+      }
       if (!groupIds.has(t.groupId)) {
         add(warnings, 'warning', 'UNKNOWN_TAG_GROUP', `tag "${t.id}" references missing group "${t.groupId}".`);
       }
@@ -589,8 +643,7 @@ export function validateNexusMarkdownImport(markdown: string): ImportValidationR
   const expidRe = /<!--\s*expid:(\d+)\s*-->/;
 
   // Actor prefix ban (tree region only; machine-checkable actors must live in tags/swimlanes instead).
-  // Fail if any node title starts with "System:" / "Staff:" / "Applicant:" / "Partner:" (case-insensitive).
-  const actorPrefixRe = /^(system|staff|applicant|partner)\s*:\s*/i;
+  const actorPrefixRe = buildActorPrefixRe(actorTagsInStore);
 
   // Re-scan tree region with an explicit inFence toggle for prefix/tag enforcement checks.
   let inTreeFence = false;
@@ -605,12 +658,14 @@ export function validateNexusMarkdownImport(markdown: string): ImportValidationR
 
     // Ban actor-in-title prefixes.
     const title = nodeTitleForPrefixChecks(line);
-    if (actorPrefixRe.test(title)) {
+    const actorPrefixMatch = actorPrefixRe ? title.match(actorPrefixRe) : null;
+    if (actorPrefixMatch) {
+      const matchedPrefix = actorPrefixMatch[1] || 'actor';
       add(
         errors,
         'error',
         'ACTOR_PREFIX_IN_TITLE',
-        `Line ${idx + 1} encodes an actor in the node title ("System:/Staff:/Applicant:/Partner:"). Use actor tags (tg-actors) and Flowtab swimlane lanes instead.`,
+        `Line ${idx + 1} encodes an actor in the node title ("${matchedPrefix}:"). Use actor tags (tg-actors) and Flowtab swimlane lanes instead.`,
       );
     }
 
@@ -753,7 +808,7 @@ export function validateNexusMarkdownImport(markdown: string): ImportValidationR
           errors,
           'error',
           'MISSING_ACTOR_TAG',
-          `Line ${idx + 1} is a #flow# node but has no actor tag. Add exactly one actor tag from group "${REQUIRED_TAG_GROUPS.actors}" (e.g. actor-applicant/actor-staff/actor-system/actor-partner).`,
+          `Line ${idx + 1} is a #flow# node but has no actor tag. Add exactly one actor tag from group "${REQUIRED_TAG_GROUPS.actors}" using an app-specific id such as actor-<role-slug>.`,
         );
       } else if (actorTags.length > 1) {
         add(
@@ -819,21 +874,12 @@ export function validateNexusMarkdownImport(markdown: string): ImportValidationR
       const label = typeof l?.label === 'string' ? l.label : '';
       if (id && label) laneLabelById.set(id, label);
     });
-    const expectedActorForLaneLabel = (label: string): string | null => {
-      const s = (label || '').toLowerCase();
-      if (!s) return null;
-      if (s.includes('system')) return 'actor-system';
-      if (/(staff|admin|reviewer|operator|agent)/i.test(label)) return 'actor-staff';
-      if (s.includes('partner')) return 'actor-partner';
-      if (/(applicant|customer|user|visitor|student)/i.test(label)) return 'actor-applicant';
-      return null;
-    };
     if (placement) {
       Object.entries(placement as Record<string, any>).forEach(([nodeId, p]) => {
         const laneId = typeof (p as any)?.laneId === 'string' ? (p as any).laneId : '';
         if (!laneId) return;
         const laneLabel = laneLabelById.get(laneId) || '';
-        const expected = expectedActorForLaneLabel(laneLabel);
+        const expected = expectedActorTagForLaneLabel(laneLabel, actorTagsInStore);
         if (!expected) return; // only enforce when label is clearly mappable
         const m = nodeId.match(/^node-(\d+)$/);
         if (!m) return;

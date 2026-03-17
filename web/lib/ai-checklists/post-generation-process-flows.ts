@@ -7,7 +7,8 @@ Goal:
 
 MUST:
   - Treat main-canvas #flow# trees as session-scoped process specifications (wizard/work-session), not multi-week cross-timeframe journeys.
-  - Ensure actor semantics are machine-checkable: every #flow# node line must have EXACTLY ONE tg-actors actor tag (actor-applicant/actor-staff/actor-system/actor-partner).
+  - Ensure actor semantics are machine-checkable: every #flow# node line must have EXACTLY ONE app-specific tg-actors actor tag.
+  - Across tg-actors, include at least one concrete actor tag for each coverage class: self-service/external user, operational/admin, platform/back-office/system.
 
 ☐ Identify process roots (main canvas only):
   → P = #flow# process roots on main canvas (exclude Flowtab subtree)

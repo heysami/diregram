@@ -10,13 +10,15 @@ Goal:
 
 ☐ Required tag groups (MUST when relevant):
   → tg-actors MUST exist (actors):
-    - actor-applicant / actor-staff / actor-system / actor-partner
+    - Use app-specific actor ids shaped like actor-<role-slug>
+    - Do NOT default to applicant/staff/system/partner unless those are the true product roles
+    - Include at least one concrete actor tag for each coverage class: self-service/external user, operational/admin, platform/back-office/system
   → tg-uiSurface MUST exist IF the markdown uses any <!-- expid:N --> screen nodes.
 
 ☐ Actor semantics (STRICT for #flow# nodes):
   → Every #flow# node line MUST include <!-- tags:... --> and EXACTLY ONE actor tag from tg-actors.
   → Actors MUST NOT be encoded in node titles:
-    - FAIL if titles start with "System:" / "Staff:" / "Applicant:" / "Partner:"
+    - FAIL if titles start with an actor prefix such as "System:" or "Admissions Admin:"
 
 ☐ Screen surface semantics (STRICT for UI blueprint nodes):
   → Every screen node with <!-- expid:N --> MUST include at least one tg-uiSurface tag (prefer exactly one):
@@ -25,7 +27,7 @@ Goal:
 ☐ Node tags format + hygiene:
   → Tag lists MUST be comma-separated IDs: <!-- tags:tag-1,tag-2 -->
   → No empty IDs, no duplicate IDs within a node.
-  → Avoid creating redundant near-duplicate tags (e.g., "actor-system" vs "system").
+  → Avoid creating redundant near-duplicate tags (e.g., "actor-admissions-admin" vs "admissions-admin").
 
 ☐ Pinned tags (UI display rules; metadata must exist to render):
   → Global pinned tags (non-Flow view):
@@ -37,4 +39,3 @@ Goal:
   → Visibility:
     - Only pinned tags that are ALSO present on the node are shown above that node.
 `;
-

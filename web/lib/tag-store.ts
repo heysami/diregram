@@ -43,11 +43,6 @@ const DEFAULT_TAGS: NexusTag[] = [
   { id: 'tag-ui-list', groupId: 'tg-uiType', name: 'list' },
   { id: 'tag-ui-form', groupId: 'tg-uiType', name: 'form' },
   { id: 'tag-ui-popup', groupId: 'tg-uiType', name: 'pop up' },
-  // Actor tags (machine-checkable actors; do NOT encode actors in node titles).
-  { id: 'actor-applicant', groupId: 'tg-actors', name: 'applicant' },
-  { id: 'actor-staff', groupId: 'tg-actors', name: 'staff' },
-  { id: 'actor-system', groupId: 'tg-actors', name: 'system' },
-  { id: 'actor-partner', groupId: 'tg-actors', name: 'partner' },
   // UI surface tags (required on expid screens to clarify which surface a screen belongs to).
   { id: 'ui-surface-public', groupId: 'tg-uiSurface', name: 'public' },
   { id: 'ui-surface-portal', groupId: 'tg-uiSurface', name: 'portal' },
@@ -294,4 +289,3 @@ export function deleteTag(doc: Y.Doc, tagId: string): void {
     tags: store.tags.filter((t) => t.id !== tagId),
   });
 }
-

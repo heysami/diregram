@@ -53,8 +53,12 @@ AVOID:
   → tag-store MUST include required groups:
     - tg-actors (actors)
     - tg-uiSurface (ui surface) IF the markdown uses any <!-- expid:N -->
+  → tg-actors MUST be app-specific:
+    - Use ids shaped like actor-<role-slug>
+    - Do NOT default to applicant/staff/system/partner unless those are the true product roles
+    - Include at least one concrete actor tag for each coverage class: self-service/external user, operational/admin, platform/back-office/system
   → Actor prefixes MUST NOT appear in node titles:
-    - FAIL if a node title starts with "System:" / "Staff:" / "Applicant:" / "Partner:"
+    - FAIL if a node title starts with an actor prefix such as "System:" or "Admissions Admin:"
   → Every #flow# node line MUST include <!-- tags:... --> and EXACTLY ONE actor tag from tg-actors
   → Every screen node with <!-- expid:N --> MUST include at least one ui-surface tag from tg-uiSurface (prefer exactly one)
 
@@ -92,4 +96,3 @@ AVOID:
   → Every entry references existing node ids (rootProcessNodeId/targetNodeId)
   → For kind:"inner", expandedRunningNumber/gridNodeKey must resolve (best-effort)
 `;
-

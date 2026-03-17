@@ -22,6 +22,7 @@ import { parseNexusMarkdown } from '@/lib/nexus-parser';
 import { extractRunningNumbersFromMarkdown } from '@/lib/node-running-numbers';
 import { extractExpandedIdsFromMarkdown } from '@/lib/expanded-state-storage';
 import {
+  coerceVisionDesignSystem,
   defaultVisionDesignSystem,
   normalizeVisionDesignSystem,
   VISION_TAILWIND_PRIMITIVE_COLORS,
@@ -114,6 +115,13 @@ const MAX_PROGRESSIVE_TREE_CHARS = 16_000;
 const MAX_PROGRESSIVE_SCREEN_BATCH_SIZE = 3;
 const MAX_PROGRESSIVE_SCREEN_SUBTREE_CHARS = 10_000;
 const MAX_PROGRESSIVE_DATA_OBJECT_IDS = 24;
+const MAX_DIAGRAM_INPUT_IMAGES = 6;
+const MAX_DIAGRAM_PAGE_IMAGES = 2;
+const MIN_DIAGRAM_IMAGE_BYTES = 24_000;
+const MAX_VISION_IMAGE_CANDIDATES = 8;
+const MAX_VISION_INPUT_IMAGES = 4;
+const MAX_VISION_PAGE_IMAGES = 3;
+const DOCLING_IMAGE_SIGNED_URL_TTL_SECONDS = 60 * 60;
 const ASYNC_JOB_UPDATE_TIMEOUT_MS = 20_000;
 const STORAGE_DOWNLOAD_TIMEOUT_MS = 60_000;
 const STORAGE_TEXT_READ_TIMEOUT_MS = 30_000;
@@ -166,6 +174,32 @@ type PipelineUploadInput = {
 };
 
 type UploadExtractionSourceKind = 'text' | 'docling';
+type DoclingImageAssetKind = 'page' | 'picture' | 'table';
+
+type DoclingImageAsset = {
+  kind: DoclingImageAssetKind;
+  objectPath: string;
+  pageNo: number | null;
+  index: number;
+  width: number | null;
+  height: number | null;
+  bytes: number;
+  label: string;
+};
+
+type CollectedUploadImageAsset = DoclingImageAsset & {
+  sourceName: string;
+  sourceObjectPath: string;
+};
+
+type SignedCollectedUploadImageAsset = CollectedUploadImageAsset & {
+  signedUrl: string;
+};
+
+type ClassifiedVisionUiImage = SignedCollectedUploadImageAsset & {
+  uiScore: number;
+  rationale: string;
+};
 
 type UploadExtractionAnalysis = {
   charCount: number;
@@ -185,6 +219,8 @@ type CollectedUploadText = {
   mimeType: string;
   size: number;
   analysis: UploadExtractionAnalysis;
+  images: CollectedUploadImageAsset[];
+  imageManifestObjectPath: string;
 };
 
 type AgentOutputRecord = {
@@ -291,6 +327,32 @@ function parseJsonObject(text: string): JsonRecord | null {
   }
 }
 
+function parseDoclingImageAssets(input: unknown): DoclingImageAsset[] {
+  if (!Array.isArray(input)) return [];
+  return input
+    .map((row) => (row && typeof row === 'object' ? (row as JsonRecord) : null))
+    .filter((row): row is JsonRecord => row !== null)
+    .map((row, idx) => {
+      const kindRaw = normalizeText(row.kind).toLowerCase();
+      const kind: DoclingImageAssetKind = kindRaw === 'picture' || kindRaw === 'table' ? (kindRaw as DoclingImageAssetKind) : 'page';
+      const width = Number(row.width || 0);
+      const height = Number(row.height || 0);
+      const pageNo = Number(row.pageNo || 0);
+      return {
+        kind,
+        objectPath: normalizeText(row.objectPath),
+        pageNo: Number.isFinite(pageNo) && pageNo > 0 ? Math.floor(pageNo) : null,
+        index: Math.max(1, Math.floor(Number(row.index || idx + 1) || idx + 1)),
+        width: Number.isFinite(width) && width > 0 ? Math.floor(width) : null,
+        height: Number.isFinite(height) && height > 0 ? Math.floor(height) : null,
+        bytes: Math.max(0, Math.floor(Number(row.bytes || 0))),
+        label: normalizeText(row.label) || `${kind} ${idx + 1}`,
+      } satisfies DoclingImageAsset;
+    })
+    .filter((row) => Boolean(row.objectPath))
+    .slice(0, 120);
+}
+
 function isStructuredTextMime(mime: string): boolean {
   if (!mime) return false;
   if (mime.startsWith('text/')) return true;
@@ -303,8 +365,25 @@ function isStructuredTextMime(mime: string): boolean {
 function isLikelyTextFile(name: string, mimeType: string): boolean {
   const mime = normalizeText(mimeType).toLowerCase();
   const file = normalizeText(name).toLowerCase();
+  if (/\.(doc|docx|ppt|pptx|xls|xlsx|pdf|rtf|odt|ods|odp|pages|numbers|key)$/i.test(file)) return false;
+  if (/\.(md|txt|json|csv|tsv|xml|yaml|yml|html|htm|ts|tsx|js|jsx|css|scss|sql)$/i.test(file)) return true;
+  if (
+    mime === 'application/pdf' ||
+    mime === 'application/msword' ||
+    mime === 'application/rtf' ||
+    mime === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+    mime === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+    mime === 'application/vnd.openxmlformats-officedocument.presentationml.presentation' ||
+    mime === 'application/vnd.ms-excel' ||
+    mime === 'application/vnd.ms-powerpoint' ||
+    mime === 'application/vnd.oasis.opendocument.text' ||
+    mime === 'application/vnd.oasis.opendocument.spreadsheet' ||
+    mime === 'application/vnd.oasis.opendocument.presentation'
+  ) {
+    return false;
+  }
   if (isStructuredTextMime(mime)) return true;
-  return /\.(md|txt|json|csv|tsv|xml|yaml|yml|html|htm|ts|tsx|js|jsx|css|scss|sql)$/i.test(file);
+  return false;
 }
 
 function safeFileName(name: string) {
@@ -1450,7 +1529,7 @@ async function convertViaDocling(input: {
   originalFilename: string;
   admin: ReturnType<typeof getAdminSupabaseClient>;
   onProgress?: (action: string) => Promise<void> | void;
-}): Promise<string> {
+}): Promise<{ text: string; images: DoclingImageAsset[]; imageManifestObjectPath: string }> {
   const base = String(process.env.DOCLING_SERVICE_URL || 'http://127.0.0.1:8686').replace(/\/+$/, '');
   const url = `${base}/convert`;
   const jobId = randomUUID();
@@ -1469,6 +1548,7 @@ async function convertViaDocling(input: {
           originalFilename: input.originalFilename,
           jobId,
           outputFormat: 'markdown',
+          includeImages: true,
         }),
         signal: controller.signal,
       });
@@ -1487,6 +1567,22 @@ async function convertViaDocling(input: {
   }
   const outputObjectPath = normalizeText(json.outputObjectPath);
   if (!outputObjectPath) throw new Error('Docling returned no output path');
+  const imageManifestObjectPath = normalizeText(json.imageManifestObjectPath);
+  let images: DoclingImageAsset[] = [];
+  if (imageManifestObjectPath) {
+    await input.onProgress?.('download_image_manifest');
+    const { data: manifestBlob, error: manifestError } = await withTimeout(
+      `Download image manifest for ${input.originalFilename}`,
+      STORAGE_DOWNLOAD_TIMEOUT_MS,
+      () => input.admin.storage.from('docling-files').download(imageManifestObjectPath),
+    );
+    if (manifestError) throw new Error(manifestError.message);
+    const manifestText = await withTimeout(`Read image manifest for ${input.originalFilename}`, STORAGE_TEXT_READ_TIMEOUT_MS, () =>
+      manifestBlob.text(),
+    );
+    const manifestJson = parseJsonObject(manifestText);
+    images = parseDoclingImageAssets(manifestJson?.images);
+  }
 
   await input.onProgress?.('download_converted');
   const { data: blob, error } = await withTimeout(
@@ -1504,7 +1600,188 @@ async function convertViaDocling(input: {
   } catch {
     // ignore cleanup failures
   }
-  return clipText(markdown, MAX_UPLOAD_TEXT);
+  return {
+    text: clipText(markdown, MAX_UPLOAD_TEXT),
+    images,
+    imageManifestObjectPath,
+  };
+}
+
+function selectDoclingDiagramImages(assets: CollectedUploadImageAsset[]): CollectedUploadImageAsset[] {
+  const eligible = assets.filter((asset) => asset.bytes >= MIN_DIAGRAM_IMAGE_BYTES || asset.kind !== 'page');
+  const score = (asset: CollectedUploadImageAsset): number => {
+    const base =
+      asset.kind === 'picture' ? 100 : asset.kind === 'table' ? 80 : 40;
+    const pageBoost = asset.kind === 'page' && asset.pageNo && asset.pageNo <= 2 ? 12 : 0;
+    const sizeBoost = Math.min(24, Math.floor(asset.bytes / 40_000));
+    const areaBoost = asset.width && asset.height ? Math.min(18, Math.floor((asset.width * asset.height) / 180_000)) : 0;
+    return base + pageBoost + sizeBoost + areaBoost;
+  };
+  const sorted = [...eligible].sort((a, b) => {
+    const diff = score(b) - score(a);
+    if (diff) return diff;
+    if ((a.pageNo || 9999) !== (b.pageNo || 9999)) return (a.pageNo || 9999) - (b.pageNo || 9999);
+    return a.index - b.index;
+  });
+
+  const out: CollectedUploadImageAsset[] = [];
+  let pageCount = 0;
+  const seen = new Set<string>();
+  for (const asset of sorted) {
+    if (seen.has(asset.objectPath)) continue;
+    if (asset.kind === 'page' && pageCount >= MAX_DIAGRAM_PAGE_IMAGES) continue;
+    out.push(asset);
+    seen.add(asset.objectPath);
+    if (asset.kind === 'page') pageCount += 1;
+    if (out.length >= MAX_DIAGRAM_INPUT_IMAGES) break;
+  }
+  return out;
+}
+
+async function createSignedDoclingImageUrls(input: {
+  assets: CollectedUploadImageAsset[];
+  admin: ReturnType<typeof getAdminSupabaseClient>;
+}): Promise<SignedCollectedUploadImageAsset[]> {
+  const out: SignedCollectedUploadImageAsset[] = [];
+  for (const asset of input.assets) {
+    const { data, error } = await withTimeout(`Create signed URL for ${asset.objectPath}`, STORAGE_DOWNLOAD_TIMEOUT_MS, () =>
+      input.admin.storage.from('docling-files').createSignedUrl(asset.objectPath, DOCLING_IMAGE_SIGNED_URL_TTL_SECONDS),
+    );
+    if (error) continue;
+    const signedUrl = normalizeText(data?.signedUrl);
+    if (!signedUrl) continue;
+    out.push({ ...asset, signedUrl });
+  }
+  return out;
+}
+
+function selectDoclingVisionImageCandidates(assets: CollectedUploadImageAsset[]): CollectedUploadImageAsset[] {
+  const eligible = assets.filter((asset) => asset.kind !== 'table' && (asset.kind !== 'page' || asset.bytes >= MIN_DIAGRAM_IMAGE_BYTES));
+  const score = (asset: CollectedUploadImageAsset): number => {
+    const base = asset.kind === 'picture' ? 120 : 72;
+    const pageBoost = asset.kind === 'page' && asset.pageNo && asset.pageNo <= 4 ? 18 : 0;
+    const sizeBoost = Math.min(24, Math.floor(asset.bytes / 35_000));
+    const areaBoost = asset.width && asset.height ? Math.min(20, Math.floor((asset.width * asset.height) / 160_000)) : 0;
+    return base + pageBoost + sizeBoost + areaBoost;
+  };
+  const sorted = [...eligible].sort((a, b) => {
+    const diff = score(b) - score(a);
+    if (diff) return diff;
+    if ((a.pageNo || 9999) !== (b.pageNo || 9999)) return (a.pageNo || 9999) - (b.pageNo || 9999);
+    return a.index - b.index;
+  });
+
+  const out: CollectedUploadImageAsset[] = [];
+  let pageCount = 0;
+  const seen = new Set<string>();
+  for (const asset of sorted) {
+    if (seen.has(asset.objectPath)) continue;
+    if (asset.kind === 'page' && pageCount >= MAX_VISION_PAGE_IMAGES) continue;
+    out.push(asset);
+    seen.add(asset.objectPath);
+    if (asset.kind === 'page') pageCount += 1;
+    if (out.length >= MAX_VISION_IMAGE_CANDIDATES) break;
+  }
+  return out;
+}
+
+function fallbackVisionUiImages(images: SignedCollectedUploadImageAsset[]): ClassifiedVisionUiImage[] {
+  return images
+    .filter((img) => img.kind === 'picture' || (img.kind === 'page' && (img.pageNo || 999) <= 3))
+    .slice(0, MAX_VISION_INPUT_IMAGES)
+    .map((img) => ({
+      ...img,
+      uiScore: img.kind === 'picture' ? 74 : 58,
+      rationale: img.kind === 'picture' ? 'Fallback-picked extracted picture as likely UI artifact.' : 'Fallback-picked early page image as possible UI screen.',
+    }));
+}
+
+async function classifyVisionUiImages(input: {
+  brief: string;
+  images: SignedCollectedUploadImageAsset[];
+  apiKey: string;
+}): Promise<ClassifiedVisionUiImage[]> {
+  const images = input.images.slice(0, MAX_VISION_IMAGE_CANDIDATES);
+  if (!images.length) return [];
+
+  try {
+    const inventory = images
+      .map((img, idx) =>
+        `${idx + 1}. ${img.sourceName} :: ${img.label} | kind=${img.kind}${img.pageNo ? ` | page=${img.pageNo}` : ''}`,
+      )
+      .join('\n');
+    const out = await runOpenAIResponsesText(
+      [
+        {
+          role: 'system',
+          content: [
+            'Return ONLY JSON, no markdown.',
+            'Classify extracted document images for UI-style grounding.',
+            'A UI image is a product screen, app screen, website layout, dashboard, admin panel, form, list view, navigation shell, wireframe, or UI mockup.',
+            'Mark false for photos, logos, tables, scanned text pages, charts, signatures, plain document pages, or diagrams that do not visibly show interface layout.',
+            'Output format:',
+            '{"images":[{"index":1,"isUi":true,"styleRelevance":0,"reason":"..."}]}',
+            'styleRelevance is 0-100 and should reflect how useful the image is for visual design-system generation.',
+          ].join('\n'),
+        },
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'input_text',
+              text: [
+                `Design brief:\n${clipText(input.brief, 3000) || '(none)'}`,
+                '',
+                'Images are in this exact order:',
+                inventory,
+                '',
+                'Be strict. Only keep images that visibly show product UI or wireframe structure.',
+              ].join('\n'),
+            },
+            ...images.map((img) => ({
+              type: 'input_image' as const,
+              image_url: img.signedUrl,
+              detail: 'low' as const,
+            })),
+          ],
+        },
+      ],
+      {
+        apiKey: input.apiKey,
+        temperature: 0,
+        maxOutputTokens: 1200,
+        withWebSearch: false,
+      },
+    );
+    const parsed = parseJsonObject(out);
+    const rows = Array.isArray(parsed?.images) ? (parsed.images as unknown[]) : [];
+    const selected = rows
+      .map((row) => (row && typeof row === 'object' ? (row as JsonRecord) : null))
+      .filter((row): row is JsonRecord => row !== null)
+      .map((row) => {
+        const index = Math.floor(Number(row.index || 0));
+        const img = index >= 1 && index <= images.length ? images[index - 1] : null;
+        if (!img) return null;
+        const styleRelevance = Math.max(0, Math.min(100, Math.floor(Number(row.styleRelevance || 0))));
+        const isUi = row.isUi === true || normalizeText(row.isUi).toLowerCase() === 'true';
+        return isUi
+          ? ({
+              ...img,
+              uiScore: styleRelevance,
+              rationale: clipText(row.reason, 220) || 'Model classified the image as UI-relevant.',
+            } satisfies ClassifiedVisionUiImage)
+          : null;
+      })
+      .filter((row): row is ClassifiedVisionUiImage => row !== null)
+      .sort((a, b) => b.uiScore - a.uiScore)
+      .slice(0, MAX_VISION_INPUT_IMAGES);
+
+    if (selected.length) return selected;
+  } catch {
+    // fall back to heuristics below
+  }
+
+  return fallbackVisionUiImages(images);
 }
 
 async function collectUploadTexts(input: {
@@ -1522,6 +1799,8 @@ async function collectUploadTexts(input: {
     let text = '';
     const isTextFile = isLikelyTextFile(upload.name, upload.mimeType);
     const sourceKind: UploadExtractionSourceKind = isTextFile ? 'text' : 'docling';
+    let doclingImages: CollectedUploadImageAsset[] = [];
+    let imageManifestObjectPath = '';
     if (isTextFile) {
       await input.onProgress?.({ index: index + 1, total, name: upload.name, action: 'download_input', sourceKind: 'text' });
       const { data: blob, error } = await withTimeout(
@@ -1534,7 +1813,7 @@ async function collectUploadTexts(input: {
       text = clipText(await withTimeout(`Read upload ${upload.name}`, STORAGE_TEXT_READ_TIMEOUT_MS, () => blob.text()), MAX_UPLOAD_TEXT);
     } else {
       await input.onProgress?.({ index: index + 1, total, name: upload.name, action: 'convert_docling', sourceKind: 'docling' });
-      text = await convertViaDocling({
+      const converted = await convertViaDocling({
         userId: input.requesterUserId,
         objectPath: upload.objectPath,
         originalFilename: upload.name,
@@ -1544,6 +1823,13 @@ async function collectUploadTexts(input: {
           await input.onProgress?.({ index: index + 1, total, name: upload.name, action, sourceKind: 'docling' });
         },
       });
+      text = converted.text;
+      imageManifestObjectPath = converted.imageManifestObjectPath;
+      doclingImages = converted.images.map((asset) => ({
+        ...asset,
+        sourceName: safeFileName(upload.name),
+        sourceObjectPath: upload.objectPath,
+      }));
     }
 
     await input.onProgress?.({ index: index + 1, total, name: upload.name, action: 'analyze', sourceKind });
@@ -1563,6 +1849,8 @@ async function collectUploadTexts(input: {
         mimeType: upload.mimeType,
         size: upload.size,
       }),
+      images: doclingImages,
+      imageManifestObjectPath,
     });
 
     await input.onProgress?.({ index: index + 1, total, name: upload.name, action: 'done', sourceKind });
@@ -1651,6 +1939,13 @@ async function repairDiagramWithTargetedPatches(input: {
 async function generateSingleDiagram(input: {
   generation: PipelineGenerationConfig;
   uploadTexts: Array<{ name: string; text: string }>;
+  uploadImages?: Array<{
+    name: string;
+    signedUrl: string;
+    sourceName: string;
+    kind: DoclingImageAssetKind;
+    pageNo: number | null;
+  }>;
   onMonitorUpdate?: (event: {
     attempt: number;
     mode: string;
@@ -1691,24 +1986,75 @@ async function generateSingleDiagram(input: {
   ].join('\n');
 
   let markdown = makeStarterDiagramMarkdown();
-  const first = await runPipelineGenerationText({
-    generation: input.generation,
-    system,
-    maxTokens: 7200,
-    temperature: 0.2,
-    messages: [
-      {
-        role: 'user',
-        content: [
-          'Create one comprehensive diagram from these uploaded sources.',
-          'Ensure line-level linking anchors are possible.',
-          'Keep the node tree readable and structurally complete.',
-          '',
-          sourceText || '(no upload text found)',
-        ].join('\n'),
-      },
-    ],
-  });
+  const imageInventory = (input.uploadImages || [])
+    .map((img, idx) => `${idx + 1}. ${img.name} | source=${img.sourceName} | kind=${img.kind}${img.pageNo ? ` | page=${img.pageNo}` : ''}`)
+    .join('\n');
+  let first = '';
+  let initialMode = 'initial_generation';
+  if ((input.uploadImages || []).length > 0) {
+    try {
+      first = await runOpenAIResponsesText(
+        [
+          { role: 'system', content: system },
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'input_text',
+                text: [
+                  'Create one comprehensive diagram from these uploaded sources.',
+                  'Ensure line-level linking anchors are possible.',
+                  'Keep the node tree readable and structurally complete.',
+                  'Use the extracted images as supplemental grounding for UI, flows, and embedded diagrams.',
+                  'Do not describe the images separately; fold their evidence into the node tree.',
+                  '',
+                  'Uploaded source text:',
+                  sourceText || '(no upload text found)',
+                  '',
+                  'Selected extracted images:',
+                  imageInventory || '(none)',
+                ].join('\n'),
+              },
+              ...(input.uploadImages || []).map((img) => ({
+                type: 'input_image' as const,
+                image_url: img.signedUrl,
+                detail: 'low' as const,
+              })),
+            ],
+          },
+        ],
+        {
+          apiKey: input.generation.openaiApiKey,
+          temperature: 0.2,
+          maxOutputTokens: 7200,
+        },
+      );
+      initialMode = 'initial_generation_multimodal';
+    } catch {
+      first = '';
+      initialMode = 'initial_generation_fallback';
+    }
+  }
+  if (!first) {
+    first = await runPipelineGenerationText({
+      generation: input.generation,
+      system,
+      maxTokens: 7200,
+      temperature: 0.2,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            'Create one comprehensive diagram from these uploaded sources.',
+            'Ensure line-level linking anchors are possible.',
+            'Keep the node tree readable and structurally complete.',
+            '',
+            sourceText || '(no upload text found)',
+          ].join('\n'),
+        },
+      ],
+    });
+  }
   markdown = sanitizeDiagramMarkdown(first);
   markdown = await progressivelyEnrichDiagramMarkdown({
     generation: input.generation,
@@ -1718,7 +2064,7 @@ async function generateSingleDiagram(input: {
   });
   await emitMonitor({
     attempt: 0,
-    mode: 'initial_generation',
+    mode: initialMode,
     markdown,
     validation: validateNexusMarkdownImport(markdown),
   });
@@ -2347,8 +2693,68 @@ function storyRowsToGridMarkdown(stories: PipelineStory[], epicsById: Map<string
 async function buildVisionDesignSystem(input: {
   generation: PipelineGenerationConfig;
   brief: string;
+  artifactImages?: ClassifiedVisionUiImage[];
 }): Promise<VisionDesignSystemV1> {
   const base = defaultVisionDesignSystem();
+  const artifactImages = (input.artifactImages || []).slice(0, MAX_VISION_INPUT_IMAGES);
+  if (artifactImages.length > 0) {
+    try {
+      const imageNotes = artifactImages
+        .map((img, idx) =>
+          `${idx + 1}. ${img.sourceName} :: ${img.label} | kind=${img.kind}${img.pageNo ? ` | page=${img.pageNo}` : ''} | uiScore=${img.uiScore} | note=${img.rationale}`,
+        )
+        .join('\n');
+      const out = await runOpenAIResponsesText(
+        [
+          {
+            role: 'system',
+            content: [
+              'Return ONLY JSON. No markdown fences.',
+              'Task: Generate a Diregram Vision design system object (version:1).',
+              'Use uploaded UI images as the primary visual evidence. Use the written brief for product/domain context only.',
+              'Ignore non-visual product requirements when they conflict with the actual UI style shown in the images.',
+              'Required top-level shape:',
+              '{"version":1,"activeScenarioId":"base","scenarios":[...],"foundations":{"fontFamily":"...","headingFontFamily":"...","decorativeFontFamily":"...","imageProfiles":[...]},"controls":{...}}',
+              `Allowed primitive ids: ${primitiveAllowlistText()}`,
+              'Be explicit about palette pairings, typography, spacing, roundness, saturation, boldness, dark-mode stance, and imageProfiles.',
+              'Do not return a placeholder/generic template if the images show a stronger style direction.',
+            ].join('\n'),
+          },
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'input_text',
+                text: [
+                  `Design brief:\n${clipText(input.brief, 5000) || '(none)'}`,
+                  '',
+                  `Selected UI images (${artifactImages.length}):`,
+                  imageNotes || '(none)',
+                ].join('\n'),
+              },
+              ...artifactImages.map((img) => ({
+                type: 'input_image' as const,
+                image_url: img.signedUrl,
+                detail: 'low' as const,
+              })),
+            ],
+          },
+        ],
+        {
+          apiKey: input.generation.openaiApiKey,
+          temperature: 0.2,
+          maxOutputTokens: 4000,
+          withWebSearch: false,
+        },
+      );
+      const parsed = parseJsonObject(out);
+      const direct = coerceVisionDesignSystem(parsed);
+      if (direct) return normalizeVisionDesignSystem(direct);
+    } catch {
+      // fall through to the text-only fallback below
+    }
+  }
+
   const prompt = [
     'Return ONLY JSON:',
     '{"fontFamily":"...","headingFontFamily":"...","primaryPrimitive":"...","accentPrimitives":["..."],"tone":"..."}',
@@ -2684,15 +3090,22 @@ export async function runProjectPipelineJob(job: AsyncJobRow): Promise<Record<st
 
   const usableUploadTexts = uploadTexts.filter((item) => !item.analysis.lowSignal);
   const blockedUploadTexts = uploadTexts.filter((item) => item.analysis.lowSignal);
+  const selectedDiagramImages = selectDoclingDiagramImages(usableUploadTexts.flatMap((item) => item.images));
+  const signedDiagramImages = await createSignedDoclingImageUrls({
+    assets: selectedDiagramImages,
+    admin,
+  });
   pipelineLog(job.id, 'prepare_inputs_complete', {
     usableCount: usableUploadTexts.length,
     blockedCount: blockedUploadTexts.length,
+    selectedImageCount: signedDiagramImages.length,
     files: uploadTexts.map((item) => ({
       name: item.name,
       sourceKind: item.sourceKind,
       lowSignal: item.analysis.lowSignal,
       charCount: item.analysis.charCount,
       wordCount: item.analysis.wordCount,
+      imageCount: item.images.length,
     })),
   });
 
@@ -2717,6 +3130,8 @@ export async function runProjectPipelineJob(job: AsyncJobRow): Promise<Record<st
           lowSignal: item.analysis.lowSignal,
           warnings: item.analysis.warnings.slice(0, 4),
           previewText: item.analysis.preview,
+          imageCount: item.images.length,
+          imageManifestObjectPath: item.imageManifestObjectPath,
         })),
       },
     },
@@ -2743,6 +3158,7 @@ export async function runProjectPipelineJob(job: AsyncJobRow): Promise<Record<st
   await setStage('generate_single_diagram', 16, {
     sourceCount: usableUploadTexts.length,
     ignoredSourceCount: blockedUploadTexts.length,
+    sourceImageCount: signedDiagramImages.length,
   });
 
   const diagramMarkdown = await generateSingleDiagram({
@@ -2750,6 +3166,13 @@ export async function runProjectPipelineJob(job: AsyncJobRow): Promise<Record<st
     uploadTexts: usableUploadTexts.map((x) => ({
       name: x.sourceKind === 'docling' ? `${x.name} (converted)` : x.name,
       text: x.text,
+    })),
+    uploadImages: signedDiagramImages.map((img) => ({
+      name: `${img.sourceName} :: ${img.label}`,
+      signedUrl: img.signedUrl,
+      sourceName: img.sourceName,
+      kind: img.kind,
+      pageNo: img.pageNo,
     })),
     onMonitorUpdate: async (event) => {
       const preview = normalizeNewlines(event.markdown).split('\n').slice(0, 260).join('\n').slice(0, 20_000);
@@ -2927,9 +3350,37 @@ export async function runProjectPipelineJob(job: AsyncJobRow): Promise<Record<st
   await ensureNotCancelled();
   await setStage('generate_design_system_and_components', 70, { componentGapCount: synthesis.componentGaps.length });
 
+  const selectedVisionImageCandidates = selectDoclingVisionImageCandidates(usableUploadTexts.flatMap((item) => item.images));
+  const signedVisionImageCandidates = await createSignedDoclingImageUrls({
+    assets: selectedVisionImageCandidates,
+    admin,
+  });
+  const visionUiImages = await classifyVisionUiImages({
+    brief: synthesis.designSystemBrief,
+    images: signedVisionImageCandidates,
+    apiKey: openaiApiKey,
+  });
+  pipelineLog(job.id, 'vision_ui_image_selection', {
+    candidateCount: signedVisionImageCandidates.length,
+    selectedCount: visionUiImages.length,
+    selected: visionUiImages.map((img) => ({
+      sourceName: img.sourceName,
+      label: img.label,
+      kind: img.kind,
+      pageNo: img.pageNo,
+      uiScore: img.uiScore,
+    })),
+  });
+  await setStage('generate_design_system_and_components', 71, {
+    componentGapCount: synthesis.componentGaps.length,
+    visionImageCandidateCount: signedVisionImageCandidates.length,
+    visionUiImageCount: visionUiImages.length,
+  });
+
   const designSystem = await buildVisionDesignSystem({
     generation,
     brief: synthesis.designSystemBrief,
+    artifactImages: visionUiImages,
   });
   const visionStarter = makeStarterVisionMarkdown();
   const baseVisionDoc = loadVisionDoc(visionStarter).doc;
