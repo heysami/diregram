@@ -10,6 +10,16 @@ AVOID:
   → Main canvas non-#flow# nodes MUST be things a user can click to reach (sections/screens/menu items/functions)
   → AVOID generic ideas / conceptual prose as IA nodes
 
+☐ IA title / artifact-fit sanity (MUST):
+  → Screen/page/section nodes SHOULD read like destinations or navigation items:
+    - GOOD: "Checkout", "Order history", "Application details", "Payment settings"
+  → Function leaves MAY read like concise capabilities, but still as UI-reachable items:
+    - GOOD: "Submit application", "Download invoice"
+  → Move or rewrite anything that reads like:
+    - step/action prose ("user can click confirm", "then verify email")
+    - low-level component labels without screen context ("Confirm button", "Dropdown")
+    - raw domain entities that belong in data-objects ("Order", "Invoice"), unless the node is clearly a screen such as "Order details"
+
 ☐ Multi-portal IA roots (MUST):
   → If the product has multiple portals/surfaces (public site, self-service portal, operations/admin portal, partner/vendor portal), EACH portal MUST be its own top-level IA root (indentation level 0).
   → Do NOT nest multiple portals under a single parent IA node.

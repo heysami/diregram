@@ -12,6 +12,17 @@ AVOID:
     - Prefer splitting into session-scoped #flow# processes AND linking them via Phase/Status hubs and/or Flowtab swimlane handoffs.
     - Modeling option: use a dimension like (Phase=...) or (Session=...) to segment timeframes instead of forcing one long #flow# chain.
 
+☐ Variant / state naming sanity (MUST):
+  → Hub labels should be stable entities/screens/processes; condition keys/values should be state or timeframe axes.
+  → GOOD:
+    - "Application (status=submitted)"
+    - "Case (phase=review)"
+  → BAD:
+    - "Application (click=confirm)"
+    - "Confirm button (variant=open)"
+    - step prose used as a dimension value
+  → If a condition value reads like a step/action, it belongs in #flow#.
+
 ☐ Hub formation rules (MUST):
   → MUST use sibling lines with EXACT same title text plus (Key=value, ...) to form variants
   → MUST avoid ambiguous hubs:
@@ -54,4 +65,3 @@ AVOID:
     - If it is out-of-scope, explicitly mark it as out-of-scope with a reason (annotation)
   → Reminder: Any object with a status/state SHOULD have explicit states/transitions (dimension descriptions or equivalent), or be explicitly out-of-scope.
 `;
-

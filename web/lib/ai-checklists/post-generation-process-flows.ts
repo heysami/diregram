@@ -14,6 +14,22 @@ MUST:
   → P = #flow# process roots on main canvas (exclude Flowtab subtree)
   → Each root should represent ONE coherent session/timeframe
 
+☐ Step / action-fit sanity (MUST):
+  → #flow# node titles MUST read like concrete actions, decisions, waits, or outcomes.
+  → GOOD:
+    - "Enter shipping address"
+    - "Confirm order"
+    - "Payment failed?"
+    - "Wait for approval"
+  → BAD:
+    - "Checkout page"
+    - "Confirm button"
+    - "Order object"
+    - "user can click confirm"
+  → If a title reads like a screen/page, move it to IA/expanded UI.
+  → If it reads like a component/control, move it to expanded UI.
+  → If it reads like a domain entity, move it to data-objects.
+
 ☐ Process typing linkage (CRITICAL MUST):
   → If ANY \`\`\`process-node-type-N\`\`\` blocks exist, a \`\`\`flow-nodes\`\`\` registry MUST exist
   → For EACH \`\`\`process-node-type-N\`\`\` block:

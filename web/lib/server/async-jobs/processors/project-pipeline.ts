@@ -1986,75 +1986,25 @@ async function generateSingleDiagram(input: {
   ].join('\n');
 
   let markdown = makeStarterDiagramMarkdown();
-  const imageInventory = (input.uploadImages || [])
-    .map((img, idx) => `${idx + 1}. ${img.name} | source=${img.sourceName} | kind=${img.kind}${img.pageNo ? ` | page=${img.pageNo}` : ''}`)
-    .join('\n');
-  let first = '';
-  let initialMode = 'initial_generation';
-  if ((input.uploadImages || []).length > 0) {
-    try {
-      first = await runOpenAIResponsesText(
-        [
-          { role: 'system', content: system },
-          {
-            role: 'user',
-            content: [
-              {
-                type: 'input_text',
-                text: [
-                  'Create one comprehensive diagram from these uploaded sources.',
-                  'Ensure line-level linking anchors are possible.',
-                  'Keep the node tree readable and structurally complete.',
-                  'Use the extracted images as supplemental grounding for UI, flows, and embedded diagrams.',
-                  'Do not describe the images separately; fold their evidence into the node tree.',
-                  '',
-                  'Uploaded source text:',
-                  sourceText || '(no upload text found)',
-                  '',
-                  'Selected extracted images:',
-                  imageInventory || '(none)',
-                ].join('\n'),
-              },
-              ...(input.uploadImages || []).map((img) => ({
-                type: 'input_image' as const,
-                image_url: img.signedUrl,
-                detail: 'low' as const,
-              })),
-            ],
-          },
-        ],
-        {
-          apiKey: input.generation.openaiApiKey,
-          temperature: 0.2,
-          maxOutputTokens: 7200,
-        },
-      );
-      initialMode = 'initial_generation_multimodal';
-    } catch {
-      first = '';
-      initialMode = 'initial_generation_fallback';
-    }
-  }
-  if (!first) {
-    first = await runPipelineGenerationText({
-      generation: input.generation,
-      system,
-      maxTokens: 7200,
-      temperature: 0.2,
-      messages: [
-        {
-          role: 'user',
-          content: [
-            'Create one comprehensive diagram from these uploaded sources.',
-            'Ensure line-level linking anchors are possible.',
-            'Keep the node tree readable and structurally complete.',
-            '',
-            sourceText || '(no upload text found)',
-          ].join('\n'),
-        },
-      ],
-    });
-  }
+  const first = await runPipelineGenerationText({
+    generation: input.generation,
+    system,
+    maxTokens: 7200,
+    temperature: 0.2,
+    messages: [
+      {
+        role: 'user',
+        content: [
+          'Create one comprehensive diagram from these uploaded sources.',
+          'Ensure line-level linking anchors are possible.',
+          'Keep the node tree readable and structurally complete.',
+          'Treat uploaded images as a separate later-stage input for filtering/vision only. Do not wait for or depend on image analysis in this stage.',
+          '',
+          sourceText || '(no upload text found)',
+        ].join('\n'),
+      },
+    ],
+  });
   markdown = sanitizeDiagramMarkdown(first);
   markdown = await progressivelyEnrichDiagramMarkdown({
     generation: input.generation,
@@ -2064,7 +2014,7 @@ async function generateSingleDiagram(input: {
   });
   await emitMonitor({
     attempt: 0,
-    mode: initialMode,
+    mode: 'initial_generation_progressive',
     markdown,
     validation: validateNexusMarkdownImport(markdown),
   });

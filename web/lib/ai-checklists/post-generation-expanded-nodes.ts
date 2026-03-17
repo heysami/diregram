@@ -13,6 +13,15 @@ MUST:
     - SHOULD have an expid + expanded grid (unless explicitly OOS with reason).
   → Fail mode: only a few screens have expanded grids; the rest are vague leaf nodes.
 
+☐ UI component / artifact-fit sanity (MUST):
+  → Each expanded-grid node’s content MUST match what its uiType represents:
+    - button / navOut = clickable control label, e.g. "Confirm", "Back to orders"
+    - list / filter / tabs / collapsible = grouped UI content label, e.g. "Orders", "Filter by status"
+    - text = heading / label / helper copy, e.g. "Review your order"
+  → Avoid behavior prose such as "user can click confirm"; rewrite it as the actual UI label or helper text.
+  → If content reads like an end-to-end step/action, move it to #flow#.
+  → If content reads like a domain entity, keep it as data binding/relationship context, not as the screen title itself.
+
 ☐ Expanded registry integrity (MUST; import-ready):
   → For each <!-- expid:N --> in the tree:
     - expanded-states has runningNumber N with correct lineIndex + exact content match
@@ -56,4 +65,3 @@ MUST:
   - Using expanded grids to describe end-to-end journeys (use #flow# / Flowtab for that).
   - Nav-only screens with no bindings anywhere (hard to validate data model against UX).
 `;
-

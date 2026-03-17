@@ -45,6 +45,19 @@ Root
 SECTION 1.5 — NODE INTENT (FOCUS PER NODE; do not mix levels)
 ===============================================================================
 Every node line must have a clear intent. Use the RIGHT editor/diagram for the RIGHT content.
+- Before you finalize ANY layer, run an artifact-type fit check:
+  - IA nodes should read like places in navigation (portal / section / screen / page / function), not prose journeys.
+  - #flow# nodes should read like actions, decisions, waits, or outcomes.
+  - Expanded-grid nodes should read like UI components/content blocks and match their uiType.
+  - Data objects should read like durable domain entities, attributes, and relationships.
+  - Conditional hubs should read like stable state/timeframe variants, not steps.
+  - Tech Flow boxes should read like systems/modules/services, not screens or user tasks.
+- If a label sounds like the wrong artifact, rename it or move it before continuing.
+  - Example: "user can click confirm" is behavior prose and must be normalized into the correct artifact:
+    - IA: "Order review" / "Confirmation"
+    - Expanded UI button: "Confirm"
+    - #flow# step: "Confirm order"
+    - Data object: never use this as an object name
 
 1) Main Canvas “normal” nodes (NO #flow#, NO #flowtab#):
 - Purpose: Sitemap / information architecture.
@@ -1152,6 +1165,16 @@ PRE-GENERATION CHECKLIST (run mentally BEFORE outputting markdown)
   - Flowtab swimlanes use lanes/stages to indicate party/session boundaries (different system/user, waiting/async, condition gates).
   - Data objects represent domain entities (fields/relationships), referenced from screens/flows as needed.
 
+☐ Artifact-type reevaluation (run after each layer you draft):
+  - IA labels MUST still read like portals/sections/screens/pages/functions someone can navigate to.
+  - #flow# labels MUST still read like concrete actions/decisions/outcomes, not pages or components.
+  - Expanded-grid labels MUST still match the uiType:
+    - buttons/nav items = clickable labels like "Confirm" / "Back to orders"
+    - text = headings/helper copy
+    - lists/sections/tabs = grouped UI content labels
+  - Data object / attribute / relation names MUST still read like durable business data, not screen text or instructions.
+  - If something fails this test, rename it or move it BEFORE final output.
+
 ☐ Flow structure correctness:
   - Linear journeys are nested chains (parent→child→grandchild), not flat sibling lists.
   - Validation/branching splits are modeled as sibling children under the split node.
@@ -1210,7 +1233,7 @@ PRE-GENERATION CHECKLIST (run mentally BEFORE outputting markdown)
   - Avoid duplicating the same feature in two places (“second sitemap” inside hub variants).`;
 
 // Separate copyable checklist for post-generation QA.
-const POST_GENERATION_VERIFICATION_CHECKLIST = `Post-Generation Verification Checklist
+export const POST_GENERATION_VERIFICATION_CHECKLIST = `Post-Generation Verification Checklist
 
 0) Diagram / Content Placement Sanity (focus per node)
 ☐ Normal (non-#flow#, non-#flowtab#) nodes:
@@ -1408,7 +1431,7 @@ const POST_GENERATION_VERIFICATION_CHECKLIST = `Post-Generation Verification Che
 //  - C) Swimlane correctness + coverage
 //  - D) Data objects correctness (logical + wired)
 //  - E) Completeness summary
-const POST_GENERATION_VERIFICATION_CHECKLIST_SPLIT = `Post-Generation Verification Checklist (Split)
+export const POST_GENERATION_VERIFICATION_CHECKLIST_SPLIT = `Post-Generation Verification Checklist (Split)
 
 A) Technical Markdown Correctness (structural; must be import-ready)
 ☐ Indentation:

@@ -32,6 +32,7 @@ function buildPlainTextSteps() {
     '- In Cursor/Codex/Claude, run the generation skill and follow its strict step order.',
     '- If there is a design system or you have an online system, generate Vision assets as part of the generation workflow.',
     '- After generation, run the verification sequence: verify Data Relationship, then re-check IA + Expanded, then Swimlanes, then Tech Flow.',
+    '- In every verification pass, re-evaluate label/type fit: IA should read like pages/screens, flows like actions/decisions, expanded UI like components, and data objects like entity names.',
     '',
     'Stage 3 — Import + tweak + notes + review Semantic KG',
     '- Once they are ok, import to Diagram, import to Vision, and if your resources have Excel convert to CSV and upload to the Grid.',
@@ -120,7 +121,8 @@ export function AiUsageHelpModal({ open, onClose }: { open: boolean; onClose: ()
               <>
                 After generation, run through the list of sequence. After running through <span className="font-semibold">Data Relationship</span> and though you verify again the{' '}
                 <span className="font-semibold">IA + Expanded</span>. Then continue to <span className="font-semibold">Swimlane</span> and lastly the{' '}
-                <span className="font-semibold">Tech Flow</span>.
+                <span className="font-semibold">Tech Flow</span>. In each pass, re-check that labels still fit the layer: pages/screens in IA, actions/decisions in flow, components in expanded UI,
+                and entity nouns in data objects.
               </>
             ),
           },

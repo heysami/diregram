@@ -8,6 +8,11 @@ Goal:
   → Look for a #flow# range where multiple steps are plausibly done on ONE screen without navigating away.
   → Branching inside the range can still be “one screen” when branches represent in-screen tasks (e.g. multiple overlays from the same screen).
 
+☐ Screen-vs-task boundary sanity:
+  → The grouped range should still read like multiple tasks on one screen, not multiple different screens.
+  → Keep screen/page naming in IA + expanded screens; keep task/action labels in #flow# nodes.
+  → If a grouped node reads like a component label ("Confirm button"), it belongs in expanded UI, not as a process step title.
+
 ☐ Repeatable tasks before moving on:
   → Multiple similar actions the user can repeat (add/edit/remove, configure multiple sections) before proceeding.
   → If the user can stay on the same screen and complete N tasks in any order, it is a strong grouping candidate.

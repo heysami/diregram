@@ -10,6 +10,14 @@ AVOID:
   → AVOID lane/stage churn just to “fill the grid”
   → Reminder: lane/stage changes must have a WHY (handoff / async wait / boundary)
 
+☐ Journey-step fit (MUST):
+  → Flowtab/swimlane nodes SHOULD read like chapter-level handoffs, milestones, or outcomes.
+  → Avoid low-level widget labels or micro-actions:
+    - BAD: "Confirm button", "Open dropdown", "User clicks submit"
+  → If text reads like a detailed task sequence, keep it in main-canvas #flow#.
+  → If text reads like a screen/page, keep it in IA/expanded UI.
+  → If text reads like a system/module, keep it in Tech Flow.
+
 ☐ Actor semantics (MUST for #flow# nodes; recommend for Flowtab steps):
   → MUST NOT encode actors in node titles (no "<actor>:" prefixes such as "System:" or "Admissions Admin:")
   → Every #flow# node line MUST declare EXACTLY ONE app-specific actor tag from tg-actors.

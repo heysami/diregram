@@ -30,6 +30,12 @@ Goal:
     - architecture context: reasonable box sizes (not all skinny-tall)
     - sequence: modules are skinny-tall lifelines (gridWidth small, gridHeight tall) and arranged left-to-right
 
+☐ System-vs-screen naming sanity (MUST):
+  → Boxes MUST be systems/services/modules/queues/datastores, not UI screens or user tasks.
+  → Link text MUST describe a technical interaction/message/payload, not generic UI intent.
+  → If an item reads like "Checkout page" or "Confirm order", move it out of Tech Flow.
+  → If it reads like "Payment API", "Order service", "Identity provider", or "Notification queue", it belongs here.
+
 ☐ Zones grouping (SHOULD; architecture pass):
   → Use zones[] to group systems/portals/modules:
     - portal zones (applicant/admin/partner/public)
@@ -51,4 +57,3 @@ Goal:
   - Unlabeled links (hard to audit).
   - No zones at all for a large architecture diagram (becomes unreadable).
 `;
-

@@ -17,6 +17,18 @@ AVOID:
   → Fail if: any object has zero IA anchors.
   → Reminder: anchor “secondary” objects too (verification/session/audit/interface payloads are common misses).
 
+☐ A.5) Entity naming sanity (MUST):
+  → Data object names SHOULD be durable singular domain nouns:
+    - GOOD: "Order", "Invoice", "Verification Session", "Payment"
+  → Attribute names SHOULD be stable field names:
+    - GOOD: "status", "submittedAt", "totalAmount"
+  → Relation names SHOULD still make sense outside any one screen.
+  → Fail examples:
+    - screen/page names ("Checkout page")
+    - component labels ("Confirm button")
+    - action/step prose ("user can click confirm", "Approve application") used as object names
+  → If you cannot explain why the thing persists as business data, it probably is not a data object.
+
 ☐ B) Expanded-screen link realization (MUST for transaction objects):
 For each transaction object do-T (one per counted main-canvas #flow# process root):
   → Pass condition: There exists an expanded screen where:
@@ -101,4 +113,3 @@ For each transaction object do-T (one per counted main-canvas #flow# process roo
   → If a conditional hub is linked to a Data Object and includes a locked status dimension:
     - Its “Describe: Table/Flow” MUST edit the SAME \`doId::attrId\` description blocks (single source of truth)
 `;
-
