@@ -1948,20 +1948,16 @@ function controlBand(value: number): 'low' | 'mid' | 'high' {
   return 'mid';
 }
 
-export type VisionDesignSystemMarkdownPayloadV1 = Omit<VisionDesignSystemV1, 'controls' | 'derived'> & {
-  controls: Omit<VisionDesignSystemControlsV1, 'darkMode'>;
-};
+export type VisionDesignSystemMarkdownPayloadV1 = Omit<VisionDesignSystemV1, 'derived'>;
 
 export function toVisionDesignSystemMarkdownPayload(spec: VisionDesignSystemV1): VisionDesignSystemMarkdownPayloadV1 {
   const ds = normalizeVisionDesignSystem(spec);
-  const controls = { ...ds.controls } as Partial<VisionDesignSystemControlsV1>;
-  delete controls.darkMode;
   return {
     version: 1,
     activeScenarioId: ds.activeScenarioId,
     scenarios: ds.scenarios,
     foundations: ds.foundations,
-    controls: controls as Omit<VisionDesignSystemControlsV1, 'darkMode'>,
+    controls: ds.controls,
     updatedAt: ds.updatedAt,
   };
 }

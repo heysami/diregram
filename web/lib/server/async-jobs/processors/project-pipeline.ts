@@ -26,6 +26,8 @@ import {
   defaultVisionDesignSystem,
   normalizeVisionDesignSystem,
   VISION_TAILWIND_PRIMITIVE_COLORS,
+  VISION_GOOGLE_FONT_OPTIONS,
+  VISION_DECORATIVE_FONT_OPTIONS,
   type VisionDesignSystemV1,
 } from '@/lib/vision-design-system';
 import { loadVisionDoc, saveVisionDoc } from '@/lib/visionjson';
@@ -3110,6 +3112,107 @@ function primitiveAllowlistText(): string {
   return VISION_TAILWIND_PRIMITIVE_COLORS.map((p) => p.id).join(', ');
 }
 
+function visionFontAllowlistText(): string {
+  const base = VISION_GOOGLE_FONT_OPTIONS.map((f) => f.family);
+  const decorative = VISION_DECORATIVE_FONT_OPTIONS.map((f) => f.family);
+  return Array.from(new Set([...base, ...decorative])).join(' | ');
+}
+
+function visionRendererControlGuide(): string {
+  return [
+    'Renderer model:',
+    '- The Vision preview is a fixed shell/template renderer driven by design-system tokens and control sliders, not free-form HTML composition.',
+    '- To create a strong look, populate controls explicitly. If controls are omitted, normalization falls back toward generic defaults.',
+    '',
+    'Required design-system structure:',
+    '- version: 1',
+    '- activeScenarioId',
+    '- scenarios[0..n] with palette + ratios',
+    '- foundations.fontFamily / headingFontFamily / decorativeFontFamily / imageProfiles[]',
+    '- controls with explicit numeric values and enum values',
+    '',
+    `Allowed primitive ids: ${primitiveAllowlistText()}`,
+    `Preferred font families: ${visionFontAllowlistText()}`,
+    '',
+    'How controls map to the preview renderer:',
+    '- controls.typography.baseSizePx: body size baseline',
+    '- controls.typography.baseWeight: default text weight',
+    '- controls.typography.sizeGrowth: quiet-to-editorial type scale expansion',
+    '- controls.typography.weightGrowth: narrow-to-wide heading weight spread',
+    '- controls.typography.contrast: subdued-to-high text contrast',
+    '- controls.fontVariance: single | singleDecorative | splitHeading | splitHeadingDecorative',
+    '- controls.pillTargets: buttons | inputs | chips | tabs | navItems | tableTags',
+    '- controls.spacing.pattern: compact modular scale to broad spacious scale',
+    '- controls.spacing.density: dense to airy layout',
+    '- controls.spacing.aroundVsInside: outer margins versus inner padding bias',
+    '- controls.flatness: line/minimal surfaces to heavy carded surfaces',
+    '- controls.zoning: single plane to deeply nested zones',
+    '- controls.softness: sharp corners to heavily rounded/pill corners',
+    '- controls.surfaceSaturation: neutral surfaces to tinted surfaces',
+    '- controls.itemSaturation: muted UI items to vivid UI items',
+    '- controls.colorVariance: narrow color range to broad accent variation',
+    '- controls.colorBleed: neutral canvas to strong brand tint bleed',
+    '- controls.colorBleedTone: primary | accent | warm | cool | custom',
+    '- controls.colorBleedText: neutral typography to subtly tinted typography',
+    '- controls.wireframeFeeling: polished solid surfaces to outline/schematic feeling',
+    '- controls.visualRange: restrained fills to richer gradients/visual expression',
+    '- controls.skeuomorphism: flat to material depth',
+    '- controls.skeuomorphismStyle: subtle | neomorphic | glass | glow | embossed',
+    '- controls.negativeZoneStyle: flat canvas to textured/gradient/image-like negative space',
+    '- controls.boldness: restrained hero/nav/actions to loud expressive hero/nav/actions',
+    '- controls.boldTypographyStyle: none | gradient | glow | gradientGlow',
+    '- controls.boldGradientSource: auto | custom',
+    '- controls.strictNoDarkMode: boolean',
+    '- controls.darkMode: include explicit dark-mode stance and override colors when needed',
+    '',
+    'Scenario + palette requirements:',
+    '- palette.primary / accent / neutral / semantic must be actual hex values',
+    '- palette.pairings must use primitive ids from the allowlist',
+    '- ratios[].primitiveBreakdown should reflect how much of the UI is neutral vs primary vs accent, not default filler',
+    '',
+    'Image profile requirements:',
+    '- imageProfiles should describe illustration/imagery direction with concrete style, lighting, lineWeight, notes, and placeholder',
+    '',
+    'Do not return a shallow theme token set.',
+    'Return a full renderer-driving design system with concrete controls so the preview meaningfully changes.',
+  ].join('\n');
+}
+
+async function repairVisionDesignSystemCandidate(input: {
+  generation: PipelineGenerationConfig;
+  rawOutput: string;
+  brief: string;
+  swarmInsights?: string;
+}): Promise<VisionDesignSystemV1 | null> {
+  const prompt = [
+    'Repair the candidate into a valid Diregram Vision design system JSON object.',
+    'Return ONLY JSON. No markdown fences.',
+    'The output must conform to version:1 VisionDesignSystemV1 and must drive the fixed preview renderer meaningfully.',
+    '',
+    visionRendererControlGuide(),
+    '',
+    `Design brief:\n${clipText(input.brief, 5000) || '(none)'}`,
+    '',
+    `Swarm insights:\n${clipText(input.swarmInsights, 3500) || '(none)'}`,
+    '',
+    'Candidate output to repair:',
+    clipText(input.rawOutput, 12_000) || '(empty)',
+  ].join('\n');
+
+  try {
+    const repaired = await runPipelineGenerationText({
+      generation: input.generation,
+      maxTokens: 4200,
+      temperature: 0.1,
+      messages: [{ role: 'user', content: prompt }],
+    });
+    const parsed = parseJsonObject(repaired);
+    return parsed ? coerceVisionDesignSystem(parsed) : null;
+  } catch {
+    return null;
+  }
+}
+
 function parseAnchorKeys(input: unknown): string[] {
   if (Array.isArray(input)) {
     return input.map((x) => normalizeText(x)).filter(Boolean).slice(0, 8);
@@ -4219,6 +4322,97 @@ async function buildVisionDesignSystem(input: {
 }): Promise<VisionDesignSystemBuildResult> {
   const base = defaultVisionDesignSystem();
   const artifactImages = (input.artifactImages || []).slice(0, MAX_VISION_INPUT_IMAGES);
+  const schemaGuide = [
+    'Expected JSON shape:',
+    '{',
+    '  "version": 1,',
+    '  "activeScenarioId": "base",',
+    '  "scenarios": [',
+    '    {',
+    '      "id": "base",',
+    '      "name": "Base",',
+    '      "palette": {',
+    '        "primary": "#2563eb",',
+    '        "accent": ["#7c3aed"],',
+    '        "neutral": ["#f8fafc", "#e2e8f0", "#64748b", "#0f172a"],',
+    '        "semantic": { "success": "#16a34a", "warning": "#d97706", "error": "#dc2626", "info": "#2563eb" },',
+    '        "pairings": {',
+    '          "primaryPrimitive": "blue-600",',
+    '          "accentPrimitives": ["violet-600"],',
+    '          "neutralPrimitives": ["slate-50", "slate-200", "slate-600", "slate-900"],',
+    '          "semanticPrimitives": { "success": "green-600", "warning": "amber-600", "error": "red-600", "info": "blue-600" }',
+    '        }',
+    '      },',
+    '      "ratios": [',
+    '        {',
+    '          "scope": "ui",',
+    '          "neutralPct": 72,',
+    '          "primaryPct": 16,',
+    '          "accentPct": 8,',
+    '          "semanticPct": 4,',
+    '          "primitiveBreakdown": [',
+    '            { "id": "neutral-base", "primitiveId": "slate-100", "pct": 46, "usage": "surface" },',
+    '            { "id": "neutral-strong", "primitiveId": "slate-700", "pct": 26, "usage": "surface" },',
+    '            { "id": "primary", "primitiveId": "primary", "pct": 16, "usage": "item" },',
+    '            { "id": "accent-1", "primitiveId": "violet-600", "pct": 8, "usage": "item" },',
+    '            { "id": "accent-2", "primitiveId": "teal-500", "pct": 4, "usage": "item" }',
+    '          ]',
+    '        }',
+    '      ]',
+    '    }',
+    '  ],',
+    '  "foundations": {',
+    '    "fontFamily": "...",',
+    '    "headingFontFamily": "...",',
+    '    "decorativeFontFamily": "...",',
+    '    "imageProfiles": [',
+    '      { "id": "default", "name": "...", "style": "...", "lighting": "...", "lineWeight": "...", "notes": "...", "placeholder": "https://..." }',
+    '    ]',
+    '  },',
+    '  "controls": {',
+    '    "typography": { "baseSizePx": 16, "baseWeight": 420, "sizeGrowth": 48, "weightGrowth": 42, "contrast": 58 },',
+    '    "fontVariance": "splitHeading",',
+    '    "pillTargets": ["buttons", "tabs"],',
+    '    "spacing": { "pattern": 42, "density": 54, "aroundVsInside": 52 },',
+    '    "flatness": 38,',
+    '    "zoning": 68,',
+    '    "softness": 44,',
+    '    "surfaceSaturation": 26,',
+    '    "itemSaturation": 62,',
+    '    "colorVariance": 58,',
+    '    "colorBleed": 24,',
+    '    "colorBleedTone": "accent",',
+    '    "colorBleedCustom": "#2563eb",',
+    '    "colorBleedText": 18,',
+    '    "wireframeFeeling": 12,',
+    '    "visualRange": 64,',
+    '    "skeuomorphism": 22,',
+    '    "skeuomorphismStyle": "subtle",',
+    '    "negativeZoneStyle": 36,',
+    '    "boldness": 58,',
+    '    "boldTypographyStyle": "gradient",',
+    '    "boldGradientSource": "auto",',
+    '    "boldGradientFrom": "#1d4ed8",',
+    '    "boldGradientMid": "#7c3aed",',
+    '    "boldGradientTo": "#14b8a6",',
+    '    "strictNoDarkMode": false,',
+    '    "darkMode": {',
+    '      "showPreview": true,',
+    '      "useOverrides": false,',
+    '      "canvasBg": "#0b1020",',
+    '      "surfaceBg": "#121a2d",',
+    '      "panelBg": "#1b2740",',
+    '      "separator": "#334155",',
+    '      "textPrimary": "#f8fafc",',
+    '      "textSecondary": "#cbd5e1",',
+    '      "textMuted": "#94a3b8",',
+    '      "primary": "#60a5fa",',
+    '      "accent": "#a78bfa",',
+    '      "buttonBg": "#3b82f6"',
+    '    }',
+    '  }',
+    '}',
+  ].join('\n');
   if (artifactImages.length > 0) {
     try {
       const imageNotes = artifactImages
@@ -4235,10 +4429,11 @@ async function buildVisionDesignSystem(input: {
               'Task: Generate a Diregram Vision design system object (version:1).',
               'Use uploaded UI images as the primary visual evidence. Use the written brief for product/domain context only.',
               'Ignore non-visual product requirements when they conflict with the actual UI style shown in the images.',
-              'Required top-level shape:',
-              '{"version":1,"activeScenarioId":"base","scenarios":[...],"foundations":{"fontFamily":"...","headingFontFamily":"...","decorativeFontFamily":"...","imageProfiles":[...]},"controls":{...}}',
-              `Allowed primitive ids: ${primitiveAllowlistText()}`,
-              'Be explicit about palette pairings, typography, spacing, roundness, saturation, boldness, dark-mode stance, and imageProfiles.',
+              visionRendererControlGuide(),
+              '',
+              schemaGuide,
+              '',
+              'Be explicit about palette pairings, typography, spacing, roundness, saturation, variance, zoning, flatness, boldness, dark-mode stance, and imageProfiles.',
               'Do not return a placeholder/generic template if the images show a stronger style direction.',
             ].join('\n'),
           },
@@ -4283,16 +4478,35 @@ async function buildVisionDesignSystem(input: {
           },
         };
       }
+      const repaired = await repairVisionDesignSystemCandidate({
+        generation: input.generation,
+        rawOutput: out,
+        brief: input.brief,
+        swarmInsights: input.swarmInsights,
+      });
+      if (repaired) {
+        return {
+          designSystem: normalizeVisionDesignSystem(repaired),
+          monitor: {
+            mode: 'multimodal',
+            outputPreview: clipText(out, 2400),
+            artifactImageCount: artifactImages.length,
+          },
+        };
+      }
     } catch {
       // fall through to the text-only fallback below
     }
   }
 
   const prompt = [
-    'Return ONLY JSON:',
-    '{"fontFamily":"...","headingFontFamily":"...","primaryPrimitive":"...","accentPrimitives":["..."],"tone":"..."}',
-    `Allowed primitive ids: ${primitiveAllowlistText()}`,
-    'Keep values concise and practical.',
+    'Return ONLY JSON.',
+    'Generate a complete Diregram Vision design system object, not a shallow theme summary.',
+    visionRendererControlGuide(),
+    '',
+    schemaGuide,
+    '',
+    'Use the brief and swarm insights to pick concrete controls that will visibly change the fixed preview renderer.',
     `Brief:\n${clipText(input.brief, 4000) || '(none)'}`,
     `Swarm insights:\n${clipText(input.swarmInsights, 2500) || '(none)'}`,
   ].join('\n\n');
@@ -4300,34 +4514,31 @@ async function buildVisionDesignSystem(input: {
   try {
     const out = await runPipelineGenerationText({
       generation: input.generation,
-      maxTokens: 1000,
+      maxTokens: 4200,
       temperature: 0.2,
       messages: [{ role: 'user', content: prompt }],
     });
-    const parsed = parseJsonObject(out) || {};
-
-    const primary = normalizeText(parsed.primaryPrimitive);
-    const accents = Array.isArray(parsed.accentPrimitives)
-      ? (parsed.accentPrimitives as unknown[]).map((x) => normalizeText(x)).filter(Boolean)
-      : [];
-
-    const ds = normalizeVisionDesignSystem(base);
-    if (normalizeText(parsed.fontFamily)) ds.foundations.fontFamily = clipText(parsed.fontFamily, 120);
-    if (normalizeText(parsed.headingFontFamily)) ds.foundations.headingFontFamily = clipText(parsed.headingFontFamily, 120);
-
-    const active = ds.scenarios.find((s) => s.id === ds.activeScenarioId) || ds.scenarios[0];
-    if (active) {
-      const pairings = active.palette.pairings || {
-        accentPrimitives: [],
-        neutralPrimitives: [],
-        semanticPrimitives: {},
+    const parsed = parseJsonObject(out);
+    const direct = parsed ? coerceVisionDesignSystem(parsed) : null;
+    if (!direct) {
+      const repaired = await repairVisionDesignSystemCandidate({
+        generation: input.generation,
+        rawOutput: out,
+        brief: input.brief,
+        swarmInsights: input.swarmInsights,
+      });
+      if (!repaired) throw new Error('Invalid Vision design system JSON');
+      return {
+        designSystem: normalizeVisionDesignSystem(repaired),
+        monitor: {
+          mode: 'text',
+          outputPreview: clipText(out, 1600),
+          artifactImageCount: artifactImages.length,
+        },
       };
-      if (primary) pairings.primaryPrimitive = primary;
-      if (accents.length) pairings.accentPrimitives = accents.slice(0, 4);
-      active.palette.pairings = pairings;
     }
     return {
-      designSystem: normalizeVisionDesignSystem(ds),
+      designSystem: normalizeVisionDesignSystem(direct),
       monitor: {
         mode: 'text',
         outputPreview: clipText(out, 1600),
