@@ -3,6 +3,7 @@ export const POST_GEN_CHECKLIST_PROCESS_FLOWS = `Post-Generation Checklist — M
 Goal:
   - Ensure process-node-type and flow-graph metadata is LINKED correctly so the UI renders diamonds/time/goto/end as intended.
   - Prevent the common failure mode: “it says validation in markdown but it renders as step”.
+  - Make same-screen grouping explicit so graph/RAG can understand when adjacent flow tasks still belong to one screen.
   - Allowed \`\`\`process-node-type-N\`\`\` values include: step, single_screen_steps, time, loop, action, validation, branch, goto, end.
 
 MUST:
@@ -30,6 +31,11 @@ MUST:
   → If it reads like a component/control, move it to expanded UI.
   → If it reads like a domain entity, move it to data-objects.
 
+☐ Screen-boundary analysis (MUST for non-swimlane flows):
+  → For every adjacent next/previous step range, decide whether the user is still on the SAME underlying screen context.
+  → If several tasks still happen on one screen, group them as Single Screen Steps instead of modeling fake screen transitions.
+  → This matters for graph/RAG because grouped tasks should map to one shared screen context.
+
 ☐ Process typing linkage (CRITICAL MUST):
   → If ANY \`\`\`process-node-type-N\`\`\` blocks exist, a \`\`\`flow-nodes\`\`\` registry MUST exist
   → For EACH \`\`\`process-node-type-N\`\`\` block:
@@ -55,10 +61,11 @@ MUST:
       - MUST have \`\`\`process-loop-N\`\`\` with a valid targetId (node-<lineIndex>)
       - targetId SHOULD be a descendant of the loop node (in-tree)
 
-☐ Single Screen Steps (tree-level grouping; optional):
-  → If you group multiple tasks under ONE screen:
+☐ Single Screen Steps (tree-level grouping; MUST when same-screen range exists):
+  → If adjacent tasks are still under ONE screen:
     - MUST have \`\`\`process-node-type-N\`\`\` type "single_screen_steps" for the START node’s runningNumber (from flow-nodes)
-    - Once “Last step” is configured in the UI, MUST have \`\`\`process-single-screen-N\`\`\` with a valid lastStepRunningNumber
+    - MUST have \`\`\`process-single-screen-N\`\`\` with a valid lastStepRunningNumber for the final in-screen task
+  → Do not leave same-screen steps as separate screens just because they appear sequential in the tree
   → Then run: “Post-Generation Checklist — Single Screen Steps”
 
 ☐ Flow graph payload (optional but recommended for complex flows):

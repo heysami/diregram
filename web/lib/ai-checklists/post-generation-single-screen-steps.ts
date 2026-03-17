@@ -3,6 +3,11 @@ export const POST_GEN_CHECKLIST_SINGLE_SCREEN_STEPS = `Post-Generation Checklist
 Goal:
   - Audit whether adjacent process-flow steps should be grouped as ONE UI screen using "Single Screen Steps".
   - Prevent over-splitting screens (one step per screen) when the UX is realistically one screen with multiple tasks.
+  - Preserve correct graph/RAG grouping so previous/next in-screen tasks resolve to the same screen context.
+
+☐ Mandatory boundary pass:
+  → Run this review on every non-swimlane #flow#, not only when grouping is already obvious.
+  → Ask: “Is the next/previous step still happening under the same underlying screen?”
 
 ☐ Identify candidate ranges:
   → Look for a #flow# range where multiple steps are plausibly done on ONE screen without navigating away.
@@ -29,6 +34,7 @@ Goal:
   → Don’t group across true navigation / screen transitions (route/URL changes, full page replace, new module).
   → Don’t group when leaving the screen is required between tasks (e.g. step requires completion elsewhere).
   → Don’t group across branching points when branches represent true navigation/screen transitions.
+  → Don’t leave a same-screen range ungrouped, or graph/RAG may treat in-screen tasks as different screens.
 
 How to apply in Diregram UI:
   1) Set the start node type to “Single Screen Steps” (\`process-node-type-N\` = \`single_screen_steps\`).

@@ -5,6 +5,10 @@ What it is:
   - The start is a #flow# node typed as \`single_screen_steps\`.
   - The end is selected via a “Last step” dropdown and persisted in \`\`\`process-single-screen-N\`\`\`.
 
+Why it matters:
+  - Treat this as a required screen-boundary analysis for non-swimlane flows: check whether adjacent next/previous steps are still on the same underlying screen.
+  - When grouped correctly, graph/RAG can keep those tasks under one shared screen context instead of misreading them as separate screens.
+
 When to use (heuristics):
   - Repeatable tasks before moving on (e.g. add/edit multiple items, review multiple sections).
   - Pattern: main screen → open overlay → back → open another overlay → back (same base screen context).

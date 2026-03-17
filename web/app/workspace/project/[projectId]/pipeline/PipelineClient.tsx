@@ -29,6 +29,9 @@ type PipelineRunRow = {
     kind: string;
     step: string;
     progressPct: number;
+    level: string;
+    title: string;
+    message: string;
     mode: string;
     attempt: number;
     errorCount: number;
@@ -236,6 +239,9 @@ export default function PipelineClient({ projectId }: { projectId: string }) {
                   kind: String(item.kind || 'stage'),
                   step: String(item.step || ''),
                   progressPct: Number(item.progressPct || 0),
+                  level: String(item.level || 'info'),
+                  title: String(item.title || ''),
+                  message: String(item.message || ''),
                   mode: String(item.mode || ''),
                   attempt: Number(item.attempt || 0),
                   errorCount: Number(item.errorCount || 0),
@@ -761,6 +767,7 @@ export default function PipelineClient({ projectId }: { projectId: string }) {
                   <div className="flex items-center justify-between gap-2">
                     <div className="font-semibold">
                       {event.kind}
+                      {event.level && event.kind === 'activity' ? ` · ${event.level}` : ''}
                       {event.mode ? ` · ${event.mode}` : ''}
                       {event.attempt ? ` · attempt ${event.attempt}` : ''}
                     </div>
@@ -769,6 +776,8 @@ export default function PipelineClient({ projectId }: { projectId: string }) {
                   <div className="opacity-70">
                     {event.step || '-'} ({Math.max(0, Math.min(100, Math.floor(event.progressPct || 0)))}%)
                   </div>
+                  {event.title ? <div className="mt-1 font-semibold">{event.title}</div> : null}
+                  {event.message ? <div className="mt-1 whitespace-pre-wrap">{event.message}</div> : null}
                   <div className="opacity-70">
                     errors: {Math.max(0, Math.floor(event.errorCount || 0))} · warnings: {Math.max(0, Math.floor(event.warningCount || 0))}
                   </div>

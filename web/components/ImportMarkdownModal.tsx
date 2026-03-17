@@ -189,8 +189,13 @@ What to focus on (WIZARD / multi-step UX):
 - Non-swimlane flow realism (MUST):
   - Each step should correspond to a SCREEN or an explicit system action that a user/admin can observe.
   - If a step cannot be tied to UI or an observable system event, it is probably too conceptual — move it to a Flow tab swimlane stage/label instead.
+  - Screen-boundary analysis is REQUIRED:
+    - For every adjacent next/previous step, decide whether the user is still on the SAME underlying screen context.
+    - If multiple tasks still happen under one screen, group that contiguous range using "single_screen_steps" instead of pretending each task is a new screen.
+    - This grouping matters for graph/RAG semantics because those tasks should resolve to one shared screen context.
 
 Single Screen Steps (group tasks under ONE screen; process flows only):
+- Treat this as a required analysis pass for non-swimlane #flow# trees, not an optional cleanup.
 - Use when multiple steps are realistically completed on the SAME underlying screen context before moving on.
 - Heuristics:
   - Repeatable tasks before moving to the next step (e.g. add/edit multiple items, review multiple sections).

@@ -231,6 +231,11 @@ type AgentOutputRecord = {
     detail: string;
     diagramRefs: DiagramLinkRef[];
   }>;
+  monitor?: {
+    usedFallback: boolean;
+    outputPreview: string;
+    kbContextPreview: string;
+  };
 };
 
 type PipelineSynthesis = {
@@ -238,6 +243,21 @@ type PipelineSynthesis = {
   stories: PipelineStory[];
   designSystemBrief: string;
   componentGaps: PipelineComponentGap[];
+  monitor?: {
+    outputPreview: string;
+    usedEpicFallback: boolean;
+    usedStoryFallback: boolean;
+    designSystemBriefPreview: string;
+  };
+};
+
+type VisionDesignSystemBuildResult = {
+  designSystem: VisionDesignSystemV1;
+  monitor: {
+    mode: 'multimodal' | 'text' | 'default_fallback';
+    outputPreview: string;
+    artifactImageCount: number;
+  };
 };
 
 function nowIso() {
@@ -1864,7 +1884,7 @@ async function repairDiagramWithTargetedPatches(input: {
   markdown: string;
   validation: ImportValidationResult;
 }): Promise<string | null> {
-  const issues = input.validation.errors.slice(0, MAX_DIAGRAM_FIX_ISSUES);
+  const issues = [...input.validation.errors, ...input.validation.warnings].slice(0, MAX_DIAGRAM_FIX_ISSUES);
   if (!issues.length) return input.markdown;
   const targets = buildMarkdownFixTargets(input.markdown, issues);
   if (!targets.length) return null;
@@ -2024,7 +2044,7 @@ async function generateSingleDiagram(input: {
     const attemptStartHash = hashMarkdown(markdown);
     let validation = validateNexusMarkdownImport(markdown);
     let integrityIssues = assessDiagramIntegrity(markdown);
-    if (!validation.errors.length && !integrityIssues.length) return markdown;
+    if (!validation.errors.length && !validation.warnings.length && !integrityIssues.length) return markdown;
     await emitMonitor({
       attempt: attempt + 1,
       mode: 'attempt_start',
@@ -2043,7 +2063,7 @@ async function generateSingleDiagram(input: {
         markdown,
         validation: localValidation,
       });
-      if (!localValidation.errors.length && !localIntegrityIssues.length) return markdown;
+      if (!localValidation.errors.length && !localValidation.warnings.length && !localIntegrityIssues.length) return markdown;
       validation = localValidation;
       integrityIssues = localIntegrityIssues;
     }
@@ -2062,7 +2082,7 @@ async function generateSingleDiagram(input: {
         markdown: targeted,
         validation: targetedValidation,
       });
-      if (!targetedValidation.errors.length && !targetedIntegrityIssues.length) return targeted;
+      if (!targetedValidation.errors.length && !targetedValidation.warnings.length && !targetedIntegrityIssues.length) return targeted;
       if (
         shouldAcceptCandidateValidation({
           current: validation,
@@ -2077,8 +2097,9 @@ async function generateSingleDiagram(input: {
     }
 
     const errorSummary = summarizeIssues(validation.errors.map((x) => `${x.code}: ${x.message}`));
+    const warningSummary = summarizeIssues(validation.warnings.map((x) => `${x.code}: ${x.message}`));
     const integritySummary = summarizeIssues(integrityIssues);
-    const detailedHints = validation.errors
+    const detailedHints = [...validation.errors, ...validation.warnings]
       .slice(0, MAX_DIAGRAM_FIX_ISSUES)
       .map((issue, idx) => `${idx + 1}. ${issue.code}: ${normalizeText(issue.message)}\n   Fix hint: ${fixInstructionForValidationIssue(issue)}`)
       .join('\n');
@@ -2104,6 +2125,9 @@ async function generateSingleDiagram(input: {
             '',
             'Fix these validator issues:',
             errorSummary,
+            '',
+            'Fix these validator warnings too. Warnings are blocking for completion:',
+            warningSummary,
             '',
             integrityIssues.length ? 'Fix these diagram integrity issues:' : '',
             integrityIssues.length ? integritySummary : '',
@@ -2132,7 +2156,7 @@ async function generateSingleDiagram(input: {
       markdown: repairedMarkdown,
       validation: repairedValidation,
     });
-    if (!repairedValidation.errors.length && !repairedIntegrityIssues.length) return repairedMarkdown;
+    if (!repairedValidation.errors.length && !repairedValidation.warnings.length && !repairedIntegrityIssues.length) return repairedMarkdown;
     if (
       shouldAcceptCandidateValidation({
         current: validation,
@@ -2164,6 +2188,11 @@ async function generateSingleDiagram(input: {
   if (finalValidation.errors.length) {
     throw new Error(
       `Diagram validation failed after repairs: ${summarizeIssues(finalValidation.errors.map((x) => `${x.code}: ${x.message}`))}`,
+    );
+  }
+  if (finalValidation.warnings.length) {
+    throw new Error(
+      `Diagram warnings remain after repairs: ${summarizeIssues(finalValidation.warnings.map((x) => `${x.code}: ${x.message}`))}`,
     );
   }
   if (finalIntegrityIssues.length) {
@@ -2381,10 +2410,23 @@ async function runSwarmAgent(input: {
           diagramRefs: [fallbackRef],
         },
       ],
+      monitor: {
+        usedFallback: true,
+        outputPreview: clipText(output, 2000),
+        kbContextPreview: clipText(kb.contextText, 1200) || '(none)',
+      },
     };
   }
 
-  return { agent: input.agent, recommendations };
+  return {
+    agent: input.agent,
+    recommendations,
+    monitor: {
+      usedFallback: false,
+      outputPreview: clipText(output, 2000),
+      kbContextPreview: clipText(kb.contextText, 1200) || '(none)',
+    },
+  };
 }
 
 function normalizeStoryId(input: string, fallback: string): string {
@@ -2544,11 +2586,19 @@ async function synthesizePipeline(input: {
     });
   }
 
+  const usedEpicFallback = epicsRaw.length === 0;
+  const usedStoryFallback = storiesRaw.length === 0;
   return {
     epics,
     stories,
     designSystemBrief: clipText(parsed?.designSystemBrief, 3000),
     componentGaps,
+    monitor: {
+      outputPreview: clipText(out, 2400),
+      usedEpicFallback,
+      usedStoryFallback,
+      designSystemBriefPreview: clipText(parsed?.designSystemBrief, 600),
+    },
   };
 }
 
@@ -2644,7 +2694,7 @@ async function buildVisionDesignSystem(input: {
   generation: PipelineGenerationConfig;
   brief: string;
   artifactImages?: ClassifiedVisionUiImage[];
-}): Promise<VisionDesignSystemV1> {
+}): Promise<VisionDesignSystemBuildResult> {
   const base = defaultVisionDesignSystem();
   const artifactImages = (input.artifactImages || []).slice(0, MAX_VISION_INPUT_IMAGES);
   if (artifactImages.length > 0) {
@@ -2699,7 +2749,16 @@ async function buildVisionDesignSystem(input: {
       );
       const parsed = parseJsonObject(out);
       const direct = coerceVisionDesignSystem(parsed);
-      if (direct) return normalizeVisionDesignSystem(direct);
+      if (direct) {
+        return {
+          designSystem: normalizeVisionDesignSystem(direct),
+          monitor: {
+            mode: 'multimodal',
+            outputPreview: clipText(out, 2400),
+            artifactImageCount: artifactImages.length,
+          },
+        };
+      }
     } catch {
       // fall through to the text-only fallback below
     }
@@ -2742,9 +2801,23 @@ async function buildVisionDesignSystem(input: {
       if (accents.length) pairings.accentPrimitives = accents.slice(0, 4);
       active.palette.pairings = pairings;
     }
-    return normalizeVisionDesignSystem(ds);
+    return {
+      designSystem: normalizeVisionDesignSystem(ds),
+      monitor: {
+        mode: 'text',
+        outputPreview: clipText(out, 1600),
+        artifactImageCount: artifactImages.length,
+      },
+    };
   } catch {
-    return normalizeVisionDesignSystem(base);
+    return {
+      designSystem: normalizeVisionDesignSystem(base),
+      monitor: {
+        mode: 'default_fallback',
+        outputPreview: 'Used default normalized Vision design system because AI generation failed.',
+        artifactImageCount: artifactImages.length,
+      },
+    };
   }
 }
 
@@ -2942,6 +3015,8 @@ export async function runProjectPipelineJob(job: AsyncJobRow): Promise<Record<st
   const createdFiles: Array<{ id: string; name: string; kind: 'diagram' | 'grid' | 'vision' | 'note' }> = [];
   const createdResources: Array<{ id: string; name: string; kind: string }> = [];
   let stageState: JsonRecord = { ...(job.state || {}), runLabel };
+  let currentStep = normalizeText(job.step) || 'queued';
+  let currentProgressPct = Math.max(0, Math.min(99, Math.floor(Number(job.progress_pct || 0))));
 
   const appendTimelineEvent = (event: JsonRecord) => {
     const existing = Array.isArray(stageState.timeline)
@@ -2957,11 +3032,13 @@ export async function runProjectPipelineJob(job: AsyncJobRow): Promise<Record<st
   };
 
   const setStage = async (step: string, progressPct: number, patch?: JsonRecord, timelineMeta?: JsonRecord) => {
+    currentStep = step;
+    currentProgressPct = Math.max(1, Math.min(99, Math.floor(progressPct)));
     if (patch) stageState = { ...stageState, ...patch };
     appendTimelineEvent({
       kind: 'stage',
       step,
-      progressPct: Math.max(1, Math.min(99, Math.floor(progressPct))),
+      progressPct: currentProgressPct,
       ...(timelineMeta || {}),
     });
     pipelineLog(job.id, 'stage_update', {
@@ -2972,7 +3049,35 @@ export async function runProjectPipelineJob(job: AsyncJobRow): Promise<Record<st
     await withTimeout(`Async job state update (${step})`, ASYNC_JOB_UPDATE_TIMEOUT_MS, () =>
       updateAsyncJob(job.id, {
         step,
-        progress_pct: Math.max(1, Math.min(99, Math.floor(progressPct))),
+        progress_pct: currentProgressPct,
+        state: stageState,
+      }),
+    );
+  };
+
+  const recordActivity = async (input: {
+    step?: string;
+    level?: 'info' | 'warn' | 'error';
+    title: string;
+    message: string;
+    meta?: JsonRecord;
+  }) => {
+    const step = input.step || currentStep || 'running';
+    const event = {
+      kind: 'activity',
+      step,
+      progressPct: currentProgressPct,
+      level: input.level || 'info',
+      title: clipText(input.title, 160),
+      message: clipText(input.message, 2400),
+      ...(input.meta || {}),
+    } satisfies JsonRecord;
+    appendTimelineEvent(event);
+    pipelineLog(job.id, 'activity', event);
+    await withTimeout(`Async job activity update (${step})`, ASYNC_JOB_UPDATE_TIMEOUT_MS, () =>
+      updateAsyncJob(job.id, {
+        step,
+        progress_pct: currentProgressPct,
         state: stageState,
       }),
     );
@@ -3200,6 +3305,11 @@ export async function runProjectPipelineJob(job: AsyncJobRow): Promise<Record<st
     embeddingModel,
     admin,
   });
+  await recordActivity({
+    step: 'build_rag_from_diagram',
+    title: 'Seed RAG created',
+    message: `Seeded project RAG from the primary diagram with ${seedRag.chunks} chunks. Public project id: ${seedRag.publicProjectId}.`,
+  });
 
   await ensureNotCancelled();
   await setStage('swarm_analysis', 40, { seedChunkCount: seedRag.chunks });
@@ -3210,17 +3320,45 @@ export async function runProjectPipelineJob(job: AsyncJobRow): Promise<Record<st
   for (let i = 0; i < agents.length; i += 1) {
     await ensureNotCancelled();
     const agent = agents[i]!;
-    const output = await runSwarmAgent({
-      agent,
-      generation,
-      ownerId,
-      projectFolderId,
-      openaiApiKey,
-      embeddingModel,
-      diagramLinkIndex,
-      diagramMarkdown,
-    });
+    let output: AgentOutputRecord;
+    try {
+      output = await runSwarmAgent({
+        agent,
+        generation,
+        ownerId,
+        projectFolderId,
+        openaiApiKey,
+        embeddingModel,
+        diagramLinkIndex,
+        diagramMarkdown,
+      });
+    } catch (error) {
+      await recordActivity({
+        step: 'swarm_analysis',
+        level: 'error',
+        title: `Swarm agent failed: ${agent}`,
+        message: error instanceof Error ? error.message : String(error || 'Unknown swarm error'),
+        meta: { agent },
+      });
+      throw error;
+    }
     agentOutputs.push(output);
+    await recordActivity({
+      step: 'swarm_analysis',
+      level: output.monitor?.usedFallback ? 'warn' : 'info',
+      title: `Swarm agent completed: ${agent}`,
+      message: [
+        `Recommendations: ${output.recommendations.length}.`,
+        output.recommendations.length
+          ? `Top titles: ${output.recommendations.slice(0, 3).map((rec) => rec.title).join(' | ')}.`
+          : 'No recommendations returned.',
+        output.monitor?.usedFallback ? 'Fallback recommendation was used.' : '',
+        output.monitor?.outputPreview ? `Model output preview: ${output.monitor.outputPreview}` : '',
+      ]
+        .filter(Boolean)
+        .join(' '),
+      meta: { agent, recommendationCount: output.recommendations.length },
+    });
 
     const { data: resourceData, error: resourceErr } = await admin
       .from('project_resources')
@@ -3229,7 +3367,7 @@ export async function runProjectPipelineJob(job: AsyncJobRow): Promise<Record<st
         project_folder_id: projectFolderId,
         name: `${runLabel}-swarm-${agent}.json`,
         kind: 'json',
-        markdown: JSON.stringify(output, null, 2),
+        markdown: JSON.stringify({ agent: output.agent, recommendations: output.recommendations }, null, 2),
         source: {
           type: 'project_pipeline_swarm_agent',
           runLabel,
@@ -3256,11 +3394,36 @@ export async function runProjectPipelineJob(job: AsyncJobRow): Promise<Record<st
     });
   }
 
-  const synthesis = await synthesizePipeline({
-    generation,
-    diagramLinkIndex,
-    diagramMarkdown,
-    agentOutputs,
+  let synthesis: PipelineSynthesis;
+  try {
+    synthesis = await synthesizePipeline({
+      generation,
+      diagramLinkIndex,
+      diagramMarkdown,
+      agentOutputs,
+    });
+  } catch (error) {
+    await recordActivity({
+      step: 'swarm_analysis',
+      level: 'error',
+      title: 'Synthesis failed',
+      message: error instanceof Error ? error.message : String(error || 'Unknown synthesis error'),
+    });
+    throw error;
+  }
+  await recordActivity({
+    step: 'swarm_analysis',
+    level: synthesis.monitor?.usedStoryFallback || synthesis.monitor?.usedEpicFallback ? 'warn' : 'info',
+    title: 'Swarm synthesis complete',
+    message: [
+      `Epics: ${synthesis.epics.length}. Stories: ${synthesis.stories.length}. Component gaps: ${synthesis.componentGaps.length}.`,
+      synthesis.monitor?.usedEpicFallback ? 'Epic fallback was used.' : '',
+      synthesis.monitor?.usedStoryFallback ? 'Story fallback was used.' : '',
+      synthesis.monitor?.designSystemBriefPreview ? `Design-system brief: ${synthesis.monitor.designSystemBriefPreview}` : '',
+      synthesis.monitor?.outputPreview ? `Synthesis output preview: ${synthesis.monitor.outputPreview}` : '',
+    ]
+      .filter(Boolean)
+      .join(' '),
   });
 
   await ensureNotCancelled();
@@ -3296,6 +3459,11 @@ export async function runProjectPipelineJob(job: AsyncJobRow): Promise<Record<st
       normalizeRefs(synthesis.stories.flatMap((story) => story.diagramRefs)),
     ),
   );
+  await recordActivity({
+    step: 'generate_user_story_grid',
+    title: 'User story grid created',
+    message: `Generated ${synthesis.stories.length} story rows across ${synthesis.epics.length} epics.`,
+  });
 
   await ensureNotCancelled();
   await setStage('generate_design_system_and_components', 70, { componentGapCount: synthesis.componentGaps.length });
@@ -3326,12 +3494,30 @@ export async function runProjectPipelineJob(job: AsyncJobRow): Promise<Record<st
     visionImageCandidateCount: signedVisionImageCandidates.length,
     visionUiImageCount: visionUiImages.length,
   });
+  await recordActivity({
+    step: 'generate_design_system_and_components',
+    title: 'Vision image selection complete',
+    message: `Selected ${visionUiImages.length} UI images from ${signedVisionImageCandidates.length} candidates for vision generation.`,
+  });
 
-  const designSystem = await buildVisionDesignSystem({
+  const visionBuild = await buildVisionDesignSystem({
     generation,
     brief: synthesis.designSystemBrief,
     artifactImages: visionUiImages,
   });
+  await recordActivity({
+    step: 'generate_design_system_and_components',
+    level: visionBuild.monitor.mode === 'default_fallback' ? 'warn' : 'info',
+    title: 'Vision design system generated',
+    message: [
+      `Mode: ${visionBuild.monitor.mode}.`,
+      `Artifact images used: ${visionBuild.monitor.artifactImageCount}.`,
+      `Output preview: ${visionBuild.monitor.outputPreview}`,
+    ]
+      .filter(Boolean)
+      .join(' '),
+  });
+  const designSystem = visionBuild.designSystem;
   const visionStarter = makeStarterVisionMarkdown();
   const baseVisionDoc = loadVisionDoc(visionStarter).doc;
   const nextVisionDoc =
@@ -3359,6 +3545,11 @@ export async function runProjectPipelineJob(job: AsyncJobRow): Promise<Record<st
   linkedArtifacts.push(
     toLinkedArtifact('vision', visionFileId, visionName, normalizeRefs(synthesis.stories.flatMap((story) => story.diagramRefs))),
   );
+  await recordActivity({
+    step: 'generate_design_system_and_components',
+    title: 'Vision file saved',
+    message: `Saved design system file "${visionName}" with font ${designSystem.foundations.fontFamily || '(default)'}.`,
+  });
 
   for (let i = 0; i < synthesis.componentGaps.length; i += 1) {
     await ensureNotCancelled();
@@ -3393,6 +3584,12 @@ export async function runProjectPipelineJob(job: AsyncJobRow): Promise<Record<st
     const resourceLabel = normalizeText((resourceData as { name?: unknown }).name) || resourceName;
     createdResources.push({ id: resourceId, name: resourceLabel, kind: 'tsx' });
     linkedArtifacts.push(toLinkedArtifact('resource', resourceId, resourceLabel, component.diagramRefs));
+    await recordActivity({
+      step: 'generate_design_system_and_components',
+      title: 'Component stub created',
+      message: `Created TSX stub "${resourceLabel}" for ${component.name}.`,
+      meta: { componentId: component.id },
+    });
 
     await setStage('generate_design_system_and_components', 72 + Math.floor(((i + 1) / Math.max(1, synthesis.componentGaps.length)) * 10), {
       componentGenerated: i + 1,
@@ -3434,6 +3631,12 @@ export async function runProjectPipelineJob(job: AsyncJobRow): Promise<Record<st
     linkedArtifacts.push(
       toLinkedArtifact('note', noteFileId, name, normalizeRefs(stories.flatMap((story) => story.diagramRefs))),
     );
+    await recordActivity({
+      step: 'generate_epic_notes',
+      title: 'Epic note created',
+      message: `Saved note "${name}" with ${stories.length} stories linked to the primary diagram.`,
+      meta: { epicId: epic.id, storyCount: stories.length },
+    });
 
     await setStage('generate_epic_notes', 84 + Math.floor(((i + 1) / Math.max(1, synthesis.epics.length)) * 8), {
       epicGenerated: i + 1,
@@ -3455,6 +3658,11 @@ export async function runProjectPipelineJob(job: AsyncJobRow): Promise<Record<st
     },
     project_folder_id: projectFolderId,
     owner_id: ownerId,
+  });
+  await recordActivity({
+    step: 'final_rag_refresh',
+    title: 'Final RAG refresh queued',
+    message: `Queued final RAG ingest using ${createdFiles.length} files and ${createdResources.length} resources.`,
   });
 
   const manifest: PipelineArtifactManifest = {

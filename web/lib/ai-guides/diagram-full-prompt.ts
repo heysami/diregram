@@ -195,8 +195,13 @@ What to focus on (WIZARD / multi-step UX):
 - Non-swimlane flow realism (MUST):
   - Each step should correspond to a SCREEN or an explicit system action that a user/admin can observe.
   - If a step cannot be tied to UI or an observable system event, it is probably too conceptual — move it to a Flow tab swimlane stage/label instead.
+  - Screen-boundary analysis is REQUIRED:
+    - For every adjacent next/previous step, decide whether the user is still on the SAME underlying screen context.
+    - If multiple tasks still happen under one screen, group that contiguous range using "single_screen_steps" instead of pretending each task is a new screen.
+    - This grouping matters for graph/RAG semantics because those tasks should resolve to one shared screen context.
 
 Single Screen Steps (group tasks under ONE screen; process flows only):
+- Treat this as a required analysis pass for non-swimlane #flow# trees, not an optional cleanup.
 - Use when multiple steps are realistically completed on the SAME underlying screen context before moving on.
 - Heuristics:
   - Repeatable tasks before moving to the next step (e.g. add/edit multiple items, review multiple sections).
@@ -1183,6 +1188,10 @@ PRE-GENERATION CHECKLIST (run mentally BEFORE outputting markdown)
   - Non-swimlane #flow# UI-grounding:
     - Step titles should reference screens/actions, not abstract phases.
     - Allowed conceptual exceptions: validation/branch questions, time/wait, goto/loop/redirect.
+  - Single-screen boundary audit:
+    - For every adjacent next/previous step, decide whether it is still the SAME underlying screen context.
+    - If several tasks remain on one screen, plan a "single_screen_steps" start node and the matching grouped end step.
+    - Do not over-split one screen into fake separate screens; graph/RAG should be able to read them as one screen context.
 
 ☐ Separator + metadata placement:
   - A single '---' separator exists.
@@ -1283,6 +1292,11 @@ export const POST_GENERATION_VERIFICATION_CHECKLIST = `Post-Generation Verificat
   → Verify there is a matching \`\`\`process-node-type-*\`\`\` block setting type to "validation" or "branch" for that node (by nodeId)
   → Verify there is a \`\`\`flow-connector-labels\`\`\` entry for EACH parent→child branch edge
   → Verify branch labels explain WHY the path is taken; green #16a34a for success, red #dc2626 for errors
+☐ Single-screen boundary check (MUST for non-swimlane #flow#):
+  → For each adjacent next/previous step range, verify whether the user is still on the SAME underlying screen context
+  → If several tasks still belong to one screen, group them as Single Screen Steps instead of separate screens
+  → When grouped, verify \`\`\`process-node-type-N\`\`\` = "single_screen_steps" on the start node and \`\`\`process-single-screen-N\`\`\` points to the last in-screen step
+  → This grouping is important for graph/RAG so in-screen tasks map to one shared screen context
 
 ☐ Swimlane meaning check:
   → Lane/stage placement reflects party/session boundaries (different users/roles, different systems, waiting/async, condition gates)
@@ -1486,6 +1500,12 @@ A) Technical Markdown Correctness (structural; must be import-ready)
     - \`\`\`flow-nodes\`\`\` MUST contain an entry with runningNumber N
     - That entry’s lineIndex MUST point to the SAME nodeId referenced by the process-node-type block
   → If this mapping is missing/mismatched, the UI will fall back to default type ("step") and diamonds will not appear
+
+☐ Single Screen Steps linkage (MUST when same-screen grouping is present):
+  → Every non-swimlane #flow# should be reviewed for same-screen grouping, not only obvious wizard steps
+  → If adjacent tasks remain on one screen, the START node SHOULD use \`\`\`process-node-type-N\`\`\` = "single_screen_steps"
+  → The grouped range MUST have a matching \`\`\`process-single-screen-N\`\`\` whose lastStepRunningNumber resolves to the final in-screen task
+  → This is important for graph/RAG so previous/next in-screen tasks are not misread as separate screens
 
 ☐ Swimlane JSON constraints:
   → Each \`\`\`flowtab-swimlane-*\`\`\` block has lanes/stages/placement only

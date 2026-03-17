@@ -865,6 +865,7 @@ function buildNodeStructurePrompt(input: {
     'For subtreeReplacementMarkdown: output plain diagram subtree lines only; never include fenced code blocks or triple backticks.',
     'Primary goals:',
     '1) Evaluate whether selected subtree should be process flow, conditional hub, branch split, or grouped single-screen process segment.',
+    '   Treat same-screen grouping as REQUIRED boundary analysis: if adjacent next/previous steps stay within one UI screen context, recommend "single_screen_steps" plus a matching lastPath.',
     '2) Keep edits partial-scope: ONLY selected subtree and necessary process metadata operations.',
     '3) State-machine / flow coherence first; avoid broad file rewrites.',
     'JSON contract:',
