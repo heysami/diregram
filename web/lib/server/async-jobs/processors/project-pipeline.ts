@@ -291,11 +291,19 @@ function parseJsonObject(text: string): JsonRecord | null {
   }
 }
 
+function isStructuredTextMime(mime: string): boolean {
+  if (!mime) return false;
+  if (mime.startsWith('text/')) return true;
+  if (mime === 'application/json' || /\+json$/i.test(mime)) return true;
+  if (mime === 'application/xml' || mime === 'text/xml' || /\+xml$/i.test(mime)) return true;
+  if (mime === 'application/yaml' || mime === 'text/yaml' || mime === 'application/x-yaml' || mime === 'text/x-yaml') return true;
+  return false;
+}
+
 function isLikelyTextFile(name: string, mimeType: string): boolean {
   const mime = normalizeText(mimeType).toLowerCase();
   const file = normalizeText(name).toLowerCase();
-  if (mime.startsWith('text/')) return true;
-  if (mime.includes('json') || mime.includes('xml') || mime.includes('yaml')) return true;
+  if (isStructuredTextMime(mime)) return true;
   return /\.(md|txt|json|csv|tsv|xml|yaml|yml|html|htm|ts|tsx|js|jsx|css|scss|sql)$/i.test(file);
 }
 
