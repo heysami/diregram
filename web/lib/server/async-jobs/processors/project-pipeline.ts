@@ -106,12 +106,14 @@ const MAX_UPLOADS = 50;
 const MAX_UPLOAD_TEXT = 50_000;
 const MAX_DIAGRAM_REPAIR_ATTEMPTS = 16;
 const MAX_SWARM_RECOMMENDATIONS = 24;
+const MAX_SWARM_REVISION_ROUNDS = 3;
 const MAX_DIAGRAM_FIX_TARGETS = 8;
 const MAX_DIAGRAM_FIX_ISSUES = 12;
 const MAX_DIAGRAM_FIX_CONTEXT_CHARS = 6000;
 const MAX_DIAGRAM_FIX_REPLACEMENT_CHARS = 20_000;
 const MAX_PROGRESSIVE_SOURCE_CHARS = 14_000;
 const MAX_POST_SUCCESS_AUDIT_SOURCE_CHARS = 20_000;
+const MAX_POST_SUCCESS_AUDIT_REPAIR_ATTEMPTS = 4;
 const MAX_PROGRESSIVE_TREE_CHARS = 16_000;
 const MAX_PROGRESSIVE_SCREEN_BATCH_SIZE = 3;
 const MAX_PROGRESSIVE_SCREEN_SUBTREE_CHARS = 10_000;
@@ -271,6 +273,10 @@ function pipelineLog(jobId: string, message: string, extra?: Record<string, unkn
     return;
   }
   console.log(`[project_pipeline ${jobId}] ${message}`);
+}
+
+function noRetryError(message: string): Error {
+  return new Error(`[no-retry] ${message}`);
 }
 
 function sanitizeUnicodeText(input: unknown): string {
@@ -2366,11 +2372,11 @@ async function runPostSuccessContentAudit(input: {
     validation: ImportValidationResult;
   }) => Promise<void> | void;
 }): Promise<string> {
-  const emit = async (mode: string, markdown: string) => {
+  const emit = async (mode: string, markdown: string, attempt = 0) => {
     if (!input.onMonitorUpdate) return;
     try {
       await input.onMonitorUpdate({
-        attempt: 0,
+        attempt,
         mode,
         markdown,
         validation: validateNexusMarkdownImport(markdown),
@@ -2461,25 +2467,139 @@ async function runPostSuccessContentAudit(input: {
     let candidateIntegrityIssues = assessDiagramIntegrity(candidate);
     await emit('post_success_audit', candidate);
 
-    const deterministic = autoFixDeterministicValidationIssues(candidate, candidateValidation);
-    if (deterministic !== candidate) {
-      candidate = deterministic;
-      candidateValidation = validateNexusMarkdownImport(candidate);
-      candidateIntegrityIssues = assessDiagramIntegrity(candidate);
-      await emit('post_success_audit_structural_fix', candidate);
-    }
+    let stagnantAttempts = 0;
+    for (let attempt = 1; attempt <= MAX_POST_SUCCESS_AUDIT_REPAIR_ATTEMPTS; attempt += 1) {
+      if (!candidateValidation.errors.length && !candidateValidation.warnings.length && !candidateIntegrityIssues.length) {
+        break;
+      }
 
-    if ((candidateValidation.errors.length || candidateValidation.warnings.length || candidateIntegrityIssues.length) && candidate !== baseMarkdown) {
-      const repaired = await repairDiagramWithTargetedPatches({
+      await emit('post_success_audit_attempt_start', candidate, attempt);
+      const attemptStartHash = hashMarkdown(candidate);
+
+      const deterministic = autoFixDeterministicValidationIssues(candidate, candidateValidation);
+      if (deterministic !== candidate) {
+        candidate = deterministic;
+        candidateValidation = validateNexusMarkdownImport(candidate);
+        candidateIntegrityIssues = assessDiagramIntegrity(candidate);
+        await emit('post_success_audit_structural_fix', candidate, attempt);
+        if (!candidateValidation.errors.length && !candidateValidation.warnings.length && !candidateIntegrityIssues.length) {
+          break;
+        }
+      }
+
+      const targeted = await repairDiagramWithTargetedPatches({
         generation: input.generation,
         markdown: candidate,
         validation: candidateValidation,
       });
-      if (repaired && repaired !== candidate) {
-        candidate = sanitizeDiagramMarkdown(repaired);
-        candidateValidation = validateNexusMarkdownImport(candidate);
-        candidateIntegrityIssues = assessDiagramIntegrity(candidate);
-        await emit('post_success_audit_targeted_repair', candidate);
+      if (targeted && targeted !== candidate) {
+        const targetedValidation = validateNexusMarkdownImport(targeted);
+        const targetedIntegrityIssues = assessDiagramIntegrity(targeted);
+        await emit('post_success_audit_targeted_repair', targeted, attempt);
+        if (!targetedValidation.errors.length && !targetedValidation.warnings.length && !targetedIntegrityIssues.length) {
+          candidate = targeted;
+          candidateValidation = targetedValidation;
+          candidateIntegrityIssues = targetedIntegrityIssues;
+          break;
+        }
+        if (
+          shouldAcceptCandidateValidation({
+            current: candidateValidation,
+            candidate: targetedValidation,
+            currentMarkdown: candidate,
+            candidateMarkdown: targeted,
+          })
+        ) {
+          candidate = targeted;
+          candidateValidation = targetedValidation;
+          candidateIntegrityIssues = targetedIntegrityIssues;
+        }
+      }
+
+      if (candidateValidation.errors.length || candidateValidation.warnings.length || candidateIntegrityIssues.length) {
+        const errorSummary = summarizeIssues(candidateValidation.errors.map((x) => `${x.code}: ${x.message}`));
+        const warningSummary = summarizeIssues(candidateValidation.warnings.map((x) => `${x.code}: ${x.message}`));
+        const integritySummary = summarizeIssues(candidateIntegrityIssues);
+        const detailedHints = [...candidateValidation.errors, ...candidateValidation.warnings]
+          .slice(0, MAX_DIAGRAM_FIX_ISSUES)
+          .map((issue, idx) => `${idx + 1}. ${issue.code}: ${normalizeText(issue.message)}\n   Fix hint: ${fixInstructionForValidationIssue(issue)}`)
+          .join('\n');
+
+        const repaired = await runPipelineGenerationText({
+          generation: input.generation,
+          maxTokens: 5200,
+          temperature: 0.1,
+          system: [
+            'Repair the provided Diregram diagram markdown after a post-success content audit.',
+            'Preserve the audit improvements wherever possible.',
+            'Use the repository content checklist as the source of truth for content and completeness.',
+            'Treat validator feedback as a technical repair gate only.',
+            'Do not remove content just to get back to a clean import state.',
+            'Return ONLY corrected markdown. No code fences.',
+          ].join('\n'),
+          messages: [
+            {
+              role: 'user',
+              content: [
+                `Post-success audit repair attempt: ${attempt}/${MAX_POST_SUCCESS_AUDIT_REPAIR_ATTEMPTS}`,
+                `Current markdown hash: ${hashMarkdown(candidate)}`,
+                '',
+                'Fix these validator issues:',
+                errorSummary,
+                '',
+                'Fix these validator warnings too. Warnings are blocking:',
+                warningSummary,
+                '',
+                candidateIntegrityIssues.length ? 'Fix these diagram integrity issues:' : '',
+                candidateIntegrityIssues.length ? integritySummary : '',
+                candidateIntegrityIssues.length ? '' : '',
+                'Validator report:',
+                candidateValidation.aiFriendlyReport,
+                '',
+                'Issue-specific repair hints:',
+                detailedHints,
+                '',
+                'Repository content checklist context:',
+                PIPELINE_DIAGRAM_CONTENT_CHECKLIST,
+                '',
+                'Markdown to repair:',
+                candidate,
+              ].join('\n'),
+            },
+          ],
+        });
+        const repairedMarkdown = sanitizeDiagramMarkdown(repaired);
+        const repairedValidation = validateNexusMarkdownImport(repairedMarkdown);
+        const repairedIntegrityIssues = assessDiagramIntegrity(repairedMarkdown);
+        await emit('post_success_audit_full_repair', repairedMarkdown, attempt);
+        if (!repairedValidation.errors.length && !repairedValidation.warnings.length && !repairedIntegrityIssues.length) {
+          candidate = repairedMarkdown;
+          candidateValidation = repairedValidation;
+          candidateIntegrityIssues = repairedIntegrityIssues;
+          break;
+        }
+        if (
+          shouldAcceptCandidateValidation({
+            current: candidateValidation,
+            candidate: repairedValidation,
+            currentMarkdown: candidate,
+            candidateMarkdown: repairedMarkdown,
+          })
+        ) {
+          candidate = repairedMarkdown;
+          candidateValidation = repairedValidation;
+          candidateIntegrityIssues = repairedIntegrityIssues;
+        }
+      }
+
+      if (hashMarkdown(candidate) === attemptStartHash) {
+        stagnantAttempts += 1;
+      } else {
+        stagnantAttempts = 0;
+      }
+
+      if (stagnantAttempts >= 2) {
+        break;
       }
     }
 
@@ -2762,24 +2882,24 @@ async function generateSingleDiagram(input: {
         ...validation.warnings.map((x) => `${x.code}: ${x.message}`),
         ...integrityIssues,
       ];
-      throw new Error(`Diagram repair stalled after repeated non-progress attempts: ${summarizeIssues(blockingIssues)}`);
+      throw noRetryError(`Diagram repair stalled after repeated non-progress attempts: ${summarizeIssues(blockingIssues)}`);
     }
   }
 
   const finalValidation = validateNexusMarkdownImport(markdown);
   const finalIntegrityIssues = assessDiagramIntegrity(markdown);
   if (finalValidation.errors.length) {
-    throw new Error(
+    throw noRetryError(
       `Diagram validation failed after repairs: ${summarizeIssues(finalValidation.errors.map((x) => `${x.code}: ${x.message}`))}`,
     );
   }
   if (finalValidation.warnings.length) {
-    throw new Error(
+    throw noRetryError(
       `Diagram warnings remain after repairs: ${summarizeIssues(finalValidation.warnings.map((x) => `${x.code}: ${x.message}`))}`,
     );
   }
   if (finalIntegrityIssues.length) {
-    throw new Error(`Diagram integrity failed after repairs: ${summarizeIssues(finalIntegrityIssues)}`);
+    throw noRetryError(`Diagram integrity failed after repairs: ${summarizeIssues(finalIntegrityIssues)}`);
   }
   return finalizeSuccessfulDiagram(markdown);
 }
@@ -2985,16 +3105,9 @@ async function runSwarmAgent(input: {
   if (!recommendations.length) {
     return {
       agent: input.agent,
-      recommendations: [
-        {
-          id: `${input.agent}-fallback-1`,
-          title: `${input.agent} fallback recommendation`,
-          detail: 'Model returned no valid recommendations; using fallback.',
-          diagramRefs: [fallbackRef],
-        },
-      ],
+      recommendations: [],
       monitor: {
-        usedFallback: true,
+        usedFallback: false,
         outputPreview: clipText(output, 2000),
         kbContextPreview: clipText(kb.contextText, 1200) || '(none)',
       },
@@ -3010,6 +3123,423 @@ async function runSwarmAgent(input: {
       kbContextPreview: clipText(kb.contextText, 1200) || '(none)',
     },
   };
+}
+
+function countSwarmRecommendations(agentOutputs: AgentOutputRecord[]): number {
+  return agentOutputs.reduce((sum, agent) => sum + agent.recommendations.length, 0);
+}
+
+function collectRelevantSwarmRecommendations(input: {
+  agentOutputs: AgentOutputRecord[];
+  refs: DiagramLinkRef[];
+  limit?: number;
+}): Array<{ agent: SwarmAgentName; title: string; detail: string; diagramRefs: DiagramLinkRef[] }> {
+  const refKeys = new Set(input.refs.map((ref) => ref.anchorKey));
+  const out: Array<{ agent: SwarmAgentName; title: string; detail: string; diagramRefs: DiagramLinkRef[] }> = [];
+
+  for (const agent of input.agentOutputs) {
+    for (const rec of agent.recommendations) {
+      if (!rec.diagramRefs.some((ref) => refKeys.has(ref.anchorKey))) continue;
+      out.push({
+        agent: agent.agent,
+        title: rec.title,
+        detail: rec.detail,
+        diagramRefs: rec.diagramRefs,
+      });
+      if (out.length >= (input.limit || 8)) return out;
+    }
+  }
+
+  return out;
+}
+
+function buildStorySwarmInsightText(story: PipelineStory, agentOutputs: AgentOutputRecord[]): string {
+  const matches = collectRelevantSwarmRecommendations({
+    agentOutputs,
+    refs: story.diagramRefs,
+    limit: 6,
+  });
+  return matches.map((rec) => `[${rec.agent}] ${rec.title}: ${clipText(rec.detail, 260)}`).join('\n\n');
+}
+
+function buildVisionSwarmInsightBrief(input: {
+  agentOutputs: AgentOutputRecord[];
+  stories: PipelineStory[];
+  designSystemBrief: string;
+}): string {
+  const preferredAgents = new Set<SwarmAgentName>(['ui_presentation', 'interaction', 'content', 'user_journey']);
+  const lines: string[] = [];
+
+  if (input.designSystemBrief) {
+    lines.push(`Synthesis brief: ${clipText(input.designSystemBrief, 1800)}`);
+  }
+
+  const storyHighlights = input.stories.slice(0, 12).map((story) => {
+    const insight = buildStorySwarmInsightText(story, input.agentOutputs);
+    if (!insight) return '';
+    return `Story ${story.id} (${story.title})\n${clipText(insight, 900)}`;
+  }).filter(Boolean);
+  if (storyHighlights.length) {
+    lines.push('Story-linked swarm insights:');
+    lines.push(storyHighlights.join('\n\n'));
+  }
+
+  const direct = input.agentOutputs
+    .filter((agent) => preferredAgents.has(agent.agent))
+    .flatMap((agent) =>
+      agent.recommendations.slice(0, 6).map((rec) => `[${agent.agent}] ${rec.title}: ${clipText(rec.detail, 320)}`),
+    )
+    .slice(0, 20);
+  if (direct.length) {
+    lines.push('Direct swarm recommendations:');
+    lines.push(direct.join('\n'));
+  }
+
+  return clipText(lines.join('\n\n'), 5000);
+}
+
+function buildSwarmRecommendationTargets(markdown: string, agentOutputs: AgentOutputRecord[]): MarkdownFixTarget[] {
+  const lines = normalizeNewlines(markdown).split('\n');
+  const blocks = collectFencedBlockRanges(markdown);
+  const blockByType = new Map(blocks.map((block) => [block.type, block] as const));
+  const separatorIndex = findSeparatorIndexOutsideFences(lines);
+  const metadataInsertStartLine = separatorIndex === -1 ? lines.length + 1 : separatorIndex + 2;
+  const metadataInsertEndLine = metadataInsertStartLine - 1;
+  const out: MarkdownFixTarget[] = [];
+  const usedRanges: Array<{ startLine: number; endLine: number }> = [];
+
+  const overlapsExisting = (startLine: number, endLine: number) =>
+    usedRanges.some((range) => !(endLine < range.startLine || startLine > range.endLine));
+
+  const addTarget = (range: { startLine: number; endLine: number }, reason: string, issueCode: string) => {
+    if (out.length >= MAX_DIAGRAM_FIX_TARGETS) return;
+    const clamped = clampLineRange(range, lines.length);
+    const overlapEnd = Math.max(clamped.endLine, clamped.startLine - 1);
+    if (overlapsExisting(clamped.startLine, overlapEnd)) return;
+    usedRanges.push({ startLine: clamped.startLine, endLine: overlapEnd });
+    out.push({
+      id: `swarm-revision-${out.length + 1}`,
+      startLine: clamped.startLine,
+      endLine: clamped.endLine,
+      reason: clipText(reason, 280),
+      issueCodes: [issueCode],
+      contextMarkdown: extractContextMarkdownForRange(lines, clamped.startLine, clamped.endLine),
+      originalMarkdown: extractOriginalMarkdownForRange(lines, clamped.startLine, clamped.endLine),
+    });
+  };
+
+  const flattened = agentOutputs
+    .flatMap((agent) => agent.recommendations.map((rec) => ({ agent: agent.agent, recommendation: rec })))
+    .slice(0, 18);
+
+  for (const row of flattened) {
+    for (const ref of row.recommendation.diagramRefs.slice(0, 2)) {
+      const subtree = findSubtreeRange(lines, ref.lineIndex);
+      if (subtree) {
+        addTarget(
+          { startLine: subtree.start + 1, endLine: subtree.end + 1 },
+          `[${row.agent}] ${row.recommendation.title}: ${clipText(row.recommendation.detail, 220)}`,
+          'SWARM_REVISION_TREE',
+        );
+      }
+      if (typeof ref.expid === 'number') {
+        const metadataBlock = blockByType.get(`expanded-metadata-${ref.expid}`);
+        if (metadataBlock) {
+          addTarget(
+            { startLine: metadataBlock.startLine, endLine: metadataBlock.endLine },
+            `Update expanded metadata for ${ref.label} from swarm recommendation "${row.recommendation.title}".`,
+            'SWARM_REVISION_EXPANDED_METADATA',
+          );
+        }
+        const gridBlock = blockByType.get(`expanded-grid-${ref.expid}`);
+        if (gridBlock) {
+          addTarget(
+            { startLine: gridBlock.startLine, endLine: gridBlock.endLine },
+            `Update expanded grid for ${ref.label} from swarm recommendation "${row.recommendation.title}".`,
+            'SWARM_REVISION_EXPANDED_GRID',
+          );
+        }
+      }
+      if (out.length >= MAX_DIAGRAM_FIX_TARGETS - 1) break;
+    }
+    if (out.length >= MAX_DIAGRAM_FIX_TARGETS - 1) break;
+  }
+
+  addTarget(
+    { startLine: metadataInsertStartLine, endLine: metadataInsertEndLine },
+    'Update metadata blocks required by the swarm-driven revision, including flow-nodes, process-node-type-N, process-single-screen-N, flow-connector-labels, expanded-metadata-N, expanded-grid-N, and related registries.',
+    'SWARM_REVISION_METADATA',
+  );
+
+  return out;
+}
+
+async function runSwarmDrivenDiagramRevision(input: {
+  generation: PipelineGenerationConfig;
+  markdown: string;
+  uploadTexts: Array<{ name: string; text: string }>;
+  agentOutputs: AgentOutputRecord[];
+  onMonitorUpdate?: (event: {
+    attempt: number;
+    mode: string;
+    markdown: string;
+    validation: ImportValidationResult;
+  }) => Promise<void> | void;
+}): Promise<string> {
+  const emit = async (mode: string, markdown: string, attempt = 0) => {
+    if (!input.onMonitorUpdate) return;
+    try {
+      await input.onMonitorUpdate({
+        attempt,
+        mode,
+        markdown,
+        validation: validateNexusMarkdownImport(markdown),
+      });
+    } catch {
+      // Swarm revision telemetry should not fail the pipeline.
+    }
+  };
+
+  const baseMarkdown = sanitizeDiagramMarkdown(input.markdown);
+  const targets = buildSwarmRecommendationTargets(baseMarkdown, input.agentOutputs);
+  if (!targets.length) return baseMarkdown;
+
+  try {
+    await emit('swarm_revision_start', baseMarkdown);
+    const sourceExcerpt = buildUploadPromptExcerpt(input.uploadTexts, {
+      maxTotalChars: MAX_POST_SUCCESS_AUDIT_SOURCE_CHARS,
+      perFileChars: 12_000,
+    });
+    const swarmSummary = input.agentOutputs
+      .flatMap((agent) =>
+        agent.recommendations.map(
+          (rec) =>
+            `[${agent.agent}] ${rec.title}\n${clipText(rec.detail, 700)}\nrefs=${rec.diagramRefs.map((ref) => ref.anchorKey).join(', ')}`,
+        ),
+      )
+      .slice(0, 20)
+      .join('\n\n');
+
+    const prompt = [
+      'Apply the swarm recommendations back into this already import-valid Diregram markdown file.',
+      'Return JSON only, no markdown fences:',
+      '{',
+      '  "summary": "short note",',
+      '  "patches": [',
+      '    { "targetId": "swarm-revision-1", "replacementMarkdown": "..." }',
+      '  ]',
+      '}',
+      '',
+      'Rules:',
+      '- Patch only the listed targetIds.',
+      '- Preserve scope. Do not delete branches/screens/flows to silence recommendations.',
+      '- Convert recommendations into real diagram changes: tree structure, expanded grids, conditional hubs, process typing, connector labels, and single-screen grouping metadata.',
+      '- If a recommendation is already satisfied, leave that target unchanged.',
+      '- If the tree changes, also patch the metadata target so dependent registries stay aligned.',
+      '- Keep the markdown technically import-valid.',
+      '',
+      `Current markdown hash: ${hashMarkdown(baseMarkdown)}`,
+      '',
+      'Repository content checklist context:',
+      PIPELINE_DIAGRAM_CONTENT_CHECKLIST,
+      '',
+      'Source excerpt:',
+      sourceExcerpt || '(no upload text found)',
+      '',
+      'Swarm recommendations to apply:',
+      swarmSummary || '(none)',
+      '',
+      'Patch targets:',
+      JSON.stringify(
+        targets.map((target) => ({
+          targetId: target.id,
+          startLine: target.startLine,
+          endLine: target.endLine,
+          reason: target.reason,
+          contextMarkdown: target.contextMarkdown,
+          originalMarkdown: target.originalMarkdown,
+        })),
+        null,
+        2,
+      ),
+    ].join('\n');
+
+    const out = await runPipelineGenerationText({
+      generation: input.generation,
+      maxTokens: 5600,
+      temperature: 0.1,
+      system: [
+        'You are editing an existing Diregram markdown file based on grounded swarm recommendations.',
+        'Return JSON only matching the requested schema.',
+        'Do not rewrite the entire document.',
+        'Convert recommendation text into actual diagram changes while preserving coverage.',
+      ].join('\n'),
+      messages: [{ role: 'user', content: prompt }],
+    });
+
+    const parsed = parseTargetedPatchResponse(out);
+    if (!parsed?.patches.length) {
+      await emit('swarm_revision_noop', baseMarkdown);
+      return baseMarkdown;
+    }
+
+    let candidate = sanitizeDiagramMarkdown(applyTargetedPatches(baseMarkdown, targets, parsed.patches));
+    let candidateValidation = validateNexusMarkdownImport(candidate);
+    let candidateIntegrityIssues = assessDiagramIntegrity(candidate);
+    await emit('swarm_revision', candidate);
+
+    let stagnantAttempts = 0;
+    for (let attempt = 1; attempt <= MAX_POST_SUCCESS_AUDIT_REPAIR_ATTEMPTS; attempt += 1) {
+      if (!candidateValidation.errors.length && !candidateValidation.warnings.length && !candidateIntegrityIssues.length) {
+        break;
+      }
+
+      await emit('swarm_revision_attempt_start', candidate, attempt);
+      const attemptStartHash = hashMarkdown(candidate);
+
+      const deterministic = autoFixDeterministicValidationIssues(candidate, candidateValidation);
+      if (deterministic !== candidate) {
+        candidate = deterministic;
+        candidateValidation = validateNexusMarkdownImport(candidate);
+        candidateIntegrityIssues = assessDiagramIntegrity(candidate);
+        await emit('swarm_revision_structural_fix', candidate, attempt);
+        if (!candidateValidation.errors.length && !candidateValidation.warnings.length && !candidateIntegrityIssues.length) {
+          break;
+        }
+      }
+
+      const targeted = await repairDiagramWithTargetedPatches({
+        generation: input.generation,
+        markdown: candidate,
+        validation: candidateValidation,
+      });
+      if (targeted && targeted !== candidate) {
+        const targetedValidation = validateNexusMarkdownImport(targeted);
+        const targetedIntegrityIssues = assessDiagramIntegrity(targeted);
+        await emit('swarm_revision_targeted_repair', targeted, attempt);
+        if (!targetedValidation.errors.length && !targetedValidation.warnings.length && !targetedIntegrityIssues.length) {
+          candidate = targeted;
+          candidateValidation = targetedValidation;
+          candidateIntegrityIssues = targetedIntegrityIssues;
+          break;
+        }
+        if (
+          shouldAcceptCandidateValidation({
+            current: candidateValidation,
+            candidate: targetedValidation,
+            currentMarkdown: candidate,
+            candidateMarkdown: targeted,
+          })
+        ) {
+          candidate = targeted;
+          candidateValidation = targetedValidation;
+          candidateIntegrityIssues = targetedIntegrityIssues;
+        }
+      }
+
+      if (candidateValidation.errors.length || candidateValidation.warnings.length || candidateIntegrityIssues.length) {
+        const errorSummary = summarizeIssues(candidateValidation.errors.map((x) => `${x.code}: ${x.message}`));
+        const warningSummary = summarizeIssues(candidateValidation.warnings.map((x) => `${x.code}: ${x.message}`));
+        const integritySummary = summarizeIssues(candidateIntegrityIssues);
+        const detailedHints = [...candidateValidation.errors, ...candidateValidation.warnings]
+          .slice(0, MAX_DIAGRAM_FIX_ISSUES)
+          .map((issue, idx) => `${idx + 1}. ${issue.code}: ${normalizeText(issue.message)}\n   Fix hint: ${fixInstructionForValidationIssue(issue)}`)
+          .join('\n');
+
+        const repaired = await runPipelineGenerationText({
+          generation: input.generation,
+          maxTokens: 5600,
+          temperature: 0.1,
+          system: [
+            'Repair the provided Diregram diagram markdown after a swarm-driven revision.',
+            'Preserve the swarm-driven improvements wherever possible.',
+            'Use the repository content checklist as the source of truth for content and completeness.',
+            'Treat validator feedback as a technical repair gate only.',
+            'Return ONLY corrected markdown. No code fences.',
+          ].join('\n'),
+          messages: [
+            {
+              role: 'user',
+              content: [
+                `Swarm revision repair attempt: ${attempt}/${MAX_POST_SUCCESS_AUDIT_REPAIR_ATTEMPTS}`,
+                `Current markdown hash: ${hashMarkdown(candidate)}`,
+                '',
+                'Fix these validator issues:',
+                errorSummary,
+                '',
+                'Fix these validator warnings too. Warnings are blocking:',
+                warningSummary,
+                '',
+                candidateIntegrityIssues.length ? 'Fix these diagram integrity issues:' : '',
+                candidateIntegrityIssues.length ? integritySummary : '',
+                candidateIntegrityIssues.length ? '' : '',
+                'Validator report:',
+                candidateValidation.aiFriendlyReport,
+                '',
+                'Issue-specific repair hints:',
+                detailedHints,
+                '',
+                'Repository content checklist context:',
+                PIPELINE_DIAGRAM_CONTENT_CHECKLIST,
+                '',
+                'Markdown to repair:',
+                candidate,
+              ].join('\n'),
+            },
+          ],
+        });
+        const repairedMarkdown = sanitizeDiagramMarkdown(repaired);
+        const repairedValidation = validateNexusMarkdownImport(repairedMarkdown);
+        const repairedIntegrityIssues = assessDiagramIntegrity(repairedMarkdown);
+        await emit('swarm_revision_full_repair', repairedMarkdown, attempt);
+        if (!repairedValidation.errors.length && !repairedValidation.warnings.length && !repairedIntegrityIssues.length) {
+          candidate = repairedMarkdown;
+          candidateValidation = repairedValidation;
+          candidateIntegrityIssues = repairedIntegrityIssues;
+          break;
+        }
+        if (
+          shouldAcceptCandidateValidation({
+            current: candidateValidation,
+            candidate: repairedValidation,
+            currentMarkdown: candidate,
+            candidateMarkdown: repairedMarkdown,
+          })
+        ) {
+          candidate = repairedMarkdown;
+          candidateValidation = repairedValidation;
+          candidateIntegrityIssues = repairedIntegrityIssues;
+        }
+      }
+
+      if (hashMarkdown(candidate) === attemptStartHash) {
+        stagnantAttempts += 1;
+      } else {
+        stagnantAttempts = 0;
+      }
+
+      if (stagnantAttempts >= 2) break;
+    }
+
+    if (
+      !candidateValidation.errors.length &&
+      !candidateValidation.warnings.length &&
+      !candidateIntegrityIssues.length &&
+      hashMarkdown(candidate) !== hashMarkdown(baseMarkdown) &&
+      shouldAcceptContentAuditCandidate({
+        currentMarkdown: baseMarkdown,
+        candidateMarkdown: candidate,
+      })
+    ) {
+      return candidate;
+    }
+
+    await emit('swarm_revision_rejected', candidate);
+    return baseMarkdown;
+  } catch {
+    await emit('swarm_revision_failed', baseMarkdown);
+    return baseMarkdown;
+  }
 }
 
 function normalizeStoryId(input: string, fallback: string): string {
@@ -3185,7 +3715,11 @@ async function synthesizePipeline(input: {
   };
 }
 
-function storyRowsToGridMarkdown(stories: PipelineStory[], epicsById: Map<string, PipelineEpic>): string {
+function storyRowsToGridMarkdown(
+  stories: PipelineStory[],
+  epicsById: Map<string, PipelineEpic>,
+  agentOutputs: AgentOutputRecord[],
+): string {
   const HEADER = [
     'Epic',
     'Story ID',
@@ -3197,6 +3731,7 @@ function storyRowsToGridMarkdown(stories: PipelineStory[], epicsById: Map<string
     'Priority',
     'Acceptance Criteria',
     'UI Elements',
+    'Swarm Insights',
     'Diagram Refs',
   ];
 
@@ -3242,6 +3777,7 @@ function storyRowsToGridMarkdown(stories: PipelineStory[], epicsById: Map<string
       story.priority,
       story.acceptanceCriteria.join('\n- '),
       story.uiElements.join(', '),
+      buildStorySwarmInsightText(story, agentOutputs),
       story.diagramRefs.map((r) => r.anchorKey).join(', '),
     ];
     values.forEach((value, colIdx) => {
@@ -3277,6 +3813,7 @@ async function buildVisionDesignSystem(input: {
   generation: PipelineGenerationConfig;
   brief: string;
   artifactImages?: ClassifiedVisionUiImage[];
+  swarmInsights?: string;
 }): Promise<VisionDesignSystemBuildResult> {
   const base = defaultVisionDesignSystem();
   const artifactImages = (input.artifactImages || []).slice(0, MAX_VISION_INPUT_IMAGES);
@@ -3310,6 +3847,8 @@ async function buildVisionDesignSystem(input: {
                 type: 'input_text',
                 text: [
                   `Design brief:\n${clipText(input.brief, 5000) || '(none)'}`,
+                  '',
+                  `Swarm insights:\n${clipText(input.swarmInsights, 3500) || '(none)'}`,
                   '',
                   `Selected UI images (${artifactImages.length}):`,
                   imageNotes || '(none)',
@@ -3353,6 +3892,7 @@ async function buildVisionDesignSystem(input: {
     `Allowed primitive ids: ${primitiveAllowlistText()}`,
     'Keep values concise and practical.',
     `Brief:\n${clipText(input.brief, 4000) || '(none)'}`,
+    `Swarm insights:\n${clipText(input.swarmInsights, 2500) || '(none)'}`,
   ].join('\n\n');
 
   try {
@@ -3481,6 +4021,7 @@ function noteForEpic(input: {
   epic: PipelineEpic;
   stories: PipelineStory[];
   diagramFileId: string;
+  agentOutputs: AgentOutputRecord[];
 }): string {
   const lines: string[] = [];
   lines.push(`# ${input.epic.title}`);
@@ -3509,6 +4050,18 @@ function noteForEpic(input: {
     if (story.acceptanceCriteria.length) {
       lines.push('### Acceptance Criteria');
       story.acceptanceCriteria.forEach((item) => lines.push(`- ${item}`));
+      lines.push('');
+    }
+    const swarmInsights = collectRelevantSwarmRecommendations({
+      agentOutputs: input.agentOutputs,
+      refs: story.diagramRefs,
+      limit: 8,
+    });
+    if (swarmInsights.length) {
+      lines.push('### Swarm Analysis');
+      swarmInsights.forEach((rec) => {
+        lines.push(`- [${rec.agent}] ${rec.title}: ${clipText(rec.detail, 600)}`);
+      });
       lines.push('');
     }
     lines.push('### UI Elements Table');
@@ -3799,55 +4352,75 @@ export async function runProjectPipelineJob(job: AsyncJobRow): Promise<Record<st
     sourceImageCount: signedDiagramImages.length,
   });
 
-  const diagramMarkdown = await generateSingleDiagram({
-    generation,
-    uploadTexts: usableUploadTexts.map((x) => ({
-      name: x.sourceKind === 'docling' ? `${x.name} (converted)` : x.name,
-      text: x.text,
-    })),
-    uploadImages: signedDiagramImages.map((img) => ({
-      name: `${img.sourceName} :: ${img.label}`,
-      signedUrl: img.signedUrl,
-      sourceName: img.sourceName,
-      kind: img.kind,
-      pageNo: img.pageNo,
-    })),
-    onMonitorUpdate: async (event) => {
-      const preview = normalizeNewlines(event.markdown).split('\n').slice(0, 260).join('\n').slice(0, 20_000);
-      const errors = event.validation.errors
-        .slice(0, 8)
-        .map((issue) => `${issue.code}: ${normalizeText(issue.message)}`);
-      const warnings = event.validation.warnings
-        .slice(0, 6)
-        .map((issue) => `${issue.code}: ${normalizeText(issue.message)}`);
+  let diagramMarkdown = '';
+  try {
+    diagramMarkdown = await generateSingleDiagram({
+      generation,
+      uploadTexts: usableUploadTexts.map((x) => ({
+        name: x.sourceKind === 'docling' ? `${x.name} (converted)` : x.name,
+        text: x.text,
+      })),
+      uploadImages: signedDiagramImages.map((img) => ({
+        name: `${img.sourceName} :: ${img.label}`,
+        signedUrl: img.signedUrl,
+        sourceName: img.sourceName,
+        kind: img.kind,
+        pageNo: img.pageNo,
+      })),
+      onMonitorUpdate: async (event) => {
+        const preview = normalizeNewlines(event.markdown).split('\n').slice(0, 260).join('\n').slice(0, 20_000);
+        const errors = event.validation.errors
+          .slice(0, 8)
+          .map((issue) => `${issue.code}: ${normalizeText(issue.message)}`);
+        const warnings = event.validation.warnings
+          .slice(0, 6)
+          .map((issue) => `${issue.code}: ${normalizeText(issue.message)}`);
 
-      await setStage(
-        'generate_single_diagram',
-        16,
-        {
-          diagramMonitor: {
-            attempt: event.attempt,
+        await setStage(
+          'generate_single_diagram',
+          16,
+          {
+            diagramMonitor: {
+              attempt: event.attempt,
+              mode: event.mode,
+              markdownHash: hashMarkdown(event.markdown),
+              lineCount: normalizeNewlines(event.markdown).split('\n').length,
+              previewMarkdown: preview,
+              errorCount: event.validation.errors.length,
+              warningCount: event.validation.warnings.length,
+              errors,
+              warnings,
+              updatedAt: nowIso(),
+            },
+          },
+          {
+            kind: 'diagram_monitor',
             mode: event.mode,
-            markdownHash: hashMarkdown(event.markdown),
-            lineCount: normalizeNewlines(event.markdown).split('\n').length,
-            previewMarkdown: preview,
+            attempt: event.attempt,
             errorCount: event.validation.errors.length,
             warningCount: event.validation.warnings.length,
-            errors,
-            warnings,
-            updatedAt: nowIso(),
           },
-        },
-        {
-          kind: 'diagram_monitor',
-          mode: event.mode,
-          attempt: event.attempt,
-          errorCount: event.validation.errors.length,
-          warningCount: event.validation.warnings.length,
-        },
-      );
-    },
-  });
+        );
+      },
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error || 'Unknown diagram generation error');
+    stageState = {
+      ...stageState,
+      diagramMonitor: {
+        ...(stageState.diagramMonitor && typeof stageState.diagramMonitor === 'object' ? (stageState.diagramMonitor as JsonRecord) : {}),
+        failedAt: nowIso(),
+        finalFailureReason: clipText(message, 4000),
+      },
+    };
+    await recordActivity({
+      step: 'generate_single_diagram',
+      level: 'error',
+      title: 'Diagram generation failed',
+      message,
+    });
+    throw error;
+  }
 
   const diagramName = `${runLabel}-single-diagram`;
   const { data: insertedDiagram, error: diagramInsertErr } = await admin
@@ -3870,20 +4443,21 @@ export async function runProjectPipelineJob(job: AsyncJobRow): Promise<Record<st
 
   createdFiles.push({ id: singleDiagramFileId, name: diagramName, kind: 'diagram' });
 
-  const diagramLinkIndex = buildDiagramLinkIndex({
+  let currentDiagramMarkdown = diagramMarkdown;
+  let currentDiagramLinkIndex = buildDiagramLinkIndex({
     diagramFileId: singleDiagramFileId,
-    markdown: diagramMarkdown,
+    markdown: currentDiagramMarkdown,
   });
-  linkedArtifacts.push(toLinkedArtifact('diagram', singleDiagramFileId, diagramName, diagramLinkIndex));
+  linkedArtifacts.push(toLinkedArtifact('diagram', singleDiagramFileId, diagramName, currentDiagramLinkIndex));
 
   await ensureNotCancelled();
-  await setStage('build_rag_from_diagram', 28, { singleDiagramFileId, diagramRefs: diagramLinkIndex.length });
+  await setStage('build_rag_from_diagram', 28, { singleDiagramFileId, diagramRefs: currentDiagramLinkIndex.length });
 
-  const seedRag = await ingestDiagramOnlyToRag({
+  let seedRag = await ingestDiagramOnlyToRag({
     ownerId,
     projectFolderId,
     diagramFileId: singleDiagramFileId,
-    diagramMarkdown,
+    diagramMarkdown: currentDiagramMarkdown,
     openaiApiKey,
     embeddingModel,
     admin,
@@ -3898,51 +4472,153 @@ export async function runProjectPipelineJob(job: AsyncJobRow): Promise<Record<st
   await setStage('swarm_analysis', 40, { seedChunkCount: seedRag.chunks });
 
   const agents: SwarmAgentName[] = ['technical', 'user_journey', 'interaction', 'content', 'ui_presentation'];
-  const agentOutputs: AgentOutputRecord[] = [];
+  let agentOutputs: AgentOutputRecord[] = [];
+  const revisionUploadTexts = usableUploadTexts.map((x) => ({
+    name: x.sourceKind === 'docling' ? `${x.name} (converted)` : x.name,
+    text: x.text,
+  }));
 
-  for (let i = 0; i < agents.length; i += 1) {
+  for (let round = 1; round <= MAX_SWARM_REVISION_ROUNDS; round += 1) {
     await ensureNotCancelled();
-    const agent = agents[i]!;
-    let output: AgentOutputRecord;
-    try {
-      output = await runSwarmAgent({
-        agent,
-        generation,
-        ownerId,
-        projectFolderId,
-        openaiApiKey,
-        embeddingModel,
-        diagramLinkIndex,
-        diagramMarkdown,
-      });
-    } catch (error) {
-      await recordActivity({
-        step: 'swarm_analysis',
-        level: 'error',
-        title: `Swarm agent failed: ${agent}`,
-        message: error instanceof Error ? error.message : String(error || 'Unknown swarm error'),
-        meta: { agent },
-      });
-      throw error;
-    }
-    agentOutputs.push(output);
     await recordActivity({
       step: 'swarm_analysis',
-      level: output.monitor?.usedFallback ? 'warn' : 'info',
-      title: `Swarm agent completed: ${agent}`,
-      message: [
-        `Recommendations: ${output.recommendations.length}.`,
-        output.recommendations.length
-          ? `Top titles: ${output.recommendations.slice(0, 3).map((rec) => rec.title).join(' | ')}.`
-          : 'No recommendations returned.',
-        output.monitor?.usedFallback ? 'Fallback recommendation was used.' : '',
-        output.monitor?.outputPreview ? `Model output preview: ${output.monitor.outputPreview}` : '',
-      ]
-        .filter(Boolean)
-        .join(' '),
-      meta: { agent, recommendationCount: output.recommendations.length },
+      title: `Swarm round ${round} started`,
+      message: `Running swarm analysis round ${round} of ${MAX_SWARM_REVISION_ROUNDS} against the current primary diagram.`,
+      meta: { swarmRound: round },
     });
 
+    const roundOutputs: AgentOutputRecord[] = [];
+    for (let i = 0; i < agents.length; i += 1) {
+      await ensureNotCancelled();
+      const agent = agents[i]!;
+      let output: AgentOutputRecord;
+      try {
+        output = await runSwarmAgent({
+          agent,
+          generation,
+          ownerId,
+          projectFolderId,
+          openaiApiKey,
+          embeddingModel,
+          diagramLinkIndex: currentDiagramLinkIndex,
+          diagramMarkdown: currentDiagramMarkdown,
+        });
+      } catch (error) {
+        await recordActivity({
+          step: 'swarm_analysis',
+          level: 'error',
+          title: `Swarm agent failed: ${agent}`,
+          message: error instanceof Error ? error.message : String(error || 'Unknown swarm error'),
+          meta: { agent, swarmRound: round },
+        });
+        throw error;
+      }
+      roundOutputs.push(output);
+      await recordActivity({
+        step: 'swarm_analysis',
+        level: output.monitor?.usedFallback ? 'warn' : 'info',
+        title: `Swarm agent completed: ${agent}`,
+        message: [
+          `Round ${round}. Recommendations: ${output.recommendations.length}.`,
+          output.recommendations.length
+            ? `Top titles: ${output.recommendations.slice(0, 3).map((rec) => rec.title).join(' | ')}.`
+            : 'No recommendations returned.',
+          output.monitor?.usedFallback ? 'Fallback recommendation was used.' : '',
+          output.monitor?.outputPreview ? `Model output preview: ${output.monitor.outputPreview}` : '',
+        ]
+          .filter(Boolean)
+          .join(' '),
+        meta: { agent, recommendationCount: output.recommendations.length, swarmRound: round },
+      });
+
+      await setStage('swarm_analysis', 42 + Math.floor(((i + 1) / agents.length) * 12), {
+        swarmAgent: agent,
+        swarmCompleted: i + 1,
+        swarmTotal: agents.length,
+        swarmRound: round,
+      });
+    }
+
+    agentOutputs = roundOutputs;
+    const recommendationCount = countSwarmRecommendations(roundOutputs);
+    await recordActivity({
+      step: 'swarm_analysis',
+      title: `Swarm round ${round} summary`,
+      message: `Total recommendations in round ${round}: ${recommendationCount}.`,
+      meta: { swarmRound: round, recommendationCount },
+    });
+
+    if (recommendationCount === 0) {
+      await recordActivity({
+        step: 'swarm_analysis',
+        title: 'Swarm loop converged',
+        message: `No further recommendations were returned in round ${round}. Downstream artifacts will use the current diagram.`,
+        meta: { swarmRound: round },
+      });
+      break;
+    }
+
+    if (round >= MAX_SWARM_REVISION_ROUNDS) {
+      await recordActivity({
+        step: 'swarm_analysis',
+        level: 'warn',
+        title: 'Swarm revision limit reached',
+        message: `Stopped after ${MAX_SWARM_REVISION_ROUNDS} swarm rounds with ${recommendationCount} remaining recommendations.`,
+        meta: { swarmRound: round, recommendationCount },
+      });
+      break;
+    }
+
+    const revisedDiagram = await runSwarmDrivenDiagramRevision({
+      generation,
+      markdown: currentDiagramMarkdown,
+      uploadTexts: revisionUploadTexts,
+      agentOutputs: roundOutputs,
+    });
+    if (hashMarkdown(revisedDiagram) === hashMarkdown(currentDiagramMarkdown)) {
+      await recordActivity({
+        step: 'swarm_analysis',
+        level: 'warn',
+        title: 'Swarm revision was not accepted',
+        message: `Round ${round} produced recommendations, but no clean diagram revision was accepted. Downstream artifacts will use the current diagram and current swarm outputs.`,
+        meta: { swarmRound: round, recommendationCount },
+      });
+      break;
+    }
+
+    currentDiagramMarkdown = revisedDiagram;
+    currentDiagramLinkIndex = buildDiagramLinkIndex({
+      diagramFileId: singleDiagramFileId,
+      markdown: currentDiagramMarkdown,
+    });
+    const diagramArtifact = linkedArtifacts.find((artifact) => artifact.kind === 'diagram' && artifact.id === singleDiagramFileId);
+    if (diagramArtifact) diagramArtifact.diagramRefs = currentDiagramLinkIndex;
+
+    const { error: diagramUpdateErr } = await admin
+      .from('files')
+      .update({ content: currentDiagramMarkdown } as never)
+      .eq('id', singleDiagramFileId);
+    if (diagramUpdateErr) throw new Error(diagramUpdateErr.message);
+
+    seedRag = await ingestDiagramOnlyToRag({
+      ownerId,
+      projectFolderId,
+      diagramFileId: singleDiagramFileId,
+      diagramMarkdown: currentDiagramMarkdown,
+      openaiApiKey,
+      embeddingModel,
+      admin,
+    });
+    await recordActivity({
+      step: 'swarm_analysis',
+      title: 'Swarm revision applied',
+      message: `Applied swarm-driven diagram revision after round ${round} and reseeded diagram RAG with ${seedRag.chunks} chunks.`,
+      meta: { swarmRound: round, recommendationCount },
+    });
+  }
+
+  for (const output of agentOutputs) {
+    const agent = output.agent;
     const { data: resourceData, error: resourceErr } = await admin
       .from('project_resources')
       .insert({
@@ -3969,20 +4645,14 @@ export async function runProjectPipelineJob(job: AsyncJobRow): Promise<Record<st
         linkedArtifacts.push(toLinkedArtifact('resource', resourceId, resourceName || `${runLabel}-swarm-${agent}.json`, refs));
       }
     }
-
-    await setStage('swarm_analysis', 42 + Math.floor(((i + 1) / agents.length) * 12), {
-      swarmAgent: agent,
-      swarmCompleted: i + 1,
-      swarmTotal: agents.length,
-    });
   }
 
   let synthesis: PipelineSynthesis;
   try {
     synthesis = await synthesizePipeline({
       generation,
-      diagramLinkIndex,
-      diagramMarkdown,
+      diagramLinkIndex: currentDiagramLinkIndex,
+      diagramMarkdown: currentDiagramMarkdown,
       agentOutputs,
     });
   } catch (error) {
@@ -4016,7 +4686,7 @@ export async function runProjectPipelineJob(job: AsyncJobRow): Promise<Record<st
   });
 
   const epicsById = new Map(synthesis.epics.map((epic) => [epic.id, epic]));
-  const gridMarkdown = storyRowsToGridMarkdown(synthesis.stories, epicsById);
+  const gridMarkdown = storyRowsToGridMarkdown(synthesis.stories, epicsById, agentOutputs);
   const gridName = `${runLabel}-user-story-grid`;
   const { data: gridData, error: gridErr } = await admin
     .from('files')
@@ -4087,6 +4757,11 @@ export async function runProjectPipelineJob(job: AsyncJobRow): Promise<Record<st
     generation,
     brief: synthesis.designSystemBrief,
     artifactImages: visionUiImages,
+    swarmInsights: buildVisionSwarmInsightBrief({
+      agentOutputs,
+      stories: synthesis.stories,
+      designSystemBrief: synthesis.designSystemBrief,
+    }),
   });
   await recordActivity({
     step: 'generate_design_system_and_components',
@@ -4191,6 +4866,7 @@ export async function runProjectPipelineJob(job: AsyncJobRow): Promise<Record<st
       epic,
       stories,
       diagramFileId: singleDiagramFileId,
+      agentOutputs,
     });
 
     const name = `${runLabel}-epic-${normalizeStoryId(epic.title, epic.id)}`;
@@ -4271,7 +4947,7 @@ export async function runProjectPipelineJob(job: AsyncJobRow): Promise<Record<st
     projectFolderId,
     singleDiagramFileId,
     primaryDiagramFileId: singleDiagramFileId,
-    diagramLinkIndex,
+    diagramLinkIndex: currentDiagramLinkIndex,
     createdFiles,
     createdResources,
     seedRag,
