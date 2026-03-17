@@ -71,6 +71,9 @@ Every node line must have a clear intent. Use the RIGHT editor/diagram for the R
 2) Process nodes (#flow#) in the main canvas:
 - Purpose: Business flow / user journey (what the user/system does, in order).
 - Structure: parent→child nesting for linear sequences; sibling children for branching/validation splits.
+- Linear-chain rule (CRITICAL MUST):
+  - If step B happens after step A with no decision/split, step B MUST be a child of step A, not a sibling of step A.
+  - Sibling children are reserved for true alternate outcomes/branches only.
 - “Type” is NOT in the node line. If you need “validation” vs “branch” vs “step/action/time/end/goto”, you MUST encode it in metadata blocks (see process-node-type-* below).
 - UI-grounding rule (MUST):
   - Non-swimlane #flow# steps MUST be anchored to concrete UI and/or observable system actions.
@@ -192,6 +195,10 @@ What to focus on (WIZARD / multi-step UX):
 - Use "validation" or "branch" nodes for decision points.
 - Put the decision meaning into edge labels (human language), e.g. "Eligible", "Not eligible", "Missing required fields".
 - Use "goto" nodes for shortcuts like "Edit previous step" or "Jump to summary" after changes.
+- Linear-chain analysis (MUST):
+  - Default sequential steps to parent→child→grandchild nesting.
+  - Do NOT flatten sequential “next step” actions into sibling lists.
+  - Sibling children are only correct when the parent is a real validation/branch split with alternate outcomes.
 - Non-swimlane flow realism (MUST):
   - Each step should correspond to a SCREEN or an explicit system action that a user/admin can observe.
   - If a step cannot be tied to UI or an observable system event, it is probably too conceptual — move it to a Flow tab swimlane stage/label instead.
@@ -1185,6 +1192,9 @@ PRE-GENERATION CHECKLIST (run mentally BEFORE outputting markdown)
   - Validation/branching splits are modeled as sibling children under the split node.
   - If a #flow# node has 2+ sibling children (a split), ensure it has a process-node-type-* metadata block set to "validation" or "branch".
   - Avoid accidental branching: do NOT place “next step” siblings under a step that isn’t actually a decision/validation.
+  - Linear-chain audit:
+    - For every set of sibling #flow# nodes, ask whether they are true alternate outcomes or just the next sequential steps.
+    - If they are sequential, rewrite them into a nested parent→child→grandchild chain before final output.
   - Non-swimlane #flow# UI-grounding:
     - Step titles should reference screens/actions, not abstract phases.
     - Allowed conceptual exceptions: validation/branch questions, time/wait, goto/loop/redirect.
@@ -1286,6 +1296,9 @@ export const POST_GENERATION_VERIFICATION_CHECKLIST = `Post-Generation Verificat
 ☐ Check branching structure visually:
   → Validation nodes should have 2+ sibling children
   → Linear flows should be nested (parent→child→grandchild)
+☐ Linear sibling misuse check (MUST):
+  → If a #flow# node has multiple direct children, verify they are true alternate paths rather than sequential next steps
+  → If the children are sequential, rewrite them as a nested chain and remove the fake branch
 
 ☐ Verify all flowtab children are marked #flow#
 ☐ For each #flow# node that branches (2+ sibling children):
@@ -1500,6 +1513,11 @@ A) Technical Markdown Correctness (structural; must be import-ready)
     - \`\`\`flow-nodes\`\`\` MUST contain an entry with runningNumber N
     - That entry’s lineIndex MUST point to the SAME nodeId referenced by the process-node-type block
   → If this mapping is missing/mismatched, the UI will fall back to default type ("step") and diamonds will not appear
+
+☐ Linear-chain structure (CRITICAL MUST):
+  → Sequential next steps MUST appear as parent→child→grandchild, not as sibling children under one parent
+  → If a node has 2+ direct #flow# children, they MUST represent real alternate outcomes and SHOULD be typed validation|branch
+  → If they are not alternate outcomes, the tree structure is wrong even if the markdown imports
 
 ☐ Single Screen Steps linkage (MUST when same-screen grouping is present):
   → Every non-swimlane #flow# should be reviewed for same-screen grouping, not only obvious wizard steps

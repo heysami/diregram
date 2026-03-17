@@ -1114,6 +1114,36 @@ export function validateNexusMarkdownImport(markdown: string): ImportValidationR
     }
   });
 
+  const processNodeTypeByLineIndex = new Map<number, string>();
+  processNodeTypeByRn.forEach((entry, rn) => {
+    const flowEntry = flowEntryByRn.get(rn);
+    const li = typeof flowEntry?.lineIndex === 'number' ? flowEntry.lineIndex : null;
+    if (li === null) return;
+    processNodeTypeByLineIndex.set(li, entry.type);
+  });
+
+  const flowNodesForShapeCheck: NexusNode[] = [];
+  traverseAllParsedNodes(roots, (n) => {
+    if (n.isFlowNode && !isInFlowtabSubtree(n)) flowNodesForShapeCheck.push(n);
+  });
+  flowNodesForShapeCheck.forEach((n) => {
+    const flowChildren = n.children.filter((c) => c.isFlowNode);
+    if (flowChildren.length < 2) return;
+    const ptype = typeof n.lineIndex === 'number' ? processNodeTypeByLineIndex.get(n.lineIndex) || '' : '';
+    if (ptype === 'validation' || ptype === 'branch') return;
+    const sample = flowChildren
+      .slice(0, 3)
+      .map((c) => `"${String(c.content || '').trim()}"`)
+      .filter(Boolean)
+      .join(', ');
+    add(
+      errors,
+      'error',
+      'LINEAR_FLOW_USING_SIBLINGS',
+      `Non-swimlane #flow# node "${n.content}" has ${flowChildren.length} direct #flow# children${sample ? ` (${sample})` : ''}. Sequential steps MUST be nested parent→child→grandchild. Sibling children are reserved for true validation/branch splits.`,
+    );
+  });
+
   // Process loop target blocks:
   // - keyed by runningNumber N (same runningNumber as process-node-type-N)
   // - body JSON: { "targetId": "node-<lineIndex>" }

@@ -31,6 +31,11 @@ MUST:
   → If it reads like a component/control, move it to expanded UI.
   → If it reads like a domain entity, move it to data-objects.
 
+☐ Linear-chain structure (CRITICAL MUST):
+  → Sequential next steps MUST be nested parent→child→grandchild.
+  → Do not place sequential steps as sibling children under one parent.
+  → If a node has 2+ direct #flow# children, confirm they are true alternate outcomes, not a flattened sequence.
+
 ☐ Screen-boundary analysis (MUST for non-swimlane flows):
   → For every adjacent next/previous step range, decide whether the user is still on the SAME underlying screen context.
   → If several tasks still happen on one screen, group them as Single Screen Steps instead of modeling fake screen transitions.
@@ -48,6 +53,7 @@ MUST:
     - MUST have \`\`\`process-node-type-*\`\`\` set to type validation|branch for that node’s runningNumber (from flow-nodes)
     - MUST have \`\`\`flow-connector-labels\`\`\` entries for EACH parent→child branch edge
     - Labels MUST explain conditions (IF/ELSE), not “Next/Continue”
+  → If the children are just step 2 / step 3 / step 4 in sequence, this is not branching; convert to a nested chain.
 
 ☐ Goto correctness (tree-level):
   → If a #flow# node is intended to be a goto:

@@ -104,13 +104,14 @@ async function runPipelineGenerationText(input: {
 
 const MAX_UPLOADS = 50;
 const MAX_UPLOAD_TEXT = 50_000;
-const MAX_DIAGRAM_REPAIR_ATTEMPTS = 8;
+const MAX_DIAGRAM_REPAIR_ATTEMPTS = 16;
 const MAX_SWARM_RECOMMENDATIONS = 24;
 const MAX_DIAGRAM_FIX_TARGETS = 8;
 const MAX_DIAGRAM_FIX_ISSUES = 12;
 const MAX_DIAGRAM_FIX_CONTEXT_CHARS = 6000;
 const MAX_DIAGRAM_FIX_REPLACEMENT_CHARS = 20_000;
 const MAX_PROGRESSIVE_SOURCE_CHARS = 14_000;
+const MAX_POST_SUCCESS_AUDIT_SOURCE_CHARS = 20_000;
 const MAX_PROGRESSIVE_TREE_CHARS = 16_000;
 const MAX_PROGRESSIVE_SCREEN_BATCH_SIZE = 3;
 const MAX_PROGRESSIVE_SCREEN_SUBTREE_CHARS = 10_000;
@@ -580,6 +581,12 @@ function fixInstructionForValidationIssue(issue: ImportValidationIssue): string 
       return 'Add or repair the missing tag-store metadata block if tag ids are referenced. Do not delete tagged nodes.';
     case 'MISSING_EXPANDED_STATES_BLOCK':
       return 'Add or repair the missing expanded-states metadata block. Preserve existing expanded nodes.';
+    case 'MISSING_SEPARATOR':
+      return "Add the metadata separator line '---' between the node tree and fenced metadata blocks so metadata does not mix into node lines.";
+    case 'MISSING_DATA_OBJECTS_BLOCK':
+      return 'If do: links are referenced, add or repair the data-objects block with those ids. Do not delete linked nodes to suppress this warning.';
+    case 'CROSS_TIMEFRAME_SIGNAL':
+      return 'Clarify async or cross-timeframe transitions explicitly with separate states/steps so the flow stays readable without collapsing the process.';
     default:
       return 'Resolve this validator issue exactly while preserving unrelated content and existing node scope; prefer additive completion over removal.';
   }
@@ -912,6 +919,86 @@ function shouldAcceptCandidateValidation(input: {
   return true;
 }
 
+type DiagramContentAuditMetrics = {
+  nodeCount: number;
+  expidCount: number;
+  expandedMetadataCount: number;
+  expandedGridCount: number;
+  flowCount: number;
+  processNodeTypeCount: number;
+  singleScreenCount: number;
+  conditionalVariantCount: number;
+  flowConnectorLabelCount: number;
+  score: number;
+};
+
+function countFlowConnectorLabelEntries(markdown: string): number {
+  const match = normalizeNewlines(markdown).match(/```flow-connector-labels\n([\s\S]*?)\n```/);
+  const parsed = match?.[1] ? parseJsonObject(match[1]) : null;
+  return parsed && typeof parsed === 'object' ? Object.keys(parsed).length : 0;
+}
+
+function measureDiagramContentAuditMetrics(markdown: string): DiagramContentAuditMetrics {
+  const nodes = flattenNodes(parseNexusMarkdown(markdown));
+  const flowCount = nodes.filter((node) => /#flow#/.test(node.rawContent) && !/#flowtab#/.test(node.rawContent) && !/#systemflow#/.test(node.rawContent)).length;
+  const conditionalVariantCount = nodes.filter((node) => {
+    const conditions = (node as { conditions?: Record<string, string> }).conditions;
+    return !!conditions && Object.keys(conditions).length > 0;
+  }).length;
+  const expidCount = Array.from(extractExpandedIdsFromMarkdown(markdown).values()).length;
+  const expandedMetadataCount = (normalizeNewlines(markdown).match(/```expanded-metadata-\d+\n/g) || []).length;
+  const expandedGridCount = (normalizeNewlines(markdown).match(/```expanded-grid-\d+\n/g) || []).length;
+  const processNodeTypeCount = (normalizeNewlines(markdown).match(/```process-node-type-\d+\n/g) || []).length;
+  const singleScreenCount = (normalizeNewlines(markdown).match(/```process-single-screen-\d+\n/g) || []).length;
+  const flowConnectorLabelCount = countFlowConnectorLabelEntries(markdown);
+  const nodeCount = estimateNodeLineCount(markdown);
+  const score =
+    nodeCount +
+    expidCount * 5 +
+    expandedMetadataCount * 4 +
+    expandedGridCount * 5 +
+    flowCount * 3 +
+    processNodeTypeCount * 4 +
+    singleScreenCount * 5 +
+    conditionalVariantCount * 4 +
+    flowConnectorLabelCount * 2;
+
+  return {
+    nodeCount,
+    expidCount,
+    expandedMetadataCount,
+    expandedGridCount,
+    flowCount,
+    processNodeTypeCount,
+    singleScreenCount,
+    conditionalVariantCount,
+    flowConnectorLabelCount,
+    score,
+  };
+}
+
+function shouldAcceptContentAuditCandidate(input: {
+  currentMarkdown: string;
+  candidateMarkdown: string;
+}): boolean {
+  const currentValidation = validateNexusMarkdownImport(input.currentMarkdown);
+  const candidateValidation = validateNexusMarkdownImport(input.candidateMarkdown);
+  if (
+    !shouldAcceptCandidateValidation({
+      current: currentValidation,
+      candidate: candidateValidation,
+      currentMarkdown: input.currentMarkdown,
+      candidateMarkdown: input.candidateMarkdown,
+    })
+  ) {
+    return false;
+  }
+
+  const currentMetrics = measureDiagramContentAuditMetrics(input.currentMarkdown);
+  const candidateMetrics = measureDiagramContentAuditMetrics(input.candidateMarkdown);
+  return candidateMetrics.score >= currentMetrics.score;
+}
+
 function ensureNodeLinkMarkers(markdown: string): string {
   const lines = String(markdown || '').replace(/\r\n?/g, '\n').split('\n');
   const separator = lines.findIndex((line) => line.trim() === '---');
@@ -1010,6 +1097,20 @@ function buildExpandedStatesBlock(markdown: string): string | null {
   return `\`\`\`expanded-states\n${JSON.stringify({ nextRunningNumber, entries }, null, 2)}\n\`\`\``;
 }
 
+function syncExpandedStatesBlock(markdown: string): string {
+  const block = buildExpandedStatesBlock(markdown);
+  if (!block) return markdown;
+  const re = /```expanded-states\n[\s\S]*?\n```/;
+  const normalized = normalizeNewlines(markdown).trimEnd();
+  if (re.test(normalized)) {
+    return normalized.replace(re, block).trimEnd() + '\n';
+  }
+  if (normalized.includes('\n---\n')) {
+    return `${normalized}\n\n${block}\n`;
+  }
+  return `${normalized}\n\n---\n\n${block}\n`;
+}
+
 function ensureExpandedStatesBlock(markdown: string): string {
   if (!extractExpandedIdsFromMarkdown(markdown).size) return markdown;
   if (/```expanded-states\n[\s\S]*?\n```/.test(markdown)) return markdown;
@@ -1043,6 +1144,22 @@ function sanitizeDiagramMarkdown(raw: string): string {
   text = stripTrailingUnclosedMetadataFence(text);
   text = ensureExpandedStatesBlock(text);
   return ensureNodeLinkMarkers(text);
+}
+
+function ensureMetadataSeparator(markdown: string): string {
+  const normalized = normalizeNewlines(markdown).trimEnd();
+  if (!normalized) return markdown;
+  const lines = normalized.split('\n');
+  if (findSeparatorIndexOutsideFences(lines) !== -1) return normalized + '\n';
+  for (let i = 0; i < lines.length; i += 1) {
+    const trimmed = String(lines[i] || '').trim();
+    if (!/^```/.test(trimmed)) continue;
+    const before = lines.slice(0, i).join('\n').trimEnd();
+    const after = lines.slice(i).join('\n').trimStart();
+    if (!before || !after) return normalized + '\n';
+    return `${before}\n\n---\n\n${after}\n`;
+  }
+  return normalized + '\n';
 }
 
 function escapeRegExp(value: string): string {
@@ -1250,6 +1367,137 @@ function extractProgressiveTargets(markdown: string): {
   return { dataObjects, expanded };
 }
 
+type FencedBlockRange = {
+  type: string;
+  startLine: number;
+  endLine: number;
+};
+
+function collectFencedBlockRanges(markdown: string): FencedBlockRange[] {
+  const lines = normalizeNewlines(markdown).split('\n');
+  const out: FencedBlockRange[] = [];
+  let openType: string | null = null;
+  let openStart = -1;
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const trimmed = String(lines[i] || '').trim();
+    const match = trimmed.match(/^```([^\s`]+)\s*$/);
+    if (!match?.[1]) continue;
+    if (openType === null) {
+      openType = normalizeText(match[1]);
+      openStart = i;
+      continue;
+    }
+    out.push({
+      type: openType,
+      startLine: openStart + 1,
+      endLine: i + 1,
+    });
+    openType = null;
+    openStart = -1;
+  }
+
+  return out;
+}
+
+function buildPostSuccessContentAuditTargets(markdown: string): MarkdownFixTarget[] {
+  const lines = normalizeNewlines(markdown).split('\n');
+  const separatorIndex = findSeparatorIndexOutsideFences(lines);
+  const metadataInsertStartLine = separatorIndex === -1 ? lines.length + 1 : separatorIndex + 2;
+  const metadataInsertEndLine = metadataInsertStartLine - 1;
+  const blocks = collectFencedBlockRanges(markdown);
+  const blockByType = new Map(blocks.map((block) => [block.type, block] as const));
+  const roots = parseNexusMarkdown(markdown);
+  const nodes = flattenNodes(roots);
+  const nodeById = new Map(nodes.map((node) => [node.id, node]));
+  const expandedTargets = extractProgressiveTargets(markdown).expanded;
+
+  const out: MarkdownFixTarget[] = [];
+  const usedRanges: Array<{ startLine: number; endLine: number }> = [];
+
+  const overlapsExisting = (startLine: number, endLine: number) =>
+    usedRanges.some((range) => !(endLine < range.startLine || startLine > range.endLine));
+
+  const addTarget = (range: { startLine: number; endLine: number }, reason: string, issueCode: string) => {
+    if (out.length >= MAX_DIAGRAM_FIX_TARGETS) return;
+    const clamped = clampLineRange(range, lines.length);
+    const overlapEnd = Math.max(clamped.endLine, clamped.startLine - 1);
+    if (overlapsExisting(clamped.startLine, overlapEnd)) return;
+    usedRanges.push({ startLine: clamped.startLine, endLine: overlapEnd });
+    out.push({
+      id: `content-audit-${out.length + 1}`,
+      startLine: clamped.startLine,
+      endLine: clamped.endLine,
+      reason: clipText(reason, 280),
+      issueCodes: [issueCode],
+      contextMarkdown: extractContextMarkdownForRange(lines, clamped.startLine, clamped.endLine),
+      originalMarkdown: extractOriginalMarkdownForRange(lines, clamped.startLine, clamped.endLine),
+    });
+  };
+
+  const flowCandidates = nodes
+    .filter((node) => /#flow#/.test(node.rawContent) && !/#flowtab#/.test(node.rawContent) && !/#systemflow#/.test(node.rawContent))
+    .sort((a, b) => (b.children.length - a.children.length) || (a.lineIndex - b.lineIndex));
+
+  for (const node of flowCandidates) {
+    const subtree = findSubtreeRange(lines, node.lineIndex);
+    if (!subtree) continue;
+    const parentPath = extractParentPathForNode(node, nodeById);
+    const label = normalizeText(node.content) || normalizeText(node.rawContent) || node.id;
+    addTarget(
+      { startLine: subtree.start + 1, endLine: subtree.end + 1 },
+      [
+        'Audit this #flow# subtree for concrete step structure, branching-vs-conditional correctness, and same-screen grouping.',
+        `Root: ${label}.`,
+        `Parent path: ${parentPath.join(' > ') || '(root)'}.`,
+        `Direct children: ${node.children.length}.`,
+      ].join(' '),
+      'CONTENT_PROCESS_FLOWS',
+    );
+    if (out.length >= MAX_DIAGRAM_FIX_TARGETS - 1) break;
+  }
+
+  for (const screen of expandedTargets) {
+    const metadataBlock = blockByType.get(`expanded-metadata-${screen.runningNumber}`);
+    if (metadataBlock) {
+      addTarget(
+        { startLine: metadataBlock.startLine, endLine: metadataBlock.endLine },
+        `Audit expanded metadata for screen "${screen.label}" (expid:${screen.runningNumber}) so its primary object and layout metadata match the actual screen intent.`,
+        'CONTENT_EXPANDED_METADATA',
+      );
+    }
+    const gridBlock = blockByType.get(`expanded-grid-${screen.runningNumber}`);
+    if (gridBlock) {
+      addTarget(
+        { startLine: gridBlock.startLine, endLine: gridBlock.endLine },
+        `Audit expanded grid for screen "${screen.label}" (expid:${screen.runningNumber}). Fix vague or wrong UI content by adding structured sections/components, not by removing the screen.`,
+        'CONTENT_EXPANDED_GRID',
+      );
+    }
+    if (out.length >= MAX_DIAGRAM_FIX_TARGETS - 1) break;
+  }
+
+  for (const root of roots) {
+    const subtree = findSubtreeRange(lines, root.lineIndex);
+    if (!subtree) continue;
+    const label = normalizeText(root.content) || normalizeText(root.rawContent) || root.id;
+    addTarget(
+      { startLine: subtree.start + 1, endLine: subtree.end + 1 },
+      `Audit IA/root structure for "${label}". Group related screens/functions correctly and keep process/component detail out of plain IA nodes.`,
+      'CONTENT_IA',
+    );
+    if (out.length >= MAX_DIAGRAM_FIX_TARGETS - 1) break;
+  }
+
+  addTarget(
+    { startLine: metadataInsertStartLine, endLine: metadataInsertEndLine },
+    'Add or update metadata blocks required by the content audit, including flow-nodes, process-node-type-N, process-single-screen-N, flow-connector-labels, expanded-metadata-N, or expanded-grid-N when the current tree requires them.',
+    'CONTENT_METADATA',
+  );
+
+  return out;
+}
+
 function normalizeGeneratedGridNodes(input: unknown[], runningNumber: number): ExpandedGridNodeRuntime[] {
   const out: ExpandedGridNodeRuntime[] = [];
   input.forEach((node, index) => {
@@ -1300,6 +1548,157 @@ function summarizeCurrentDataObjects(markdown: string): string {
     .filter(Boolean)
     .join('\n')
     .slice(0, 4000);
+}
+
+function extractDataObjectAttributeIdsFromLine(line: string): string[] {
+  const m = String(line || '').match(/<!--\s*doattrs:([^>]+)\s*-->/);
+  if (!m?.[1]) return [];
+  return m[1]
+    .split(',')
+    .map((x) => normalizeText(x))
+    .filter(Boolean)
+    .slice(0, 24);
+}
+
+function humanizeIdentifier(input: string): string {
+  const raw = normalizeText(input)
+    .replace(/^do-/, '')
+    .replace(/^attr-/, '')
+    .replace(/^__+|__+$/g, '')
+    .replace(/[_-]+/g, ' ')
+    .trim();
+  if (!raw) return 'Value';
+  return raw.replace(/\b\w/g, (m) => m.toUpperCase());
+}
+
+function buildDerivedDataObjectsStore(markdown: string): JsonRecord | null {
+  const existingMatch = normalizeNewlines(markdown).match(/```data-objects\n([\s\S]*?)\n```/);
+  const existingStore = existingMatch ? parseJsonObject(existingMatch[1]) : null;
+  const existingObjectsRaw = Array.isArray(existingStore?.objects) ? (existingStore.objects as unknown[]) : [];
+  const existingById = new Map(
+    existingObjectsRaw
+      .map((row) => (row && typeof row === 'object' ? (row as JsonRecord) : null))
+      .filter((row): row is JsonRecord => row !== null)
+      .map((row) => [normalizeText(row.id), row] as const)
+      .filter(([id]) => Boolean(id)),
+  );
+
+  const roots = flattenNodes(parseNexusMarkdown(markdown));
+  const nodeByLine = new Map(roots.map((node) => [node.lineIndex, node]));
+  const lines = normalizeNewlines(markdown).split('\n');
+  const separator = findSeparatorIndexOutsideFences(lines);
+  const sectionEnd = separator === -1 ? lines.length : separator;
+  const refs = new Map<string, { name: string; attrIds: Set<string> }>();
+
+  let inFence = false;
+  for (let lineIndex = 0; lineIndex < sectionEnd; lineIndex += 1) {
+    const rawLine = String(lines[lineIndex] || '');
+    const trimmed = rawLine.trim();
+    if (!trimmed) continue;
+    if (/^```/.test(trimmed)) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;
+    const doId = extractDataObjectIdFromLine(rawLine);
+    if (!doId) continue;
+    const node = nodeByLine.get(lineIndex);
+    const label = normalizeText(node?.content) || normalizeText(node?.rawContent) || humanizeIdentifier(doId);
+    if (!refs.has(doId)) {
+      refs.set(doId, { name: label, attrIds: new Set<string>() });
+    }
+    extractDataObjectAttributeIdsFromLine(rawLine).forEach((attrId) => refs.get(doId)?.attrIds.add(attrId));
+  }
+
+  if (!refs.size && !existingById.size) return null;
+
+  let nextId = Number(existingStore?.nextId || 1);
+  refs.forEach((_value, doId) => {
+    const m = doId.match(/^do-(\d+)$/);
+    const n = m?.[1] ? Number.parseInt(m[1], 10) : NaN;
+    if (Number.isFinite(n)) nextId = Math.max(nextId, n + 1);
+  });
+
+  const orderedIds = Array.from(new Set<string>([...existingById.keys(), ...refs.keys()])).filter(Boolean).sort((a, b) => a.localeCompare(b));
+  const objects = orderedIds.map((doId) => {
+    const existing = existingById.get(doId);
+    const ref = refs.get(doId);
+    const existingData = existing && typeof existing.data === 'object' && existing.data ? ({ ...(existing.data as JsonRecord) } as JsonRecord) : {};
+    const existingAttrs = Array.isArray(existingData.attributes)
+      ? (existingData.attributes as unknown[])
+          .map((row) => (row && typeof row === 'object' ? ({ ...(row as JsonRecord) } as JsonRecord) : null))
+          .filter((row): row is JsonRecord => row !== null)
+      : [];
+    const attrById = new Map(
+      existingAttrs
+        .map((attr) => [normalizeText(attr.id), attr] as const)
+        .filter(([id]) => Boolean(id)),
+    );
+    for (const attrId of ref?.attrIds || []) {
+      if (attrById.has(attrId)) continue;
+      attrById.set(attrId, {
+        id: attrId,
+        name: humanizeIdentifier(attrId),
+        type: /status|state/i.test(attrId) ? 'status' : 'text',
+        ...( /status|state/i.test(attrId) ? { values: ['draft', 'active', 'archived'] } : {} ),
+      });
+    }
+    const nextData: JsonRecord = { ...existingData };
+    if (attrById.size) nextData.attributes = Array.from(attrById.values());
+    return {
+      id: doId,
+      name: normalizeText(existing?.name) || ref?.name || humanizeIdentifier(doId),
+      annotation:
+        normalizeText(existing?.annotation) || (ref?.name ? `Auto-synthesized from diagram reference "${ref.name}".` : undefined),
+      data: nextData,
+    };
+  });
+
+  return {
+    nextId,
+    objects,
+  };
+}
+
+function autoFixDeterministicValidationIssues(markdown: string, validation: ImportValidationResult): string {
+  const issueCodes = new Set([...validation.errors, ...validation.warnings].map((issue) => issue.code));
+  let next = normalizeNewlines(markdown).trimEnd() + '\n';
+
+  if (issueCodes.has('MISSING_SEPARATOR')) {
+    next = ensureMetadataSeparator(next);
+  }
+
+  if (
+    issueCodes.has('MISSING_TAG_STORE') ||
+    issueCodes.has('UNKNOWN_TAG_GROUP') ||
+    issueCodes.has('MISSING_REQUIRED_TAG_GROUP')
+  ) {
+    next = upsertFencedJsonBlock(next, 'tag-store', buildDerivedTagStore(next));
+  }
+
+  if (
+    issueCodes.has('MISSING_DATA_OBJECTS_BLOCK') ||
+    issueCodes.has('UNKNOWN_DATA_OBJECT_ID') ||
+    issueCodes.has('UNKNOWN_DATA_OBJECT_ATTRIBUTE_ID')
+  ) {
+    const store = buildDerivedDataObjectsStore(next);
+    if (store) {
+      next = upsertFencedJsonBlock(next, 'data-objects', store);
+    }
+  }
+
+  if (
+    issueCodes.has('MISSING_EXPANDED_STATES_BLOCK') ||
+    issueCodes.has('EXPANDED_MISSING_EXPID') ||
+    issueCodes.has('EXPID_MISSING_ENTRY') ||
+    issueCodes.has('EXPANDED_ENTRY_CONTENT_MISMATCH') ||
+    issueCodes.has('EXPANDED_ENTRY_NO_NODE') ||
+    issueCodes.has('BAD_EXPANDED_ENTRY')
+  ) {
+    next = syncExpandedStatesBlock(next);
+  }
+
+  return sanitizeDiagramMarkdown(next);
 }
 
 async function progressivelyEnrichDiagramMarkdown(input: {
@@ -1956,6 +2355,155 @@ async function repairDiagramWithTargetedPatches(input: {
   return sanitizeDiagramMarkdown(next);
 }
 
+async function runPostSuccessContentAudit(input: {
+  generation: PipelineGenerationConfig;
+  markdown: string;
+  uploadTexts: Array<{ name: string; text: string }>;
+  onMonitorUpdate?: (event: {
+    attempt: number;
+    mode: string;
+    markdown: string;
+    validation: ImportValidationResult;
+  }) => Promise<void> | void;
+}): Promise<string> {
+  const emit = async (mode: string, markdown: string) => {
+    if (!input.onMonitorUpdate) return;
+    try {
+      await input.onMonitorUpdate({
+        attempt: 0,
+        mode,
+        markdown,
+        validation: validateNexusMarkdownImport(markdown),
+      });
+    } catch {
+      // Audit telemetry should never fail the pipeline.
+    }
+  };
+
+  const baseMarkdown = sanitizeDiagramMarkdown(input.markdown);
+  const targets = buildPostSuccessContentAuditTargets(baseMarkdown);
+  if (!targets.length) return baseMarkdown;
+
+  try {
+    await emit('post_success_audit_start', baseMarkdown);
+    const sourceExcerpt = buildUploadPromptExcerpt(input.uploadTexts, {
+      maxTotalChars: MAX_POST_SUCCESS_AUDIT_SOURCE_CHARS,
+      perFileChars: 12_000,
+    });
+
+    const prompt = [
+      'Run exactly one post-success content audit pass on this ALREADY import-valid Diregram markdown file.',
+      'Return JSON only, no markdown fences:',
+      '{',
+      '  "summary": "short note",',
+      '  "patches": [',
+      '    { "targetId": "content-audit-1", "replacementMarkdown": "..." }',
+      '  ]',
+      '}',
+      '',
+      'Rules:',
+      '- Patch only the listed targetIds.',
+      '- Preserve existing scope. Do not delete branches, screens, or processes to make the file look cleaner.',
+      '- Prefer additive improvements: regroup, relabel, add missing metadata blocks, add missing structured UI content, and add process metadata when checklist-required.',
+      '- The file is already technically clean. Focus on content correctness and structural fit.',
+      '- If you change the tree, also patch the metadata target so dependent registries stay aligned.',
+      '- Fix wrong expanded-node content by making it screen-accurate and structured, not by removing the expanded node.',
+      '- Promote true lifecycle or timeframe variants into conditional hubs when that better matches the content.',
+      '- If adjacent #flow# tasks share one screen context, group them using single_screen_steps with matching process-single-screen metadata.',
+      '- If a #flow# node branches, ensure metadata includes validation/branch typing and connector labels.',
+      '- If no meaningful improvement is needed, return an empty patches array.',
+      '',
+      `Current markdown hash: ${hashMarkdown(baseMarkdown)}`,
+      '',
+      'Repository content checklist context:',
+      PIPELINE_DIAGRAM_CONTENT_CHECKLIST,
+      '',
+      'Source excerpt:',
+      sourceExcerpt || '(no upload text found)',
+      '',
+      'Patch targets:',
+      JSON.stringify(
+        targets.map((target) => ({
+          targetId: target.id,
+          startLine: target.startLine,
+          endLine: target.endLine,
+          reason: target.reason,
+          contextMarkdown: target.contextMarkdown,
+          originalMarkdown: target.originalMarkdown,
+        })),
+        null,
+        2,
+      ),
+    ].join('\n');
+
+    const out = await runPipelineGenerationText({
+      generation: input.generation,
+      maxTokens: 5200,
+      temperature: 0.1,
+      system: [
+        'You are editing one existing Diregram markdown file after it already passed import validation.',
+        'Do not rewrite the entire document.',
+        'Return JSON only matching the requested schema.',
+        'Focus on improving content fidelity using the repository checklist: IA correctness, expanded-node quality, conditional-hub correctness, process flow typing, and single-screen grouping.',
+        'Preserve coverage and prefer additive fixes.',
+      ].join('\n'),
+      messages: [{ role: 'user', content: prompt }],
+    });
+
+    const parsed = parseTargetedPatchResponse(out);
+    if (!parsed?.patches.length) {
+      await emit('post_success_audit_noop', baseMarkdown);
+      return baseMarkdown;
+    }
+
+    let candidate = sanitizeDiagramMarkdown(applyTargetedPatches(baseMarkdown, targets, parsed.patches));
+    let candidateValidation = validateNexusMarkdownImport(candidate);
+    let candidateIntegrityIssues = assessDiagramIntegrity(candidate);
+    await emit('post_success_audit', candidate);
+
+    const deterministic = autoFixDeterministicValidationIssues(candidate, candidateValidation);
+    if (deterministic !== candidate) {
+      candidate = deterministic;
+      candidateValidation = validateNexusMarkdownImport(candidate);
+      candidateIntegrityIssues = assessDiagramIntegrity(candidate);
+      await emit('post_success_audit_structural_fix', candidate);
+    }
+
+    if ((candidateValidation.errors.length || candidateValidation.warnings.length || candidateIntegrityIssues.length) && candidate !== baseMarkdown) {
+      const repaired = await repairDiagramWithTargetedPatches({
+        generation: input.generation,
+        markdown: candidate,
+        validation: candidateValidation,
+      });
+      if (repaired && repaired !== candidate) {
+        candidate = sanitizeDiagramMarkdown(repaired);
+        candidateValidation = validateNexusMarkdownImport(candidate);
+        candidateIntegrityIssues = assessDiagramIntegrity(candidate);
+        await emit('post_success_audit_targeted_repair', candidate);
+      }
+    }
+
+    if (
+      !candidateValidation.errors.length &&
+      !candidateValidation.warnings.length &&
+      !candidateIntegrityIssues.length &&
+      hashMarkdown(candidate) !== hashMarkdown(baseMarkdown) &&
+      shouldAcceptContentAuditCandidate({
+        currentMarkdown: baseMarkdown,
+        candidateMarkdown: candidate,
+      })
+    ) {
+      return candidate;
+    }
+
+    await emit('post_success_audit_rejected', candidate);
+    return baseMarkdown;
+  } catch {
+    await emit('post_success_audit_failed', baseMarkdown);
+    return baseMarkdown;
+  }
+}
+
 async function generateSingleDiagram(input: {
   generation: PipelineGenerationConfig;
   uploadTexts: Array<{ name: string; text: string }>;
@@ -2005,6 +2553,14 @@ async function generateSingleDiagram(input: {
     PIPELINE_DIAGRAM_BUILD_CHECKLIST,
   ].join('\n');
 
+  const finalizeSuccessfulDiagram = async (candidateMarkdown: string) =>
+    runPostSuccessContentAudit({
+      generation: input.generation,
+      markdown: candidateMarkdown,
+      uploadTexts: input.uploadTexts,
+      onMonitorUpdate: input.onMonitorUpdate,
+    });
+
   let markdown = makeStarterDiagramMarkdown();
   const first = await runPipelineGenerationText({
     generation: input.generation,
@@ -2044,7 +2600,9 @@ async function generateSingleDiagram(input: {
     const attemptStartHash = hashMarkdown(markdown);
     let validation = validateNexusMarkdownImport(markdown);
     let integrityIssues = assessDiagramIntegrity(markdown);
-    if (!validation.errors.length && !validation.warnings.length && !integrityIssues.length) return markdown;
+    if (!validation.errors.length && !validation.warnings.length && !integrityIssues.length) {
+      return finalizeSuccessfulDiagram(markdown);
+    }
     await emitMonitor({
       attempt: attempt + 1,
       mode: 'attempt_start',
@@ -2063,9 +2621,29 @@ async function generateSingleDiagram(input: {
         markdown,
         validation: localValidation,
       });
-      if (!localValidation.errors.length && !localValidation.warnings.length && !localIntegrityIssues.length) return markdown;
+      if (!localValidation.errors.length && !localValidation.warnings.length && !localIntegrityIssues.length) {
+        return finalizeSuccessfulDiagram(markdown);
+      }
       validation = localValidation;
       integrityIssues = localIntegrityIssues;
+    }
+
+    const deterministicFix = autoFixDeterministicValidationIssues(markdown, validation);
+    if (deterministicFix !== markdown) {
+      const deterministicValidation = validateNexusMarkdownImport(deterministicFix);
+      const deterministicIntegrityIssues = assessDiagramIntegrity(deterministicFix);
+      markdown = deterministicFix;
+      await emitMonitor({
+        attempt: attempt + 1,
+        mode: 'auto_structural_fix',
+        markdown,
+        validation: deterministicValidation,
+      });
+      if (!deterministicValidation.errors.length && !deterministicValidation.warnings.length && !deterministicIntegrityIssues.length) {
+        return finalizeSuccessfulDiagram(markdown);
+      }
+      validation = deterministicValidation;
+      integrityIssues = deterministicIntegrityIssues;
     }
 
     const targeted = await repairDiagramWithTargetedPatches({
@@ -2082,7 +2660,9 @@ async function generateSingleDiagram(input: {
         markdown: targeted,
         validation: targetedValidation,
       });
-      if (!targetedValidation.errors.length && !targetedValidation.warnings.length && !targetedIntegrityIssues.length) return targeted;
+      if (!targetedValidation.errors.length && !targetedValidation.warnings.length && !targetedIntegrityIssues.length) {
+        return finalizeSuccessfulDiagram(targeted);
+      }
       if (
         shouldAcceptCandidateValidation({
           current: validation,
@@ -2111,7 +2691,7 @@ async function generateSingleDiagram(input: {
         'Repair the provided Diregram diagram markdown so it is import-valid.',
         'Use the repository content checklist as the source of truth for content and completeness.',
         'Treat validator feedback as a technical repair gate only.',
-        'Do not remove major content unless required to fix parser/validator errors.',
+        'Do not remove major content unless required to fix parser/validator issues or warnings.',
         'Never "shrink to pass" by deleting generated nodes/branches; prefer additive completion and relinking.',
         'Use validator line hints and keep unaffected content unchanged.',
         'Return ONLY corrected markdown. No code fences.',
@@ -2156,7 +2736,9 @@ async function generateSingleDiagram(input: {
       markdown: repairedMarkdown,
       validation: repairedValidation,
     });
-    if (!repairedValidation.errors.length && !repairedValidation.warnings.length && !repairedIntegrityIssues.length) return repairedMarkdown;
+    if (!repairedValidation.errors.length && !repairedValidation.warnings.length && !repairedIntegrityIssues.length) {
+      return finalizeSuccessfulDiagram(repairedMarkdown);
+    }
     if (
       shouldAcceptCandidateValidation({
         current: validation,
@@ -2177,6 +2759,7 @@ async function generateSingleDiagram(input: {
     if (stagnantAttempts >= 2) {
       const blockingIssues = [
         ...validation.errors.map((x) => `${x.code}: ${x.message}`),
+        ...validation.warnings.map((x) => `${x.code}: ${x.message}`),
         ...integrityIssues,
       ];
       throw new Error(`Diagram repair stalled after repeated non-progress attempts: ${summarizeIssues(blockingIssues)}`);
@@ -2198,7 +2781,7 @@ async function generateSingleDiagram(input: {
   if (finalIntegrityIssues.length) {
     throw new Error(`Diagram integrity failed after repairs: ${summarizeIssues(finalIntegrityIssues)}`);
   }
-  return markdown;
+  return finalizeSuccessfulDiagram(markdown);
 }
 
 function randomPublicId() {

@@ -65,6 +65,9 @@ Every node line must have a clear intent. Use the RIGHT editor/diagram for the R
 2) Process nodes (#flow#) in the main canvas:
 - Purpose: Business flow / user journey (what the user/system does, in order).
 - Structure: parent→child nesting for linear sequences; sibling children for branching/validation splits.
+- Linear-chain rule (CRITICAL MUST):
+  - If step B happens after step A with no decision/split, step B MUST be a child of step A, not a sibling of step A.
+  - Sibling children are reserved for true alternate outcomes/branches only.
 - “Type” is NOT in the node line. If you need “validation” vs “branch” vs “step/action/time/end/goto”, you MUST encode it in metadata blocks (see process-node-type-* below).
 - UI-grounding rule (MUST):
   - Non-swimlane #flow# steps MUST be anchored to concrete UI and/or observable system actions.
@@ -186,6 +189,10 @@ What to focus on (WIZARD / multi-step UX):
 - Use "validation" or "branch" nodes for decision points.
 - Put the decision meaning into edge labels (human language), e.g. "Eligible", "Not eligible", "Missing required fields".
 - Use "goto" nodes for shortcuts like "Edit previous step" or "Jump to summary" after changes.
+- Linear-chain analysis (MUST):
+  - Default sequential steps to parent→child→grandchild nesting.
+  - Do NOT flatten sequential “next step” actions into sibling lists.
+  - Sibling children are only correct when the parent is a real validation/branch split with alternate outcomes.
 - Non-swimlane flow realism (MUST):
   - Each step should correspond to a SCREEN or an explicit system action that a user/admin can observe.
   - If a step cannot be tied to UI or an observable system event, it is probably too conceptual — move it to a Flow tab swimlane stage/label instead.
