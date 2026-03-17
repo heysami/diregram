@@ -241,6 +241,10 @@ type AgentOutputRecord = {
   };
 };
 
+type PipelineEpicDraft = PipelineEpic & {
+  diagramRefs: DiagramLinkRef[];
+};
+
 type PipelineSynthesis = {
   epics: PipelineEpic[];
   stories: PipelineStory[];
@@ -1776,6 +1780,8 @@ async function progressivelyEnrichDiagramMarkdown(input: {
   generation: PipelineGenerationConfig;
   markdown: string;
   uploadTexts: Array<{ name: string; text: string }>;
+  attempt?: number;
+  modePrefix?: string;
   onMonitorUpdate?: (event: {
     attempt: number;
     mode: string;
@@ -1786,8 +1792,8 @@ async function progressivelyEnrichDiagramMarkdown(input: {
   const emit = async (mode: string, markdown: string) => {
     if (!input.onMonitorUpdate) return;
     await input.onMonitorUpdate({
-      attempt: 0,
-      mode,
+      attempt: Math.max(0, Math.floor(Number(input.attempt || 0))),
+      mode: input.modePrefix ? `${input.modePrefix}_${mode}` : mode,
       markdown,
       validation: validateNexusMarkdownImport(markdown),
     });
@@ -1910,6 +1916,30 @@ async function progressivelyEnrichDiagramMarkdown(input: {
   }
 
   return markdown;
+}
+
+async function progressivelyRestabilizeEditedDiagram(input: {
+  generation: PipelineGenerationConfig;
+  markdown: string;
+  uploadTexts: Array<{ name: string; text: string }>;
+  attempt?: number;
+  modePrefix: string;
+  onMonitorUpdate?: (event: {
+    attempt: number;
+    mode: string;
+    markdown: string;
+    validation: ImportValidationResult;
+  }) => Promise<void> | void;
+}): Promise<string> {
+  const candidate = sanitizeDiagramMarkdown(input.markdown);
+  return progressivelyEnrichDiagramMarkdown({
+    generation: input.generation,
+    markdown: candidate,
+    uploadTexts: input.uploadTexts,
+    attempt: input.attempt,
+    modePrefix: input.modePrefix,
+    onMonitorUpdate: input.onMonitorUpdate,
+  });
 }
 
 function flattenNodes(roots: ReturnType<typeof parseNexusMarkdown>) {
@@ -2528,6 +2558,14 @@ async function runPostSuccessContentAudit(input: {
     }
 
     let candidate = sanitizeDiagramMarkdown(applyTargetedPatches(baseMarkdown, targets, parsed.patches));
+    candidate = await progressivelyRestabilizeEditedDiagram({
+      generation: input.generation,
+      markdown: candidate,
+      uploadTexts: input.uploadTexts,
+      attempt: 0,
+      modePrefix: 'post_success_progressive',
+      onMonitorUpdate: input.onMonitorUpdate,
+    });
     let candidateValidation = validateNexusMarkdownImport(candidate);
     let candidateIntegrityIssues = assessDiagramIntegrity(candidate);
     await emit('post_success_audit', candidate);
@@ -2543,7 +2581,14 @@ async function runPostSuccessContentAudit(input: {
 
       const deterministic = autoFixDeterministicValidationIssues(candidate, candidateValidation);
       if (deterministic !== candidate) {
-        candidate = deterministic;
+        candidate = await progressivelyRestabilizeEditedDiagram({
+          generation: input.generation,
+          markdown: deterministic,
+          uploadTexts: input.uploadTexts,
+          attempt,
+          modePrefix: 'post_success_progressive',
+          onMonitorUpdate: input.onMonitorUpdate,
+        });
         candidateValidation = validateNexusMarkdownImport(candidate);
         candidateIntegrityIssues = assessDiagramIntegrity(candidate);
         await emit('post_success_audit_structural_fix', candidate, attempt);
@@ -2558,11 +2603,19 @@ async function runPostSuccessContentAudit(input: {
         validation: candidateValidation,
       });
       if (targeted && targeted !== candidate) {
-        const targetedValidation = validateNexusMarkdownImport(targeted);
-        const targetedIntegrityIssues = assessDiagramIntegrity(targeted);
-        await emit('post_success_audit_targeted_repair', targeted, attempt);
+        const rebuiltTargeted = await progressivelyRestabilizeEditedDiagram({
+          generation: input.generation,
+          markdown: targeted,
+          uploadTexts: input.uploadTexts,
+          attempt,
+          modePrefix: 'post_success_progressive',
+          onMonitorUpdate: input.onMonitorUpdate,
+        });
+        const targetedValidation = validateNexusMarkdownImport(rebuiltTargeted);
+        const targetedIntegrityIssues = assessDiagramIntegrity(rebuiltTargeted);
+        await emit('post_success_audit_targeted_repair', rebuiltTargeted, attempt);
         if (!targetedValidation.errors.length && !targetedValidation.warnings.length && !targetedIntegrityIssues.length) {
-          candidate = targeted;
+          candidate = rebuiltTargeted;
           candidateValidation = targetedValidation;
           candidateIntegrityIssues = targetedIntegrityIssues;
           break;
@@ -2572,10 +2625,10 @@ async function runPostSuccessContentAudit(input: {
             current: candidateValidation,
             candidate: targetedValidation,
             currentMarkdown: candidate,
-            candidateMarkdown: targeted,
+            candidateMarkdown: rebuiltTargeted,
           })
         ) {
-          candidate = targeted;
+          candidate = rebuiltTargeted;
           candidateValidation = targetedValidation;
           candidateIntegrityIssues = targetedIntegrityIssues;
         }
@@ -2633,7 +2686,15 @@ async function runPostSuccessContentAudit(input: {
             },
           ],
         });
-        const repairedMarkdown = sanitizeDiagramMarkdown(repaired);
+        let repairedMarkdown = sanitizeDiagramMarkdown(repaired);
+        repairedMarkdown = await progressivelyRestabilizeEditedDiagram({
+          generation: input.generation,
+          markdown: repairedMarkdown,
+          uploadTexts: input.uploadTexts,
+          attempt,
+          modePrefix: 'post_success_progressive',
+          onMonitorUpdate: input.onMonitorUpdate,
+        });
         const repairedValidation = validateNexusMarkdownImport(repairedMarkdown);
         const repairedIntegrityIssues = assessDiagramIntegrity(repairedMarkdown);
         await emit('post_success_audit_full_repair', repairedMarkdown, attempt);
@@ -3100,7 +3161,7 @@ async function runSwarmAgent(input: {
     .join('\n');
 
   const roleGuide: Record<SwarmAgentName, string> = {
-    technical: 'Focus on architecture, integration, data/edge cases, technical feasibility and risks.',
+    technical: 'Focus on ERD quality, entities, attributes, relationships, data ownership, and end-to-end data flow between screens, processes, and systems.',
     user_journey: 'Focus on end-to-end journey quality, actor transitions, friction and missing flow steps.',
     interaction: 'Focus on screen-by-screen interaction steps, transitions, states, and validation handling.',
     content: 'Focus on copy/content clarity, information hierarchy, and content dependencies.',
@@ -3450,6 +3511,14 @@ async function runSwarmDrivenDiagramRevision(input: {
     }
 
     let candidate = sanitizeDiagramMarkdown(applyTargetedPatches(baseMarkdown, targets, safePatches));
+    candidate = await progressivelyRestabilizeEditedDiagram({
+      generation: input.generation,
+      markdown: candidate,
+      uploadTexts: input.uploadTexts,
+      attempt: 0,
+      modePrefix: 'swarm_revision_progressive',
+      onMonitorUpdate: input.onMonitorUpdate,
+    });
     let candidateValidation = validateNexusMarkdownImport(candidate);
     let candidateIntegrityIssues = assessDiagramIntegrity(candidate);
     await emit('swarm_revision', candidate);
@@ -3465,7 +3534,14 @@ async function runSwarmDrivenDiagramRevision(input: {
 
       const deterministic = autoFixDeterministicValidationIssues(candidate, candidateValidation);
       if (deterministic !== candidate) {
-        candidate = deterministic;
+        candidate = await progressivelyRestabilizeEditedDiagram({
+          generation: input.generation,
+          markdown: deterministic,
+          uploadTexts: input.uploadTexts,
+          attempt,
+          modePrefix: 'swarm_revision_progressive',
+          onMonitorUpdate: input.onMonitorUpdate,
+        });
         candidateValidation = validateNexusMarkdownImport(candidate);
         candidateIntegrityIssues = assessDiagramIntegrity(candidate);
         await emit('swarm_revision_structural_fix', candidate, attempt);
@@ -3480,11 +3556,19 @@ async function runSwarmDrivenDiagramRevision(input: {
         validation: candidateValidation,
       });
       if (targeted && targeted !== candidate) {
-        const targetedValidation = validateNexusMarkdownImport(targeted);
-        const targetedIntegrityIssues = assessDiagramIntegrity(targeted);
-        await emit('swarm_revision_targeted_repair', targeted, attempt);
+        const rebuiltTargeted = await progressivelyRestabilizeEditedDiagram({
+          generation: input.generation,
+          markdown: targeted,
+          uploadTexts: input.uploadTexts,
+          attempt,
+          modePrefix: 'swarm_revision_progressive',
+          onMonitorUpdate: input.onMonitorUpdate,
+        });
+        const targetedValidation = validateNexusMarkdownImport(rebuiltTargeted);
+        const targetedIntegrityIssues = assessDiagramIntegrity(rebuiltTargeted);
+        await emit('swarm_revision_targeted_repair', rebuiltTargeted, attempt);
         if (!targetedValidation.errors.length && !targetedValidation.warnings.length && !targetedIntegrityIssues.length) {
-          candidate = targeted;
+          candidate = rebuiltTargeted;
           candidateValidation = targetedValidation;
           candidateIntegrityIssues = targetedIntegrityIssues;
           break;
@@ -3494,10 +3578,10 @@ async function runSwarmDrivenDiagramRevision(input: {
             current: candidateValidation,
             candidate: targetedValidation,
             currentMarkdown: candidate,
-            candidateMarkdown: targeted,
+            candidateMarkdown: rebuiltTargeted,
           })
         ) {
-          candidate = targeted;
+          candidate = rebuiltTargeted;
           candidateValidation = targetedValidation;
           candidateIntegrityIssues = targetedIntegrityIssues;
         }
@@ -3548,6 +3632,395 @@ function mapAnchorKeysToRefs(input: unknown, anchors: Map<string, DiagramLinkRef
   return [fallback];
 }
 
+function buildFocusedDiagramExcerpt(markdown: string, refs: DiagramLinkRef[], maxChars: number): string {
+  const lines = normalizeNewlines(markdown).split('\n');
+  const seen = new Set<string>();
+  const chunks: string[] = [];
+
+  for (const ref of normalizeRefs(refs).slice(0, 12)) {
+    const subtree = findSubtreeRange(lines, ref.lineIndex);
+    if (!subtree) continue;
+    const key = `${subtree.start}:${subtree.end}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    chunks.push(`// ${ref.anchorKey} | ${ref.label}\n${lines.slice(subtree.start, subtree.end + 1).join('\n')}`);
+  }
+
+  const combined = chunks.join('\n\n');
+  return clipText(combined || markdown, maxChars);
+}
+
+function buildSwarmRecommendationSummary(
+  agentOutputs: AgentOutputRecord[],
+  refs?: DiagramLinkRef[],
+  maxRecommendations = 18,
+  detailChars = 360,
+): string {
+  const rows = refs?.length
+    ? collectRelevantSwarmRecommendations({
+        agentOutputs,
+        refs,
+        limit: maxRecommendations,
+      })
+    : agentOutputs
+        .flatMap((agent) =>
+          agent.recommendations.map((rec) => ({
+            agent: agent.agent,
+            title: rec.title,
+            detail: rec.detail,
+            diagramRefs: rec.diagramRefs,
+          })),
+        )
+        .slice(0, maxRecommendations);
+
+  return rows
+    .map((rec) => `[${rec.agent}] ${rec.title}: ${clipText(rec.detail, detailChars)} (refs: ${rec.diagramRefs.map((ref) => ref.anchorKey).join(', ')})`)
+    .join('\n');
+}
+
+async function generateEpicDraftsProgressively(input: {
+  generation: PipelineGenerationConfig;
+  diagramLinkIndex: DiagramLinkRef[];
+  diagramMarkdown: string;
+  agentOutputs: AgentOutputRecord[];
+}): Promise<{ epics: PipelineEpicDraft[]; outputPreview: string; usedFallback: boolean }> {
+  const fallbackRef = input.diagramLinkIndex[0];
+  if (!fallbackRef) throw new Error('Missing diagram references for epic generation.');
+  const anchors = toAnchorMap(input.diagramLinkIndex);
+  const anchorList = input.diagramLinkIndex
+    .slice(0, 220)
+    .map((ref) => `${ref.anchorKey} | line=${ref.lineIndex} | ${ref.label}`)
+    .join('\n');
+  const swarmSummary = buildSwarmRecommendationSummary(input.agentOutputs, undefined, 24, 260);
+
+  const out = await runPipelineGenerationText({
+    generation: input.generation,
+    temperature: 0.2,
+    maxTokens: 2600,
+    system: [
+      'Return ONLY JSON.',
+      'Schema:',
+      '{"epics":[{"id":"...","title":"...","summary":"...","diagramRefKeys":["rn:12"]}]}',
+      'Every epic MUST include one or more diagramRefKeys from the allowlist.',
+      'Create substantial epics from the real product structure. Do not use placeholders.',
+      'Group related flows/screens into coherent epics while preserving separation between clearly different product areas.',
+    ].join('\n'),
+    messages: [
+      {
+        role: 'user',
+        content: [
+          'Generate the epic list first. This is a progressive synthesis step.',
+          '',
+          'Diagram source (focused overview):',
+          clipText(input.diagramMarkdown, 20_000),
+          '',
+          'Allowed diagram anchors:',
+          anchorList,
+          '',
+          'Swarm recommendations:',
+          swarmSummary || '(none)',
+        ].join('\n'),
+      },
+    ],
+  });
+
+  const parsed = parseJsonObject(out);
+  const epicsRaw = Array.isArray(parsed?.epics) ? (parsed?.epics as unknown[]) : [];
+  const epics = epicsRaw
+    .map((row, idx) => {
+      const r = row && typeof row === 'object' ? (row as JsonRecord) : {};
+      const id = normalizeStoryId(normalizeText(r.id), `epic-${idx + 1}`);
+      return {
+        id,
+        title: clipText(r.title, 180) || `Epic ${idx + 1}`,
+        summary: clipText(r.summary, 1000) || '',
+        diagramRefs: mapAnchorKeysToRefs(r.diagramRefKeys, anchors, fallbackRef),
+      } satisfies PipelineEpicDraft;
+    })
+    .filter((row) => Boolean(row.id))
+    .slice(0, 24);
+
+  if (!epics.length) {
+    return {
+      epics: [
+        {
+          id: 'epic-1',
+          title: 'Generated Epic',
+          summary: 'Auto-generated from the current diagram because epic synthesis returned no output.',
+          diagramRefs: [fallbackRef],
+        },
+      ],
+      outputPreview: clipText(out, 1800),
+      usedFallback: true,
+    };
+  }
+
+  return {
+    epics,
+    outputPreview: clipText(out, 1800),
+    usedFallback: false,
+  };
+}
+
+async function generateStoriesForEpicProgressively(input: {
+  generation: PipelineGenerationConfig;
+  epic: PipelineEpicDraft;
+  diagramLinkIndex: DiagramLinkRef[];
+  diagramMarkdown: string;
+  agentOutputs: AgentOutputRecord[];
+}): Promise<{ stories: PipelineStory[]; outputPreview: string; usedFallback: boolean }> {
+  const fallbackRef = input.epic.diagramRefs[0] || input.diagramLinkIndex[0];
+  if (!fallbackRef) throw new Error('Missing diagram references for story generation.');
+  const anchors = toAnchorMap(input.diagramLinkIndex);
+  const focusAnchorList = normalizeRefs(input.epic.diagramRefs)
+    .slice(0, 40)
+    .map((ref) => `${ref.anchorKey} | line=${ref.lineIndex} | ${ref.label}`)
+    .join('\n');
+  const focusedDiagram = buildFocusedDiagramExcerpt(input.diagramMarkdown, input.epic.diagramRefs, 14_000);
+  const swarmSummary = buildSwarmRecommendationSummary(input.agentOutputs, input.epic.diagramRefs, 16, 320);
+
+  const out = await runPipelineGenerationText({
+    generation: input.generation,
+    temperature: 0.2,
+    maxTokens: 3400,
+    system: [
+      'Return ONLY JSON.',
+      'Schema:',
+      '{"stories":[{"id":"...","title":"...","description":"...","actor":"...","goal":"...","benefit":"...","priority":"high|medium|low","acceptanceCriteria":["..."],"uiElements":["..."],"diagramRefKeys":["rn:12"]}]}',
+      'Every story MUST include one or more diagramRefKeys.',
+      'Create concrete implementation-ready stories for this single epic only.',
+      'Use the diagram and swarm recommendations to make the stories specific, not generic.',
+      'Do not invent placeholder stories. If the epic is thin, produce fewer but better stories.',
+    ].join('\n'),
+    messages: [
+      {
+        role: 'user',
+        content: [
+          `Generate stories for epic "${input.epic.title}".`,
+          `Epic summary: ${input.epic.summary || '(none)'}`,
+          '',
+          'Epic focus anchors:',
+          focusAnchorList || '(none)',
+          '',
+          'Focused diagram excerpt:',
+          focusedDiagram || '(none)',
+          '',
+          'Relevant swarm recommendations:',
+          swarmSummary || '(none)',
+        ].join('\n'),
+      },
+    ],
+  });
+
+  const parsed = parseJsonObject(out);
+  const storiesRaw = Array.isArray(parsed?.stories) ? (parsed?.stories as unknown[]) : [];
+  const stories = storiesRaw
+    .map((row, idx) => {
+      const r = row && typeof row === 'object' ? (row as JsonRecord) : {};
+      const id = normalizeStoryId(normalizeText(r.id), `${input.epic.id}-story-${idx + 1}`);
+      const acceptanceCriteria = Array.isArray(r.acceptanceCriteria)
+        ? (r.acceptanceCriteria as unknown[]).map((x) => clipText(x, 240)).filter(Boolean).slice(0, 20)
+        : [];
+      const uiElements = Array.isArray(r.uiElements)
+        ? (r.uiElements as unknown[]).map((x) => clipText(x, 140)).filter(Boolean).slice(0, 20)
+        : [];
+      return {
+        id,
+        epicId: input.epic.id,
+        title: clipText(r.title, 220) || `${input.epic.title} Story ${idx + 1}`,
+        description: clipText(r.description, 2200),
+        actor: clipText(r.actor, 120),
+        goal: clipText(r.goal, 600),
+        benefit: clipText(r.benefit, 600),
+        priority: clipText(r.priority, 40) || 'medium',
+        acceptanceCriteria,
+        uiElements,
+        diagramRefs: mapAnchorKeysToRefs(r.diagramRefKeys, anchors, fallbackRef),
+      } satisfies PipelineStory;
+    })
+    .slice(0, 40);
+
+  if (!stories.length) {
+    return {
+      stories: [
+        {
+          id: `${input.epic.id}-story-1`,
+          epicId: input.epic.id,
+          title: `${input.epic.title} Story`,
+          description: input.epic.summary || 'Progress the epic through its linked diagram flow.',
+          actor: 'User',
+          goal: 'Complete the workflow',
+          benefit: 'Achieve the expected outcome',
+          priority: 'medium',
+          acceptanceCriteria: ['Flow can be completed end-to-end.'],
+          uiElements: ['Primary action button'],
+          diagramRefs: [fallbackRef],
+        },
+      ],
+      outputPreview: clipText(out, 1800),
+      usedFallback: true,
+    };
+  }
+
+  return {
+    stories,
+    outputPreview: clipText(out, 1800),
+    usedFallback: false,
+  };
+}
+
+async function generateComponentGapsForEpicProgressively(input: {
+  generation: PipelineGenerationConfig;
+  epic: PipelineEpicDraft;
+  stories: PipelineStory[];
+  diagramLinkIndex: DiagramLinkRef[];
+  diagramMarkdown: string;
+  agentOutputs: AgentOutputRecord[];
+}): Promise<{ componentGaps: PipelineComponentGap[]; outputPreview: string }> {
+  const fallbackRef = input.epic.diagramRefs[0] || input.diagramLinkIndex[0];
+  if (!fallbackRef) throw new Error('Missing diagram references for component gap generation.');
+  const anchors = toAnchorMap(input.diagramLinkIndex);
+  const focusedDiagram = buildFocusedDiagramExcerpt(input.diagramMarkdown, input.epic.diagramRefs, 10_000);
+  const storySummary = input.stories
+    .slice(0, 20)
+    .map((story) =>
+      [
+        `${story.id} | ${story.title}`,
+        story.description,
+        `ui=${story.uiElements.join(', ') || '(none)'}`,
+        `refs=${story.diagramRefs.map((ref) => ref.anchorKey).join(', ')}`,
+      ]
+        .filter(Boolean)
+        .join('\n'),
+    )
+    .join('\n\n');
+  const swarmSummary = buildSwarmRecommendationSummary(input.agentOutputs, input.epic.diagramRefs, 12, 260);
+
+  const out = await runPipelineGenerationText({
+    generation: input.generation,
+    temperature: 0.2,
+    maxTokens: 2200,
+    system: [
+      'Return ONLY JSON.',
+      'Schema:',
+      '{"componentGaps":[{"id":"...","name":"...","purpose":"...","propsContract":["..."],"diagramRefKeys":["rn:12"]}]}',
+      'Return additional React components or system building blocks that are missing from the generated design-system markdown but are needed by the epic.',
+      'Every component gap MUST include one or more diagramRefKeys.',
+      'Do not output placeholders.',
+    ].join('\n'),
+    messages: [
+      {
+        role: 'user',
+        content: [
+          `Generate component gaps for epic "${input.epic.title}".`,
+          '',
+          'Focused diagram excerpt:',
+          focusedDiagram || '(none)',
+          '',
+          'Epic stories:',
+          storySummary || '(none)',
+          '',
+          'Relevant swarm recommendations:',
+          swarmSummary || '(none)',
+        ].join('\n'),
+      },
+    ],
+  });
+
+  const parsed = parseJsonObject(out);
+  const rows = Array.isArray(parsed?.componentGaps) ? (parsed?.componentGaps as unknown[]) : [];
+  const componentGaps = rows
+    .map((row, idx) => {
+      const r = row && typeof row === 'object' ? (row as JsonRecord) : {};
+      const id = normalizeStoryId(normalizeText(r.id), `${input.epic.id}-component-${idx + 1}`);
+      const propsContract = Array.isArray(r.propsContract)
+        ? (r.propsContract as unknown[]).map((x) => clipText(x, 140)).filter(Boolean).slice(0, 24)
+        : [];
+      return {
+        id,
+        name: clipText(r.name, 160) || `Component ${idx + 1}`,
+        purpose: clipText(r.purpose, 1200),
+        propsContract,
+        diagramRefs: mapAnchorKeysToRefs(r.diagramRefKeys, anchors, fallbackRef),
+      } satisfies PipelineComponentGap;
+    })
+    .filter((row) => Boolean(row.name))
+    .slice(0, 16);
+
+  return {
+    componentGaps,
+    outputPreview: clipText(out, 1600),
+  };
+}
+
+function dedupeComponentGaps(gaps: PipelineComponentGap[]): PipelineComponentGap[] {
+  const seen = new Set<string>();
+  const out: PipelineComponentGap[] = [];
+  for (const gap of gaps) {
+    const key = normalizeStoryId(gap.name || gap.id, gap.id);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(gap);
+  }
+  return out;
+}
+
+async function generateDesignSystemBriefProgressively(input: {
+  generation: PipelineGenerationConfig;
+  diagramMarkdown: string;
+  epics: PipelineEpicDraft[];
+  stories: PipelineStory[];
+  agentOutputs: AgentOutputRecord[];
+}): Promise<{ brief: string; outputPreview: string }> {
+  const epicSummary = input.epics
+    .slice(0, 18)
+    .map((epic) => `- ${epic.title}: ${clipText(epic.summary, 220)} | refs=${epic.diagramRefs.map((ref) => ref.anchorKey).join(', ')}`)
+    .join('\n');
+  const storySummary = input.stories
+    .slice(0, 40)
+    .map((story) => `- ${story.title}: actor=${story.actor || '-'} | goal=${clipText(story.goal, 180)} | ui=${story.uiElements.join(', ') || '(none)'} | refs=${story.diagramRefs.map((ref) => ref.anchorKey).join(', ')}`)
+    .join('\n');
+  const swarmSummary = buildSwarmRecommendationSummary(input.agentOutputs, undefined, 24, 220);
+
+  const out = await runPipelineGenerationText({
+    generation: input.generation,
+    temperature: 0.2,
+    maxTokens: 1800,
+    system: [
+      'Return plain text only.',
+      'Write a concrete design-system brief for later Vision design-system generation.',
+      'Include product tone, IA implications, UI patterns, interaction expectations, content behavior, and component priorities.',
+      'Ground the brief in the current diagram, stories, and swarm recommendations.',
+      'Do not return placeholders or generic filler.',
+    ].join('\n'),
+    messages: [
+      {
+        role: 'user',
+        content: [
+          'Generate the design-system brief.',
+          '',
+          'Diagram overview:',
+          clipText(input.diagramMarkdown, 12_000),
+          '',
+          'Epics:',
+          epicSummary || '(none)',
+          '',
+          'Stories:',
+          storySummary || '(none)',
+          '',
+          'Swarm recommendations:',
+          swarmSummary || '(none)',
+        ].join('\n'),
+      },
+    ],
+  });
+
+  return {
+    brief: clipText(out, 3000),
+    outputPreview: clipText(out, 1600),
+  };
+}
+
 async function synthesizePipeline(input: {
   generation: PipelineGenerationConfig;
   diagramLinkIndex: DiagramLinkRef[];
@@ -3557,129 +4030,53 @@ async function synthesizePipeline(input: {
   const fallbackRef = input.diagramLinkIndex[0];
   if (!fallbackRef) throw new Error('Missing diagram references for synthesis.');
 
-  const anchors = toAnchorMap(input.diagramLinkIndex);
-  const anchorList = input.diagramLinkIndex
-    .slice(0, 220)
-    .map((ref) => `${ref.anchorKey} | line=${ref.lineIndex} | ${ref.label}`)
-    .join('\n');
+  const epicResult = await generateEpicDraftsProgressively(input);
+  const epicDrafts = epicResult.epics;
+  const epics: PipelineEpic[] = epicDrafts.map((epic) => ({
+    id: epic.id,
+    title: epic.title,
+    summary: epic.summary,
+  }));
 
-  const agentsText = input.agentOutputs
-    .map((agent) => {
-      const rows = agent.recommendations
-        .map((rec) => `- ${rec.title}: ${rec.detail}\n  refs=${rec.diagramRefs.map((x) => x.anchorKey).join(', ')}`)
-        .join('\n');
-      return `## ${agent.agent}\n${rows}`;
-    })
-    .join('\n\n');
+  const storyOutputs: string[] = [];
+  const componentOutputs: string[] = [];
+  const stories: PipelineStory[] = [];
+  const componentGapDrafts: PipelineComponentGap[] = [];
+  let usedStoryFallback = false;
 
-  const out = await runPipelineGenerationText({
-    generation: input.generation,
-    temperature: 0.2,
-    maxTokens: 5200,
-    system: [
-      'Return ONLY JSON.',
-      'Schema:',
-      '{',
-      '  "epics":[{"id":"...","title":"...","summary":"..."}],',
-      '  "stories":[{"id":"...","epicId":"...","title":"...","description":"...","actor":"...","goal":"...","benefit":"...","priority":"high|medium|low","acceptanceCriteria":["..."],"uiElements":["..."],"diagramRefKeys":["rn:12"]}],',
-      '  "designSystemBrief":"...",',
-      '  "componentGaps":[{"id":"...","name":"...","purpose":"...","propsContract":["..."],"diagramRefKeys":["rn:12"]}]',
-      '}',
-      'Every story and every componentGap MUST include at least one diagramRefKey from the allowlist.',
-      'Prefer concise but concrete content.',
-    ].join('\n'),
-    messages: [
-      {
-        role: 'user',
-        content: [
-          'Single diagram source (excerpt):',
-          clipText(input.diagramMarkdown, 18_000),
-          '',
-          'Allowed diagram anchors:',
-          anchorList,
-          '',
-          'Swarm outputs:',
-          agentsText,
-        ].join('\n'),
-      },
-    ],
-  });
+  for (const epic of epicDrafts) {
+    const storyResult = await generateStoriesForEpicProgressively({
+      generation: input.generation,
+      epic,
+      diagramLinkIndex: input.diagramLinkIndex,
+      diagramMarkdown: input.diagramMarkdown,
+      agentOutputs: input.agentOutputs,
+    });
+    storyOutputs.push(`## ${epic.id}\n${storyResult.outputPreview}`);
+    if (storyResult.usedFallback) usedStoryFallback = true;
+    stories.push(...storyResult.stories);
 
-  const parsed = parseJsonObject(out);
-  const epicsRaw = Array.isArray(parsed?.epics) ? (parsed?.epics as unknown[]) : [];
-  const storiesRaw = Array.isArray(parsed?.stories) ? (parsed?.stories as unknown[]) : [];
-  const gapsRaw = Array.isArray(parsed?.componentGaps) ? (parsed?.componentGaps as unknown[]) : [];
-
-  const epics: PipelineEpic[] = epicsRaw
-    .map((row, idx) => {
-      const r = row && typeof row === 'object' ? (row as JsonRecord) : {};
-      const id = normalizeStoryId(normalizeText(r.id), `epic-${idx + 1}`);
-      return {
-        id,
-        title: clipText(r.title, 180) || `Epic ${idx + 1}`,
-        summary: clipText(r.summary, 1000) || '',
-      };
-    })
-    .filter((x) => Boolean(x.id))
-    .slice(0, 24);
-
-  const epicIdFallback = epics[0]?.id || 'epic-1';
-
-  const stories: PipelineStory[] = storiesRaw
-    .map((row, idx) => {
-      const r = row && typeof row === 'object' ? (row as JsonRecord) : {};
-      const id = normalizeStoryId(normalizeText(r.id), `story-${idx + 1}`);
-      const epicId = normalizeStoryId(normalizeText(r.epicId), epicIdFallback) || epicIdFallback;
-      const acceptanceCriteria = Array.isArray(r.acceptanceCriteria)
-        ? (r.acceptanceCriteria as unknown[]).map((x) => clipText(x, 240)).filter(Boolean).slice(0, 20)
-        : [];
-      const uiElements = Array.isArray(r.uiElements)
-        ? (r.uiElements as unknown[]).map((x) => clipText(x, 140)).filter(Boolean).slice(0, 20)
-        : [];
-      const diagramRefs = mapAnchorKeysToRefs(r.diagramRefKeys, anchors, fallbackRef);
-      return {
-        id,
-        epicId,
-        title: clipText(r.title, 220) || `Story ${idx + 1}`,
-        description: clipText(r.description, 2000),
-        actor: clipText(r.actor, 120),
-        goal: clipText(r.goal, 600),
-        benefit: clipText(r.benefit, 600),
-        priority: clipText(r.priority, 40) || 'medium',
-        acceptanceCriteria,
-        uiElements,
-        diagramRefs,
-      };
-    })
-    .slice(0, 260);
-
-  const componentGaps: PipelineComponentGap[] = gapsRaw
-    .map((row, idx) => {
-      const r = row && typeof row === 'object' ? (row as JsonRecord) : {};
-      const id = normalizeStoryId(normalizeText(r.id), `component-${idx + 1}`);
-      const propsContract = Array.isArray(r.propsContract)
-        ? (r.propsContract as unknown[]).map((x) => clipText(x, 140)).filter(Boolean).slice(0, 24)
-        : [];
-      const diagramRefs = mapAnchorKeysToRefs(r.diagramRefKeys, anchors, fallbackRef);
-      return {
-        id,
-        name: clipText(r.name, 160) || `Component ${idx + 1}`,
-        purpose: clipText(r.purpose, 1200),
-        propsContract,
-        diagramRefs,
-      };
-    })
-    .slice(0, 60);
-
-  if (!epics.length) {
-    epics.push({ id: 'epic-1', title: 'Generated Epic', summary: 'Auto-generated from swarm recommendations.' });
+    const componentResult = await generateComponentGapsForEpicProgressively({
+      generation: input.generation,
+      epic,
+      stories: storyResult.stories,
+      diagramLinkIndex: input.diagramLinkIndex,
+      diagramMarkdown: input.diagramMarkdown,
+      agentOutputs: input.agentOutputs,
+    });
+    componentOutputs.push(`## ${epic.id}\n${componentResult.outputPreview}`);
+    componentGapDrafts.push(...componentResult.componentGaps);
   }
+
+  const componentGaps = dedupeComponentGaps(componentGapDrafts).slice(0, 60);
+
   if (!stories.length) {
+    usedStoryFallback = true;
     stories.push({
       id: 'story-1',
-      epicId: epics[0]!.id,
+      epicId: epics[0]?.id || 'epic-1',
       title: 'Generated Story',
-      description: 'Pipeline fallback story due to empty synthesis.',
+      description: 'Pipeline fallback story due to empty story generation.',
       actor: 'User',
       goal: 'Complete the workflow',
       benefit: 'Achieve expected outcome',
@@ -3690,18 +4087,32 @@ async function synthesizePipeline(input: {
     });
   }
 
-  const usedEpicFallback = epicsRaw.length === 0;
-  const usedStoryFallback = storiesRaw.length === 0;
+  const designBriefResult = await generateDesignSystemBriefProgressively({
+    generation: input.generation,
+    diagramMarkdown: input.diagramMarkdown,
+    epics: epicDrafts,
+    stories,
+    agentOutputs: input.agentOutputs,
+  });
+
   return {
     epics,
     stories,
-    designSystemBrief: clipText(parsed?.designSystemBrief, 3000),
+    designSystemBrief: designBriefResult.brief,
     componentGaps,
     monitor: {
-      outputPreview: clipText(out, 2400),
-      usedEpicFallback,
+      outputPreview: clipText(
+        [
+          `Epic synthesis:\n${epicResult.outputPreview}`,
+          `Story synthesis:\n${storyOutputs.join('\n\n')}`,
+          `Component gap synthesis:\n${componentOutputs.join('\n\n')}`,
+          `Design-system brief:\n${designBriefResult.outputPreview}`,
+        ].join('\n\n'),
+        2400,
+      ),
+      usedEpicFallback: epicResult.usedFallback,
       usedStoryFallback,
-      designSystemBriefPreview: clipText(parsed?.designSystemBrief, 600),
+      designSystemBriefPreview: clipText(designBriefResult.brief, 600),
     },
   };
 }
@@ -4008,7 +4419,7 @@ async function generateTsxStubWithModel(input: {
   }
 }
 
-function noteForEpic(input: {
+function fallbackNoteForEpic(input: {
   epic: PipelineEpic;
   stories: PipelineStory[];
   diagramFileId: string;
@@ -4071,6 +4482,76 @@ function noteForEpic(input: {
   });
 
   return upsertHeader(lines.join('\n').trimEnd() + '\n', { kind: 'note', version: 1 });
+}
+
+async function generateNoteForEpicWithModel(input: {
+  generation: PipelineGenerationConfig;
+  epic: PipelineEpic;
+  stories: PipelineStory[];
+  diagramFileId: string;
+  agentOutputs: AgentOutputRecord[];
+}): Promise<string> {
+  const storyPayload = input.stories
+    .slice(0, 40)
+    .map((story) => ({
+      id: story.id,
+      title: story.title,
+      description: story.description,
+      actor: story.actor,
+      goal: story.goal,
+      benefit: story.benefit,
+      priority: story.priority,
+      acceptanceCriteria: story.acceptanceCriteria,
+      uiElements: story.uiElements,
+      diagramRefs: story.diagramRefs.map((ref) => ref.anchorKey),
+      swarmInsights: collectRelevantSwarmRecommendations({
+        agentOutputs: input.agentOutputs,
+        refs: story.diagramRefs,
+        limit: 8,
+      }).map((rec) => ({
+        agent: rec.agent,
+        title: rec.title,
+        detail: clipText(rec.detail, 400),
+        diagramRefs: rec.diagramRefs.map((ref) => ref.anchorKey),
+      })),
+    }));
+
+  const prompt = [
+    'Write one Diregram epic note in markdown.',
+    'Return markdown only. No code fences.',
+    'Preserve exact grounding from the provided stories and swarm insights.',
+    'Required structure:',
+    '# Epic title',
+    'Primary diagram file line',
+    'For each story:',
+    '## numbered story heading',
+    '- Story metadata bullets',
+    '### Acceptance Criteria',
+    '### Swarm Analysis',
+    '### UI Elements Table',
+    'Do not use placeholders or generic filler text.',
+    '',
+    `Epic title: ${input.epic.title}`,
+    `Epic summary: ${input.epic.summary || '(none)'}`,
+    `Primary diagram file: ${input.diagramFileId}`,
+    '',
+    'Story payload:',
+    JSON.stringify(storyPayload, null, 2),
+  ].join('\n');
+
+  try {
+    const out = await runPipelineGenerationText({
+      generation: input.generation,
+      maxTokens: 3200,
+      temperature: 0.2,
+      messages: [{ role: 'user', content: prompt }],
+    });
+    const cleaned = out.replace(/^\s*```(?:md|markdown)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
+    if (!cleaned) throw new Error('Empty note output');
+    return upsertHeader(cleaned + '\n', { kind: 'note', version: 1 });
+  } catch {
+    return fallbackNoteForEpic(input);
+  }
 }
 
 function toLinkedArtifact(kind: 'diagram' | 'grid' | 'vision' | 'note' | 'resource', id: string, name: string, refs: DiagramLinkRef[]) {
@@ -4853,7 +5334,8 @@ export async function runProjectPipelineJob(job: AsyncJobRow): Promise<Record<st
     await ensureNotCancelled();
     const epic = synthesis.epics[i]!;
     const stories = synthesis.stories.filter((story) => story.epicId === epic.id);
-    const markdown = noteForEpic({
+    const markdown = await generateNoteForEpicWithModel({
+      generation,
       epic,
       stories,
       diagramFileId: singleDiagramFileId,
