@@ -760,6 +760,71 @@ function parseTargetedPatchResponse(text: string): { summary: string; patches: T
   return { summary, patches };
 }
 
+function looksLikeSafeTreePatchReplacement(text: string): boolean {
+  const normalized = normalizeNewlines(text).trim();
+  if (!normalized) return true;
+  const lines = normalized.split('\n');
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    if (/^```/.test(trimmed)) return false;
+    if (trimmed === '---') return false;
+    if (/^#{1,6}\s/.test(trimmed)) return false;
+    if (/^[-*]\s/.test(trimmed)) return false;
+    if (/^\d+\.\s/.test(trimmed)) return false;
+    if (/^[\[{]/.test(trimmed) || /^[\]}]/.test(trimmed) || /^"[^"]+"\s*:/.test(trimmed)) return false;
+    if (trimmed.length > 320) return false;
+  }
+  return true;
+}
+
+function looksLikeSafeMetadataPatchReplacement(text: string): boolean {
+  const normalized = normalizeNewlines(text).trim();
+  if (!normalized) return true;
+  const lines = normalized.split('\n');
+  let inFence = false;
+  let fenceCount = 0;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    if (/^```/.test(trimmed)) {
+      inFence = !inFence;
+      fenceCount += 1;
+      continue;
+    }
+    if (!inFence) return false;
+  }
+
+  return fenceCount > 0 && !inFence;
+}
+
+function isMetadataOnlyRevisionTarget(target: MarkdownFixTarget): boolean {
+  return target.issueCodes.some((code) =>
+    [
+      'SWARM_REVISION_METADATA',
+      'SWARM_REVISION_EXPANDED_METADATA',
+      'SWARM_REVISION_EXPANDED_GRID',
+      'CONTENT_METADATA',
+      'CONTENT_EXPANDED_METADATA',
+      'CONTENT_EXPANDED_GRID',
+    ].includes(code),
+  );
+}
+
+function filterSafeRevisionPatches(targets: MarkdownFixTarget[], patches: TargetedMarkdownPatch[]): TargetedMarkdownPatch[] {
+  const targetById = new Map(targets.map((target) => [target.id, target] as const));
+  return patches.filter((patch) => {
+    const target = targetById.get(patch.targetId);
+    if (!target) return false;
+    const replacement = unwrapOuterDiagramFence(normalizeNewlines(patch.replacementMarkdown)).trim();
+    if (isMetadataOnlyRevisionTarget(target)) {
+      return looksLikeSafeMetadataPatchReplacement(replacement);
+    }
+    return looksLikeSafeTreePatchReplacement(replacement);
+  });
+}
+
 function applyTargetedPatches(markdown: string, targets: MarkdownFixTarget[], patches: TargetedMarkdownPatch[]): string {
   if (!patches.length) return markdown;
   const lines = normalizeNewlines(markdown).split('\n');
@@ -3307,17 +3372,17 @@ async function runSwarmDrivenDiagramRevision(input: {
   try {
     await emit('swarm_revision_start', baseMarkdown);
     const sourceExcerpt = buildUploadPromptExcerpt(input.uploadTexts, {
-      maxTotalChars: MAX_POST_SUCCESS_AUDIT_SOURCE_CHARS,
-      perFileChars: 12_000,
+      maxTotalChars: 12_000,
+      perFileChars: 8_000,
     });
     const swarmSummary = input.agentOutputs
       .flatMap((agent) =>
         agent.recommendations.map(
           (rec) =>
-            `[${agent.agent}] ${rec.title}\n${clipText(rec.detail, 700)}\nrefs=${rec.diagramRefs.map((ref) => ref.anchorKey).join(', ')}`,
+            `[${agent.agent}] ${rec.title}\n${clipText(rec.detail, 420)}\nrefs=${rec.diagramRefs.map((ref) => ref.anchorKey).join(', ')}`,
         ),
       )
-      .slice(0, 20)
+      .slice(0, 12)
       .join('\n\n');
 
     const prompt = [
@@ -3366,7 +3431,7 @@ async function runSwarmDrivenDiagramRevision(input: {
 
     const out = await runPipelineGenerationText({
       generation: input.generation,
-      maxTokens: 5600,
+      maxTokens: 3600,
       temperature: 0.1,
       system: [
         'You are editing an existing Diregram markdown file based on grounded swarm recommendations.',
@@ -3378,12 +3443,13 @@ async function runSwarmDrivenDiagramRevision(input: {
     });
 
     const parsed = parseTargetedPatchResponse(out);
-    if (!parsed?.patches.length) {
+    const safePatches = parsed ? filterSafeRevisionPatches(targets, parsed.patches) : [];
+    if (!safePatches.length) {
       await emit('swarm_revision_noop', baseMarkdown);
       return baseMarkdown;
     }
 
-    let candidate = sanitizeDiagramMarkdown(applyTargetedPatches(baseMarkdown, targets, parsed.patches));
+    let candidate = sanitizeDiagramMarkdown(applyTargetedPatches(baseMarkdown, targets, safePatches));
     let candidateValidation = validateNexusMarkdownImport(candidate);
     let candidateIntegrityIssues = assessDiagramIntegrity(candidate);
     await emit('swarm_revision', candidate);
@@ -3434,81 +3500,6 @@ async function runSwarmDrivenDiagramRevision(input: {
           candidate = targeted;
           candidateValidation = targetedValidation;
           candidateIntegrityIssues = targetedIntegrityIssues;
-        }
-      }
-
-      if (candidateValidation.errors.length || candidateValidation.warnings.length || candidateIntegrityIssues.length) {
-        const errorSummary = summarizeIssues(candidateValidation.errors.map((x) => `${x.code}: ${x.message}`));
-        const warningSummary = summarizeIssues(candidateValidation.warnings.map((x) => `${x.code}: ${x.message}`));
-        const integritySummary = summarizeIssues(candidateIntegrityIssues);
-        const detailedHints = [...candidateValidation.errors, ...candidateValidation.warnings]
-          .slice(0, MAX_DIAGRAM_FIX_ISSUES)
-          .map((issue, idx) => `${idx + 1}. ${issue.code}: ${normalizeText(issue.message)}\n   Fix hint: ${fixInstructionForValidationIssue(issue)}`)
-          .join('\n');
-
-        const repaired = await runPipelineGenerationText({
-          generation: input.generation,
-          maxTokens: 5600,
-          temperature: 0.1,
-          system: [
-            'Repair the provided Diregram diagram markdown after a swarm-driven revision.',
-            'Preserve the swarm-driven improvements wherever possible.',
-            'Use the repository content checklist as the source of truth for content and completeness.',
-            'Treat validator feedback as a technical repair gate only.',
-            'Return ONLY corrected markdown. No code fences.',
-          ].join('\n'),
-          messages: [
-            {
-              role: 'user',
-              content: [
-                `Swarm revision repair attempt: ${attempt}/${MAX_POST_SUCCESS_AUDIT_REPAIR_ATTEMPTS}`,
-                `Current markdown hash: ${hashMarkdown(candidate)}`,
-                '',
-                'Fix these validator issues:',
-                errorSummary,
-                '',
-                'Fix these validator warnings too. Warnings are blocking:',
-                warningSummary,
-                '',
-                candidateIntegrityIssues.length ? 'Fix these diagram integrity issues:' : '',
-                candidateIntegrityIssues.length ? integritySummary : '',
-                candidateIntegrityIssues.length ? '' : '',
-                'Validator report:',
-                candidateValidation.aiFriendlyReport,
-                '',
-                'Issue-specific repair hints:',
-                detailedHints,
-                '',
-                'Repository content checklist context:',
-                PIPELINE_DIAGRAM_CONTENT_CHECKLIST,
-                '',
-                'Markdown to repair:',
-                candidate,
-              ].join('\n'),
-            },
-          ],
-        });
-        const repairedMarkdown = sanitizeDiagramMarkdown(repaired);
-        const repairedValidation = validateNexusMarkdownImport(repairedMarkdown);
-        const repairedIntegrityIssues = assessDiagramIntegrity(repairedMarkdown);
-        await emit('swarm_revision_full_repair', repairedMarkdown, attempt);
-        if (!repairedValidation.errors.length && !repairedValidation.warnings.length && !repairedIntegrityIssues.length) {
-          candidate = repairedMarkdown;
-          candidateValidation = repairedValidation;
-          candidateIntegrityIssues = repairedIntegrityIssues;
-          break;
-        }
-        if (
-          shouldAcceptCandidateValidation({
-            current: candidateValidation,
-            candidate: repairedValidation,
-            currentMarkdown: candidate,
-            candidateMarkdown: repairedMarkdown,
-          })
-        ) {
-          candidate = repairedMarkdown;
-          candidateValidation = repairedValidation;
-          candidateIntegrityIssues = repairedIntegrityIssues;
         }
       }
 
