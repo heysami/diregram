@@ -19,6 +19,9 @@ type PipelineRunRow = {
   startedAt: string | null;
   updatedAt: string;
   finishedAt: string | null;
+  heartbeatAt: string | null;
+  leaseUntil: string | null;
+  workerId: string;
   singleDiagramFileId: string;
   primaryDiagramFileId: string;
   timeline: Array<{
@@ -141,6 +144,31 @@ function formatDurationMs(ms: number): string {
   return `${s}s`;
 }
 
+function timeAgo(input: string | null): string {
+  const t = String(input || '').trim();
+  if (!t) return '-';
+  const ms = Date.parse(t);
+  if (!Number.isFinite(ms)) return t;
+  const diff = Date.now() - ms;
+  if (diff < 0) return 'just now';
+  const seconds = Math.floor(diff / 1000);
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}
+
+function isLikelyStaleRun(run: PipelineRunRow): boolean {
+  if (!(run.status === 'queued' || run.status === 'running')) return false;
+  const leaseMs = Date.parse(String(run.leaseUntil || ''));
+  if (Number.isFinite(leaseMs) && Date.now() > leaseMs) return true;
+  const heartbeatMs = Date.parse(String(run.heartbeatAt || run.updatedAt || ''));
+  if (!Number.isFinite(heartbeatMs)) return false;
+  return Date.now() - heartbeatMs > 3 * 60 * 1000;
+}
+
 function isRunActive(status: string): boolean {
   return status === 'queued' || status === 'running';
 }
@@ -193,6 +221,9 @@ export default function PipelineClient({ projectId }: { projectId: string }) {
           startedAt: r.startedAt ? String(r.startedAt) : null,
           updatedAt: String(r.updatedAt || nowIso()),
           finishedAt: r.finishedAt ? String(r.finishedAt) : null,
+          heartbeatAt: r.heartbeatAt ? String(r.heartbeatAt) : null,
+          leaseUntil: r.leaseUntil ? String(r.leaseUntil) : null,
+          workerId: String(r.workerId || ''),
           singleDiagramFileId: String(r.singleDiagramFileId || ''),
           primaryDiagramFileId: String(r.primaryDiagramFileId || ''),
           timeline: Array.isArray(r.timeline)
@@ -600,6 +631,22 @@ export default function PipelineClient({ projectId }: { projectId: string }) {
             </div>
           </div>
 
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-xs">
+            <div className="mac-double-outline p-2">
+              <div className="opacity-70">Heartbeat</div>
+              <div>{formatDateTime(currentRun.heartbeatAt)}</div>
+              <div className="opacity-60">{timeAgo(currentRun.heartbeatAt)}</div>
+            </div>
+            <div className="mac-double-outline p-2">
+              <div className="opacity-70">Lease until</div>
+              <div>{formatDateTime(currentRun.leaseUntil)}</div>
+            </div>
+            <div className="mac-double-outline p-2">
+              <div className="opacity-70">Worker</div>
+              <div className="break-all">{currentRun.workerId || '-'}</div>
+            </div>
+          </div>
+
           <div className="text-xs opacity-80">
             Duration:{' '}
             {(() => {
@@ -609,6 +656,12 @@ export default function PipelineClient({ projectId }: { projectId: string }) {
               return formatDurationMs(endMs - startMs);
             })()}
           </div>
+
+          {isLikelyStaleRun(currentRun) ? (
+            <div className="mac-double-outline p-2 text-xs bg-red-100 border-red-700">
+              Worker heartbeat is stale or lease has expired. This run is likely orphaned or blocked outside normal stage progress.
+            </div>
+          ) : null}
 
           {currentRun.step === 'prepare_inputs' && currentRun.sourceProgress.name ? (
             <div className="mac-double-outline p-2 text-xs">

@@ -114,8 +114,10 @@ const MAX_PROGRESSIVE_TREE_CHARS = 16_000;
 const MAX_PROGRESSIVE_SCREEN_BATCH_SIZE = 3;
 const MAX_PROGRESSIVE_SCREEN_SUBTREE_CHARS = 10_000;
 const MAX_PROGRESSIVE_DATA_OBJECT_IDS = 24;
+const ASYNC_JOB_UPDATE_TIMEOUT_MS = 20_000;
 const STORAGE_DOWNLOAD_TIMEOUT_MS = 60_000;
 const STORAGE_TEXT_READ_TIMEOUT_MS = 30_000;
+const STORAGE_REMOVE_TIMEOUT_MS = 15_000;
 const DOCLING_REQUEST_TIMEOUT_MS = 180_000;
 
 const RN_RE = /<!--\s*rn:(\d+)\s*-->/;
@@ -1480,7 +1482,9 @@ async function convertViaDocling(input: {
   const markdown = await withTimeout(`Read converted output for ${input.originalFilename}`, STORAGE_TEXT_READ_TIMEOUT_MS, () => blob.text());
 
   try {
-    await input.admin.storage.from('docling-files').remove([outputObjectPath]);
+    await withTimeout(`Cleanup converted output for ${input.originalFilename}`, STORAGE_REMOVE_TIMEOUT_MS, () =>
+      input.admin.storage.from('docling-files').remove([outputObjectPath]),
+    );
   } catch {
     // ignore cleanup failures
   }
@@ -2581,11 +2585,13 @@ export async function runProjectPipelineJob(job: AsyncJobRow): Promise<Record<st
       progressPct: Math.max(1, Math.min(99, Math.floor(progressPct))),
       ...(timelineMeta || {}),
     });
-    await updateAsyncJob(job.id, {
-      step,
-      progress_pct: Math.max(1, Math.min(99, Math.floor(progressPct))),
-      state: stageState,
-    });
+    await withTimeout(`Async job state update (${step})`, ASYNC_JOB_UPDATE_TIMEOUT_MS, () =>
+      updateAsyncJob(job.id, {
+        step,
+        progress_pct: Math.max(1, Math.min(99, Math.floor(progressPct))),
+        state: stageState,
+      }),
+    );
   };
 
   const ensureNotCancelled = async () => {

@@ -271,6 +271,9 @@ export async function GET(request: Request) {
       return {
         ...summary,
         startedAt: row.started_at || null,
+        heartbeatAt: row.heartbeat_at || null,
+        leaseUntil: row.lease_until || null,
+        workerId: clampText(row.worker_id, 180) || '',
         singleDiagramFileId: String(result.singleDiagramFileId || ''),
         primaryDiagramFileId: String(result.primaryDiagramFileId || ''),
         timeline,
