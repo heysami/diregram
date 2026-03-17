@@ -208,6 +208,14 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function pipelineLog(jobId: string, message: string, extra?: Record<string, unknown>) {
+  if (extra && Object.keys(extra).length) {
+    console.log(`[project_pipeline ${jobId}] ${message}`, extra);
+    return;
+  }
+  console.log(`[project_pipeline ${jobId}] ${message}`);
+}
+
 function sanitizeUnicodeText(input: unknown): string {
   const raw = String(input || '');
   let out = '';
@@ -1503,31 +1511,31 @@ async function collectUploadTexts(input: {
 
   for (let index = 0; index < uploads.length; index += 1) {
     const upload = uploads[index]!;
-    await input.onProgress?.({ index: index + 1, total, name: upload.name, action: 'download_input' });
-    const { data: blob, error } = await withTimeout(
-      `Download upload ${upload.name}`,
-      STORAGE_DOWNLOAD_TIMEOUT_MS,
-      () => input.admin.storage.from('docling-files').download(upload.objectPath),
-    );
-    if (error) throw new Error(error.message);
-
     let text = '';
-    let sourceKind: UploadExtractionSourceKind = 'docling';
-    if (isLikelyTextFile(upload.name, upload.mimeType)) {
+    const isTextFile = isLikelyTextFile(upload.name, upload.mimeType);
+    const sourceKind: UploadExtractionSourceKind = isTextFile ? 'text' : 'docling';
+    if (isTextFile) {
+      await input.onProgress?.({ index: index + 1, total, name: upload.name, action: 'download_input', sourceKind: 'text' });
+      const { data: blob, error } = await withTimeout(
+        `Download upload ${upload.name}`,
+        STORAGE_DOWNLOAD_TIMEOUT_MS,
+        () => input.admin.storage.from('docling-files').download(upload.objectPath),
+      );
+      if (error) throw new Error(error.message);
       await input.onProgress?.({ index: index + 1, total, name: upload.name, action: 'read_text', sourceKind: 'text' });
       text = clipText(await withTimeout(`Read upload ${upload.name}`, STORAGE_TEXT_READ_TIMEOUT_MS, () => blob.text()), MAX_UPLOAD_TEXT);
-      sourceKind = 'text';
     } else {
+      await input.onProgress?.({ index: index + 1, total, name: upload.name, action: 'convert_docling', sourceKind: 'docling' });
       text = await convertViaDocling({
         userId: input.requesterUserId,
         objectPath: upload.objectPath,
         originalFilename: upload.name,
         admin: input.admin,
         onProgress: async (action) => {
+          if (action === 'convert_docling') return;
           await input.onProgress?.({ index: index + 1, total, name: upload.name, action, sourceKind: 'docling' });
         },
       });
-      sourceKind = 'docling';
     }
 
     await input.onProgress?.({ index: index + 1, total, name: upload.name, action: 'analyze', sourceKind });
@@ -2539,6 +2547,13 @@ export async function runProjectPipelineJob(job: AsyncJobRow): Promise<Record<st
 
   if (!uploads.length) throw new Error('No uploads were provided');
 
+  pipelineLog(job.id, 'start', {
+    uploadCount: uploads.length,
+    generationProvider,
+    ownerId,
+    projectFolderId,
+  });
+
   let secret: JsonRecord = {};
   if (job.secret_payload) {
     try {
@@ -2585,6 +2600,11 @@ export async function runProjectPipelineJob(job: AsyncJobRow): Promise<Record<st
       progressPct: Math.max(1, Math.min(99, Math.floor(progressPct))),
       ...(timelineMeta || {}),
     });
+    pipelineLog(job.id, 'stage_update', {
+      step,
+      progressPct: Math.max(1, Math.min(99, Math.floor(progressPct))),
+      ...(timelineMeta || {}),
+    });
     await withTimeout(`Async job state update (${step})`, ASYNC_JOB_UPDATE_TIMEOUT_MS, () =>
       updateAsyncJob(job.id, {
         step,
@@ -2623,6 +2643,13 @@ export async function runProjectPipelineJob(job: AsyncJobRow): Promise<Record<st
         done: 0.98,
       };
       const phase = phaseMap[event.action] ?? 0.1;
+      pipelineLog(job.id, 'prepare_inputs_progress', {
+        fileIndex: event.index,
+        fileTotal: event.total,
+        fileName: safeFileName(event.name),
+        action: event.action,
+        sourceKind: event.sourceKind || '',
+      });
       await setStage(
         'prepare_inputs',
         prepareInputsProgressPct(event.index, event.total, phase),
@@ -2649,6 +2676,17 @@ export async function runProjectPipelineJob(job: AsyncJobRow): Promise<Record<st
 
   const usableUploadTexts = uploadTexts.filter((item) => !item.analysis.lowSignal);
   const blockedUploadTexts = uploadTexts.filter((item) => item.analysis.lowSignal);
+  pipelineLog(job.id, 'prepare_inputs_complete', {
+    usableCount: usableUploadTexts.length,
+    blockedCount: blockedUploadTexts.length,
+    files: uploadTexts.map((item) => ({
+      name: item.name,
+      sourceKind: item.sourceKind,
+      lowSignal: item.analysis.lowSignal,
+      charCount: item.analysis.charCount,
+      wordCount: item.analysis.wordCount,
+    })),
+  });
 
   await ensureNotCancelled();
   await setStage(

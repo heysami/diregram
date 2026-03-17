@@ -47,12 +47,14 @@ function stripNonRetriablePrefix(msg: string): string {
 
 async function runClaimedJob(job: AsyncJobRow): Promise<void> {
   if (job.cancel_requested) {
+    console.log(`[worker] cancel_requested before start job=${job.id} kind=${job.kind}`);
     await markAsyncJobCancelled(job.id);
     return;
   }
 
   let heartbeatTimer: NodeJS.Timeout | null = null;
   try {
+    console.log(`[worker] start job=${job.id} kind=${job.kind} attempt=${Number(job.attempts || 0) + 1}/${job.max_attempts}`);
     heartbeatTimer = setInterval(() => {
       void heartbeatAsyncJob(job.id, WORKER_ID, LEASE_SECONDS).catch((e) => {
         console.error(`[worker] heartbeat failed for ${job.id}:`, e instanceof Error ? e.message : String(e));
@@ -60,23 +62,28 @@ async function runClaimedJob(job: AsyncJobRow): Promise<void> {
     }, HEARTBEAT_MS);
 
     const result = await runAsyncJob(job);
+    console.log(`[worker] success job=${job.id} kind=${job.kind}`);
     await markAsyncJobSucceeded(job.id, result);
   } catch (e) {
     const rawMsg = e instanceof Error ? e.message : String(e || 'Job failed');
     const nonRetriable = isNonRetriableMessage(rawMsg);
     const msg = stripNonRetriablePrefix(rawMsg) || 'Job failed';
     if (job.cancel_requested || isCancelledError(e) || (await isAsyncJobCancelRequested(job.id).catch(() => false))) {
+      console.warn(`[worker] cancelled job=${job.id} kind=${job.kind} msg=${msg}`);
       await markAsyncJobCancelled(job.id);
       return;
     }
     if (nonRetriable) {
+      console.error(`[worker] fail job=${job.id} kind=${job.kind} no-retry msg=${msg}`);
       await markAsyncJobFailed(job.id, msg);
       return;
     }
     if (Number(job.attempts || 0) < Number(job.max_attempts || 1)) {
+      console.warn(`[worker] retry job=${job.id} kind=${job.kind} msg=${msg}`);
       await requeueAsyncJob(job, msg);
       return;
     }
+    console.error(`[worker] fail job=${job.id} kind=${job.kind} msg=${msg}`);
     await markAsyncJobFailed(job.id, msg);
   } finally {
     if (heartbeatTimer) clearInterval(heartbeatTimer);
