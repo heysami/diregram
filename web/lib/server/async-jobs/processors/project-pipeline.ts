@@ -956,6 +956,67 @@ function assessDiagramIntegrity(markdown: string): string[] {
   return issues;
 }
 
+function toStructureKey(line: string): string {
+  return stripNodeSyntax(line)
+    .replace(/\s*\{\s*$/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+function extractHumanStructureKeys(markdown: string, options?: { rootsOnly?: boolean }): string[] {
+  return extractNodeSectionLines(markdown)
+    .filter((line) => !(options?.rootsOnly && /^\s/.test(line)))
+    .map((line) => ({ raw: line, key: toStructureKey(line) }))
+    .filter(({ raw, key }) => {
+      if (!key || isJsonishNodeLine(raw)) return false;
+      const letters = (key.match(/[a-z]/g) || []).length;
+      return letters >= 3;
+    })
+    .map(({ key }) => key);
+}
+
+function countStructureKeyOverlap(currentKeys: string[], candidateKeys: string[]): number {
+  const candidateCounts = new Map<string, number>();
+  candidateKeys.forEach((key) => {
+    candidateCounts.set(key, (candidateCounts.get(key) || 0) + 1);
+  });
+
+  let overlap = 0;
+  currentKeys.forEach((key) => {
+    const remaining = candidateCounts.get(key) || 0;
+    if (remaining <= 0) return;
+    overlap += 1;
+    candidateCounts.set(key, remaining - 1);
+  });
+  return overlap;
+}
+
+function preservesCurrentDiagramStructure(input: {
+  currentMarkdown: string;
+  candidateMarkdown: string;
+}): boolean {
+  const currentNodeKeys = extractHumanStructureKeys(input.currentMarkdown);
+  if (currentNodeKeys.length < 8) return true;
+
+  const candidateNodeKeys = extractHumanStructureKeys(input.candidateMarkdown);
+  const currentRootKeys = extractHumanStructureKeys(input.currentMarkdown, { rootsOnly: true });
+  const candidateRootKeys = extractHumanStructureKeys(input.candidateMarkdown, { rootsOnly: true });
+
+  const nodeRetention = countStructureKeyOverlap(currentNodeKeys, candidateNodeKeys) / Math.max(1, currentNodeKeys.length);
+  const rootRetention = currentRootKeys.length
+    ? countStructureKeyOverlap(currentRootKeys, candidateRootKeys) / Math.max(1, currentRootKeys.length)
+    : 1;
+
+  if (currentRootKeys.length >= 2 && rootRetention < 0.75) {
+    return false;
+  }
+  if (nodeRetention < 0.72) {
+    return false;
+  }
+  return true;
+}
+
 function isExcessiveNodeRemoval(currentCount: number, candidateCount: number): boolean {
   const removed = currentCount - candidateCount;
   if (removed <= 0) return false;
@@ -979,6 +1040,15 @@ function shouldAcceptCandidateValidation(input: {
   }
 
   if (candidateIntegrityIssues.length) {
+    return false;
+  }
+
+  if (
+    !preservesCurrentDiagramStructure({
+      currentMarkdown: input.currentMarkdown,
+      candidateMarkdown: input.candidateMarkdown,
+    })
+  ) {
     return false;
   }
 
@@ -1213,10 +1283,60 @@ function unwrapOuterDiagramFence(text: string): string {
   return String(m[2] || '').trim();
 }
 
+function isAssistantChatterLine(line: string): boolean {
+  const trimmed = normalizeText(line);
+  if (!trimmed) return false;
+  return /^(?:sure|absolutely|certainly|of course)[,:-]?\s*/i.test(trimmed)
+    || /^(?:here(?:'s| is)|below is|the following)\b/i.test(trimmed)
+    || /^i(?:'ve| have)?\s+(?:updated|revised|generated|created|prepared|written|fixed|made|put together|drafted)\b/i.test(trimmed)
+    || /^(?:summary|note|explanation|overview)[\s:]/i.test(trimmed)
+    || /^let me know\b/i.test(trimmed)
+    || /^this (?:markdown|document|note|diagram|file|tsx)\b/i.test(trimmed);
+}
+
+function stripAssistantMarkdownChatter(raw: string, options?: { preferredStart?: RegExp | null }): string {
+  const preferredStart = options?.preferredStart || null;
+  const normalized = normalizeNewlines(raw).trim();
+  if (!normalized) return normalized;
+
+  let lines = normalized.split('\n');
+
+  if (preferredStart) {
+    const preferredIndex = lines.findIndex((line) => preferredStart.test(line.trim()));
+    if (preferredIndex > 0) {
+      const prefix = lines.slice(0, preferredIndex).filter((line) => line.trim());
+      if (prefix.length && prefix.every((line) => isAssistantChatterLine(line) || /^```(?:md|markdown|diregram)?$/i.test(line.trim()))) {
+        lines = lines.slice(preferredIndex);
+      }
+    }
+  }
+
+  while (lines.length) {
+    const line = lines[0] || '';
+    if (!line.trim() || isAssistantChatterLine(line)) {
+      lines.shift();
+      continue;
+    }
+    break;
+  }
+
+  while (lines.length) {
+    const line = lines[lines.length - 1] || '';
+    if (!line.trim() || isAssistantChatterLine(line)) {
+      lines.pop();
+      continue;
+    }
+    break;
+  }
+
+  return lines.join('\n').trim();
+}
+
 function sanitizeDiagramMarkdown(raw: string): string {
   let text = normalizeNewlines(raw).trim();
   if (!text) return makeStarterDiagramMarkdown();
   text = unwrapOuterDiagramFence(text);
+  text = stripAssistantMarkdownChatter(text);
   if (!text) return makeStarterDiagramMarkdown();
   text = stripTrailingUnclosedMetadataFence(text);
   text = ensureExpandedStatesBlock(text);
@@ -1365,6 +1485,12 @@ type ProgressiveExpandedTarget = {
   subtreeMarkdown: string;
 };
 
+type ProgressiveEnrichmentScope = {
+  dataObjectIds?: string[];
+  expandedRunningNumbers?: number[];
+  syncTagStore?: boolean;
+};
+
 function extractParentPathForNode(
   node: ReturnType<typeof parseNexusMarkdown>[number],
   nodeById: Map<string, ReturnType<typeof parseNexusMarkdown>[number]>,
@@ -1387,7 +1513,7 @@ function getSubtreeMarkdownByLine(markdown: string, lineIndex: number): string {
   return lines.slice(range.start, range.end + 1).join('\n').slice(0, MAX_PROGRESSIVE_SCREEN_SUBTREE_CHARS);
 }
 
-function extractProgressiveTargets(markdown: string): {
+function extractProgressiveTargets(markdown: string, scope?: ProgressiveEnrichmentScope): {
   dataObjects: ProgressiveDataObjectTarget[];
   expanded: ProgressiveExpandedTarget[];
 } {
@@ -1398,6 +1524,10 @@ function extractProgressiveTargets(markdown: string): {
   const lines = normalizeNewlines(markdown).split('\n');
   const separator = findSeparatorIndexOutsideFences(lines);
   const sectionEnd = separator === -1 ? lines.length : separator;
+  const allowedDataObjectIds = scope?.dataObjectIds?.length ? new Set(scope.dataObjectIds.map((id) => normalizeText(id)).filter(Boolean)) : null;
+  const allowedExpandedRunningNumbers = scope?.expandedRunningNumbers?.length
+    ? new Set(scope.expandedRunningNumbers.map((n) => Math.floor(Number(n))).filter((n) => Number.isFinite(n) && n > 0))
+    : null;
 
   const dataObjects: ProgressiveDataObjectTarget[] = [];
   let inFence = false;
@@ -1412,6 +1542,7 @@ function extractProgressiveTargets(markdown: string): {
     if (inFence) continue;
     const doId = extractDataObjectIdFromLine(rawLine);
     if (!doId) continue;
+    if (allowedDataObjectIds && !allowedDataObjectIds.has(doId)) continue;
     const node = nodeByLine.get(lineIndex);
     if (!node) continue;
     if (dataObjects.some((item) => item.doId === doId)) continue;
@@ -1427,6 +1558,7 @@ function extractProgressiveTargets(markdown: string): {
   const expanded = Array.from(expByLine.entries())
     .sort((a, b) => a[1] - b[1])
     .map(([lineIndex, runningNumber]) => {
+      if (allowedExpandedRunningNumbers && !allowedExpandedRunningNumbers.has(runningNumber)) return null;
       const node = nodeByLine.get(lineIndex);
       if (!node) return null;
       const rawLine = lines[lineIndex] || '';
@@ -1442,6 +1574,65 @@ function extractProgressiveTargets(markdown: string): {
     .filter((value): value is ProgressiveExpandedTarget => value !== null);
 
   return { dataObjects, expanded };
+}
+
+function extractDataObjectIdsFromText(text: string): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  const lines = normalizeNewlines(text).split('\n');
+  lines.forEach((line) => {
+    const doId = extractDataObjectIdFromLine(line);
+    if (!doId || seen.has(doId)) return;
+    seen.add(doId);
+    out.push(doId);
+  });
+  return out;
+}
+
+function extractExpandedRunningNumbersFromText(text: string): number[] {
+  const seen = new Set<number>();
+  const out: number[] = [];
+  const re = /<!--\s*expid:(\d+)\s*-->/g;
+  let match: RegExpExecArray | null = null;
+  while ((match = re.exec(normalizeNewlines(text)))) {
+    const value = Number.parseInt(String(match[1] || ''), 10);
+    if (!Number.isFinite(value) || value <= 0 || seen.has(value)) continue;
+    seen.add(value);
+    out.push(value);
+  }
+  return out;
+}
+
+function buildProgressiveScopeFromTargets(input: {
+  targets: MarkdownFixTarget[];
+  patches?: TargetedMarkdownPatch[];
+}): ProgressiveEnrichmentScope {
+  const targetById = new Map(input.targets.map((target) => [target.id, target] as const));
+  const selectedTargets = input.patches?.length
+    ? input.patches
+        .map((patch) => targetById.get(patch.targetId) || null)
+        .filter((target): target is MarkdownFixTarget => target !== null)
+    : input.targets;
+
+  const dataObjectIds = new Set<string>();
+  const expandedRunningNumbers = new Set<number>();
+
+  const collectSignals = (text: string) => {
+    extractDataObjectIdsFromText(text).forEach((doId) => dataObjectIds.add(doId));
+    extractExpandedRunningNumbersFromText(text).forEach((runningNumber) => expandedRunningNumbers.add(runningNumber));
+  };
+
+  selectedTargets.forEach((target) => {
+    collectSignals(target.originalMarkdown);
+    collectSignals(target.contextMarkdown);
+  });
+  (input.patches || []).forEach((patch) => collectSignals(patch.replacementMarkdown));
+
+  return {
+    syncTagStore: true,
+    dataObjectIds: Array.from(dataObjectIds).sort((a, b) => a.localeCompare(b)),
+    expandedRunningNumbers: Array.from(expandedRunningNumbers).sort((a, b) => a - b),
+  };
 }
 
 type FencedBlockRange = {
@@ -1784,6 +1975,7 @@ async function progressivelyEnrichDiagramMarkdown(input: {
   uploadTexts: Array<{ name: string; text: string }>;
   attempt?: number;
   modePrefix?: string;
+  scope?: ProgressiveEnrichmentScope;
   onMonitorUpdate?: (event: {
     attempt: number;
     mode: string;
@@ -1807,10 +1999,12 @@ async function progressivelyEnrichDiagramMarkdown(input: {
     perFileChars: 7000,
   });
 
-  markdown = upsertFencedJsonBlock(markdown, 'tag-store', buildDerivedTagStore(markdown));
-  await emit('progressive_tag_store', markdown);
+  if (input.scope?.syncTagStore !== false) {
+    markdown = upsertFencedJsonBlock(markdown, 'tag-store', buildDerivedTagStore(markdown));
+    await emit('progressive_tag_store', markdown);
+  }
 
-  const targets = extractProgressiveTargets(markdown);
+  const targets = extractProgressiveTargets(markdown, input.scope);
   if (targets.dataObjects.length) {
     const doPrompt = [
       'Return JSON only for the body of a ```data-objects``` block.',
@@ -1926,6 +2120,7 @@ async function progressivelyRestabilizeEditedDiagram(input: {
   uploadTexts: Array<{ name: string; text: string }>;
   attempt?: number;
   modePrefix: string;
+  scope?: ProgressiveEnrichmentScope;
   onMonitorUpdate?: (event: {
     attempt: number;
     mode: string;
@@ -1940,6 +2135,7 @@ async function progressivelyRestabilizeEditedDiagram(input: {
     uploadTexts: input.uploadTexts,
     attempt: input.attempt,
     modePrefix: input.modePrefix,
+    scope: input.scope,
     onMonitorUpdate: input.onMonitorUpdate,
   });
 }
@@ -2558,6 +2754,10 @@ async function runPostSuccessContentAudit(input: {
       await emit('post_success_audit_noop', baseMarkdown);
       return baseMarkdown;
     }
+    const progressiveScope = buildProgressiveScopeFromTargets({
+      targets,
+      patches: parsed.patches,
+    });
 
     let candidate = sanitizeDiagramMarkdown(applyTargetedPatches(baseMarkdown, targets, parsed.patches));
     candidate = await progressivelyRestabilizeEditedDiagram({
@@ -2566,6 +2766,7 @@ async function runPostSuccessContentAudit(input: {
       uploadTexts: input.uploadTexts,
       attempt: 0,
       modePrefix: 'post_success_progressive',
+      scope: progressiveScope,
       onMonitorUpdate: input.onMonitorUpdate,
     });
     let candidateValidation = validateNexusMarkdownImport(candidate);
@@ -2589,6 +2790,7 @@ async function runPostSuccessContentAudit(input: {
           uploadTexts: input.uploadTexts,
           attempt,
           modePrefix: 'post_success_progressive',
+          scope: progressiveScope,
           onMonitorUpdate: input.onMonitorUpdate,
         });
         candidateValidation = validateNexusMarkdownImport(candidate);
@@ -2611,6 +2813,7 @@ async function runPostSuccessContentAudit(input: {
           uploadTexts: input.uploadTexts,
           attempt,
           modePrefix: 'post_success_progressive',
+          scope: progressiveScope,
           onMonitorUpdate: input.onMonitorUpdate,
         });
         const targetedValidation = validateNexusMarkdownImport(rebuiltTargeted);
@@ -2633,90 +2836,6 @@ async function runPostSuccessContentAudit(input: {
           candidate = rebuiltTargeted;
           candidateValidation = targetedValidation;
           candidateIntegrityIssues = targetedIntegrityIssues;
-        }
-      }
-
-      if (candidateValidation.errors.length || candidateValidation.warnings.length || candidateIntegrityIssues.length) {
-        const errorSummary = summarizeIssues(candidateValidation.errors.map((x) => `${x.code}: ${x.message}`));
-        const warningSummary = summarizeIssues(candidateValidation.warnings.map((x) => `${x.code}: ${x.message}`));
-        const integritySummary = summarizeIssues(candidateIntegrityIssues);
-        const detailedHints = [...candidateValidation.errors, ...candidateValidation.warnings]
-          .slice(0, MAX_DIAGRAM_FIX_ISSUES)
-          .map((issue, idx) => `${idx + 1}. ${issue.code}: ${normalizeText(issue.message)}\n   Fix hint: ${fixInstructionForValidationIssue(issue)}`)
-          .join('\n');
-
-        const repaired = await runPipelineGenerationText({
-          generation: input.generation,
-          maxTokens: 5200,
-          temperature: 0.1,
-          system: [
-            'Repair the provided Diregram diagram markdown after a post-success content audit.',
-            'Preserve the audit improvements wherever possible.',
-            'Use the repository content checklist as the source of truth for content and completeness.',
-            'Treat validator feedback as a technical repair gate only.',
-            'Do not remove content just to get back to a clean import state.',
-            'Return ONLY corrected markdown. No code fences.',
-          ].join('\n'),
-          messages: [
-            {
-              role: 'user',
-              content: [
-                `Post-success audit repair attempt: ${attempt}/${MAX_POST_SUCCESS_AUDIT_REPAIR_ATTEMPTS}`,
-                `Current markdown hash: ${hashMarkdown(candidate)}`,
-                '',
-                'Fix these validator issues:',
-                errorSummary,
-                '',
-                'Fix these validator warnings too. Warnings are blocking:',
-                warningSummary,
-                '',
-                candidateIntegrityIssues.length ? 'Fix these diagram integrity issues:' : '',
-                candidateIntegrityIssues.length ? integritySummary : '',
-                candidateIntegrityIssues.length ? '' : '',
-                'Validator report:',
-                candidateValidation.aiFriendlyReport,
-                '',
-                'Issue-specific repair hints:',
-                detailedHints,
-                '',
-                'Repository content checklist context:',
-                PIPELINE_DIAGRAM_CONTENT_CHECKLIST,
-                '',
-                'Markdown to repair:',
-                candidate,
-              ].join('\n'),
-            },
-          ],
-        });
-        let repairedMarkdown = sanitizeDiagramMarkdown(repaired);
-        repairedMarkdown = await progressivelyRestabilizeEditedDiagram({
-          generation: input.generation,
-          markdown: repairedMarkdown,
-          uploadTexts: input.uploadTexts,
-          attempt,
-          modePrefix: 'post_success_progressive',
-          onMonitorUpdate: input.onMonitorUpdate,
-        });
-        const repairedValidation = validateNexusMarkdownImport(repairedMarkdown);
-        const repairedIntegrityIssues = assessDiagramIntegrity(repairedMarkdown);
-        await emit('post_success_audit_full_repair', repairedMarkdown, attempt);
-        if (!repairedValidation.errors.length && !repairedValidation.warnings.length && !repairedIntegrityIssues.length) {
-          candidate = repairedMarkdown;
-          candidateValidation = repairedValidation;
-          candidateIntegrityIssues = repairedIntegrityIssues;
-          break;
-        }
-        if (
-          shouldAcceptCandidateValidation({
-            current: candidateValidation,
-            candidate: repairedValidation,
-            currentMarkdown: candidate,
-            candidateMarkdown: repairedMarkdown,
-          })
-        ) {
-          candidate = repairedMarkdown;
-          candidateValidation = repairedValidation;
-          candidateIntegrityIssues = repairedIntegrityIssues;
         }
       }
 
@@ -3612,6 +3731,10 @@ async function runSwarmDrivenDiagramRevision(input: {
       await emit('swarm_revision_noop', baseMarkdown);
       return baseMarkdown;
     }
+    const progressiveScope = buildProgressiveScopeFromTargets({
+      targets,
+      patches: safePatches,
+    });
 
     let candidate = sanitizeDiagramMarkdown(applyTargetedPatches(baseMarkdown, targets, safePatches));
     candidate = await progressivelyRestabilizeEditedDiagram({
@@ -3620,6 +3743,7 @@ async function runSwarmDrivenDiagramRevision(input: {
       uploadTexts: input.uploadTexts,
       attempt: 0,
       modePrefix: 'swarm_revision_progressive',
+      scope: progressiveScope,
       onMonitorUpdate: input.onMonitorUpdate,
     });
     let candidateValidation = validateNexusMarkdownImport(candidate);
@@ -3643,6 +3767,7 @@ async function runSwarmDrivenDiagramRevision(input: {
           uploadTexts: input.uploadTexts,
           attempt,
           modePrefix: 'swarm_revision_progressive',
+          scope: progressiveScope,
           onMonitorUpdate: input.onMonitorUpdate,
         });
         candidateValidation = validateNexusMarkdownImport(candidate);
@@ -3665,6 +3790,7 @@ async function runSwarmDrivenDiagramRevision(input: {
           uploadTexts: input.uploadTexts,
           attempt,
           modePrefix: 'swarm_revision_progressive',
+          scope: progressiveScope,
           onMonitorUpdate: input.onMonitorUpdate,
         });
         const targetedValidation = validateNexusMarkdownImport(rebuiltTargeted);
@@ -4617,7 +4743,9 @@ async function generateTsxStubWithModel(input: {
       temperature: 0.2,
       messages: [{ role: 'user', content: prompt }],
     });
-    const cleaned = out.replace(/^\s*```(?:tsx|typescript|ts|jsx|js)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
+    const cleaned = stripAssistantMarkdownChatter(
+      out.replace(/^\s*```(?:tsx|typescript|ts|jsx|js)?\s*/i, '').replace(/\s*```\s*$/i, '').trim(),
+    );
     if (!cleaned) throw new Error('Empty TSX output');
     return cleaned + '\n';
   } catch {
@@ -4757,7 +4885,10 @@ async function generateNoteForEpicWithModel(input: {
       temperature: 0.2,
       messages: [{ role: 'user', content: prompt }],
     });
-    const cleaned = out.replace(/^\s*```(?:md|markdown)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
+    const cleaned = stripAssistantMarkdownChatter(
+      out.replace(/^\s*```(?:md|markdown)?\s*/i, '').replace(/\s*```\s*$/i, '').trim(),
+      { preferredStart: /^#\s+/ },
+    );
     if (!cleaned) throw new Error('Empty note output');
     return upsertHeader(cleaned + '\n', { kind: 'note', version: 1 });
   } catch {
@@ -5035,6 +5166,54 @@ export async function runProjectPipelineJob(job: AsyncJobRow): Promise<Record<st
     sourceImageCount: signedDiagramImages.length,
   });
 
+  const diagramName = `${runLabel}-single-diagram`;
+  let singleDiagramFileId = '';
+  let lastPersistedDiagramHash = '';
+
+  const ensurePrimaryDiagramFile = async (initialMarkdown: string) => {
+    if (singleDiagramFileId) return singleDiagramFileId;
+    const { data: insertedDiagram, error: diagramInsertErr } = await admin
+      .from('files')
+      .insert({
+        name: diagramName,
+        owner_id: ownerId,
+        folder_id: projectFolderId,
+        room_name: `file-${randomUUID()}`,
+        last_opened_at: nowIso(),
+        kind: 'diagram',
+        content: initialMarkdown,
+      } as never)
+      .select('id,name')
+      .single();
+    if (diagramInsertErr) throw new Error(diagramInsertErr.message);
+    singleDiagramFileId = normalizeText((insertedDiagram as { id?: unknown }).id);
+    if (!singleDiagramFileId) throw new Error('Failed to create single diagram file');
+    createdFiles.push({ id: singleDiagramFileId, name: diagramName, kind: 'diagram' });
+    stageState = {
+      ...stageState,
+      singleDiagramFileId,
+      primaryDiagramFileId: singleDiagramFileId,
+    };
+    return singleDiagramFileId;
+  };
+
+  const persistPrimaryDiagramMarkdown = async (markdown: string) => {
+    const safeMarkdown = normalizeNewlines(markdown);
+    if (!safeMarkdown.trim()) return;
+    const nextHash = hashMarkdown(safeMarkdown);
+    if (nextHash === lastPersistedDiagramHash) return;
+    const fileId = await ensurePrimaryDiagramFile(safeMarkdown);
+    const { error: diagramUpdateErr } = await admin
+      .from('files')
+      .update({
+        content: safeMarkdown,
+        last_opened_at: nowIso(),
+      } as never)
+      .eq('id', fileId);
+    if (diagramUpdateErr) throw new Error(diagramUpdateErr.message);
+    lastPersistedDiagramHash = nextHash;
+  };
+
   let diagramMarkdown = '';
   try {
     diagramMarkdown = await generateSingleDiagram({
@@ -5084,6 +5263,9 @@ export async function runProjectPipelineJob(job: AsyncJobRow): Promise<Record<st
             warningCount: event.validation.warnings.length,
           },
         );
+        if (event.mode !== 'attempt_start') {
+          await persistPrimaryDiagramMarkdown(event.markdown);
+        }
       },
     });
   } catch (error) {
@@ -5104,27 +5286,8 @@ export async function runProjectPipelineJob(job: AsyncJobRow): Promise<Record<st
     });
     throw error;
   }
-
-  const diagramName = `${runLabel}-single-diagram`;
-  const { data: insertedDiagram, error: diagramInsertErr } = await admin
-    .from('files')
-    .insert({
-      name: diagramName,
-      owner_id: ownerId,
-      folder_id: projectFolderId,
-      room_name: `file-${randomUUID()}`,
-      last_opened_at: nowIso(),
-      kind: 'diagram',
-      content: diagramMarkdown,
-    } as never)
-    .select('id,name')
-    .single();
-  if (diagramInsertErr) throw new Error(diagramInsertErr.message);
-
-  const singleDiagramFileId = normalizeText((insertedDiagram as { id?: unknown }).id);
+  await persistPrimaryDiagramMarkdown(diagramMarkdown);
   if (!singleDiagramFileId) throw new Error('Failed to create single diagram file');
-
-  createdFiles.push({ id: singleDiagramFileId, name: diagramName, kind: 'diagram' });
 
   let currentDiagramMarkdown = diagramMarkdown;
   let currentDiagramLinkIndex = buildDiagramLinkIndex({
