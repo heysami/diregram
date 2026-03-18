@@ -20,7 +20,7 @@ import { loadGridDoc, saveGridDoc, type GridDoc, type GridSheetV1 } from '@/lib/
 import { upsertHeader } from '@/lib/nexus-doc-header';
 import { parseNexusMarkdown } from '@/lib/nexus-parser';
 import { extractRunningNumbersFromMarkdown } from '@/lib/node-running-numbers';
-import { extractExpandedIdsFromMarkdown } from '@/lib/expanded-state-storage';
+import { buildParentPath, extractExpandedIdsFromMarkdown } from '@/lib/expanded-state-storage';
 import {
   coerceVisionDesignSystem,
   defaultVisionDesignSystem,
@@ -36,6 +36,7 @@ import {
   type ImportValidationIssue,
   type ImportValidationResult,
 } from '@/lib/markdown-import-validator';
+import { buildFlowNodeParentPath } from '@/lib/flow-node-storage';
 import { runClaudeMessagesText } from '@/lib/server/anthropic-messages';
 import { embedTextsOpenAI } from '@/lib/server/openai-embeddings';
 import { queryProjectKbContext, runOpenAIResponsesText } from '@/lib/server/openai-responses';
@@ -608,6 +609,7 @@ type MarkdownFixTarget = {
   id: string;
   startLine: number;
   endLine: number;
+  targetKind: 'tree' | 'metadata';
   reason: string;
   issueCodes: string[];
   contextMarkdown: string;
@@ -618,6 +620,12 @@ type TargetedMarkdownPatch = {
   targetId: string;
   replacementMarkdown: string;
 };
+
+function describeTargetPatchFormat(target: MarkdownFixTarget): string {
+  return target.targetKind === 'metadata'
+    ? 'Return one or more complete fenced metadata blocks only, with opening and closing ``` lines and no extra prose.'
+    : 'Return plain diagram tree lines only for this subtree. Do not include fenced blocks, JSON objects, headings, or explanations.';
+}
 
 function targetReasonForIssue(issue: ImportValidationIssue): string {
   switch (issue.code) {
@@ -665,17 +673,23 @@ function buildMarkdownFixTargets(markdown: string, issues: ImportValidationIssue
   type TargetRange = {
     startLine: number;
     endLine: number;
+    targetKind: 'tree' | 'metadata';
     reason: string;
     issueCodes: Set<string>;
   };
 
   const ranges: TargetRange[] = [];
 
-  const addRange = (range: { startLine: number; endLine: number }, issue: ImportValidationIssue) => {
+  const addRange = (
+    range: { startLine: number; endLine: number },
+    issue: ImportValidationIssue,
+    targetKind: 'tree' | 'metadata',
+  ) => {
     const clamped = clampLineRange(range, lines.length);
     ranges.push({
       startLine: clamped.startLine,
       endLine: clamped.endLine,
+      targetKind,
       reason: targetReasonForIssue(issue),
       issueCodes: new Set([issue.code]),
     });
@@ -690,6 +704,7 @@ function buildMarkdownFixTargets(markdown: string, issues: ImportValidationIssue
           endLine: metadataInsertEndLine,
         },
         issue,
+        'metadata',
       );
       continue;
     }
@@ -697,26 +712,50 @@ function buildMarkdownFixTargets(markdown: string, issues: ImportValidationIssue
     const lineIndex = Math.max(0, line - 1);
     if (issue.code === 'UNCLOSED_CODE_BLOCK') {
       const endLine = Math.min(lines.length, line + 120);
-      addRange({ startLine: line, endLine }, issue);
+      addRange({ startLine: line, endLine }, issue, lineIndex < nodeSectionEnd ? 'tree' : 'metadata');
       continue;
     }
 
     if (lineIndex < nodeSectionEnd) {
       const subtree = findSubtreeRange(lines, lineIndex);
       if (subtree) {
-        addRange({ startLine: subtree.start + 1, endLine: subtree.end + 1 }, issue);
+        addRange({ startLine: subtree.start + 1, endLine: subtree.end + 1 }, issue, 'tree');
         continue;
       }
-      addRange({ startLine: Math.max(1, line - 2), endLine: Math.min(lines.length, line + 2) }, issue);
+      addRange({ startLine: Math.max(1, line - 2), endLine: Math.min(lines.length, line + 2) }, issue, 'tree');
       continue;
     }
 
     const fenceRange = findFenceRangeContainingLine(fenceRanges, lineIndex);
     if (fenceRange) {
-      addRange({ startLine: fenceRange.start + 1, endLine: fenceRange.end + 1 }, issue);
+      addRange({ startLine: fenceRange.start + 1, endLine: fenceRange.end + 1 }, issue, 'metadata');
       continue;
     }
-    addRange({ startLine: Math.max(1, line - 2), endLine: Math.min(lines.length, line + 2) }, issue);
+    addRange({ startLine: Math.max(1, line - 2), endLine: Math.min(lines.length, line + 2) }, issue, 'metadata');
+  }
+
+  const integrityIssues = Array.from(
+    new Set(
+      assessDiagramIntegrity(markdown)
+        .map((issue) => normalizeText(issue))
+        .filter(Boolean),
+    ),
+  );
+  if (integrityIssues.length) {
+    ranges.push({
+      startLine: 1,
+      endLine: Math.max(1, nodeSectionEnd),
+      targetKind: 'tree',
+      reason: clipText(`Repair node-tree integrity: ${integrityIssues.join(' | ')}`, 280),
+      issueCodes: new Set(['INTEGRITY_TREE']),
+    });
+    ranges.push({
+      startLine: metadataInsertStartLine,
+      endLine: metadataInsertEndLine,
+      targetKind: 'metadata',
+      reason: 'Resync metadata blocks that depend on the repaired tree, including flow registries and process metadata.',
+      issueCodes: new Set(['INTEGRITY_METADATA']),
+    });
   }
 
   const merged = ranges
@@ -733,6 +772,7 @@ function buildMarkdownFixTargets(markdown: string, issues: ImportValidationIssue
         return acc;
       }
       prev.endLine = Math.max(prev.endLine, cur.endLine);
+      if (prev.targetKind !== cur.targetKind) prev.targetKind = 'metadata';
       prev.reason = `${prev.reason}; ${cur.reason}`.slice(0, 260);
       cur.issueCodes.forEach((code) => prev.issueCodes.add(code));
       return acc;
@@ -742,6 +782,7 @@ function buildMarkdownFixTargets(markdown: string, issues: ImportValidationIssue
     id: `target-${idx + 1}`,
     startLine: target.startLine,
     endLine: target.endLine,
+    targetKind: target.targetKind,
     reason: target.reason.slice(0, 280),
     issueCodes: Array.from(target.issueCodes).slice(0, 8),
     contextMarkdown: extractContextMarkdownForRange(lines, target.startLine, target.endLine),
@@ -806,29 +847,47 @@ function looksLikeSafeMetadataPatchReplacement(text: string): boolean {
 }
 
 function isMetadataOnlyRevisionTarget(target: MarkdownFixTarget): boolean {
-  return target.issueCodes.some((code) =>
-    [
-      'SWARM_REVISION_METADATA',
-      'SWARM_REVISION_EXPANDED_METADATA',
-      'SWARM_REVISION_EXPANDED_GRID',
-      'CONTENT_METADATA',
-      'CONTENT_EXPANDED_METADATA',
-      'CONTENT_EXPANDED_GRID',
-    ].includes(code),
-  );
+  return target.targetKind === 'metadata';
 }
 
-function filterSafeRevisionPatches(targets: MarkdownFixTarget[], patches: TargetedMarkdownPatch[]): TargetedMarkdownPatch[] {
+type SafePatchDiagnostic = {
+  targetId: string;
+  accepted: boolean;
+  reason: string;
+};
+
+function evaluateSafeRevisionPatches(targets: MarkdownFixTarget[], patches: TargetedMarkdownPatch[]): {
+  accepted: TargetedMarkdownPatch[];
+  diagnostics: SafePatchDiagnostic[];
+} {
   const targetById = new Map(targets.map((target) => [target.id, target] as const));
-  return patches.filter((patch) => {
+  const diagnostics: SafePatchDiagnostic[] = [];
+  const accepted = patches.filter((patch) => {
     const target = targetById.get(patch.targetId);
-    if (!target) return false;
-    const replacement = unwrapOuterDiagramFence(normalizeNewlines(patch.replacementMarkdown)).trim();
-    if (isMetadataOnlyRevisionTarget(target)) {
-      return looksLikeSafeMetadataPatchReplacement(replacement);
+    if (!target) {
+      diagnostics.push({
+        targetId: patch.targetId,
+        accepted: false,
+        reason: 'Unknown targetId.',
+      });
+      return false;
     }
-    return looksLikeSafeTreePatchReplacement(replacement);
+    const replacement = unwrapOuterDiagramFence(normalizeNewlines(patch.replacementMarkdown)).trim();
+    const ok = isMetadataOnlyRevisionTarget(target)
+      ? looksLikeSafeMetadataPatchReplacement(replacement)
+      : looksLikeSafeTreePatchReplacement(replacement);
+    diagnostics.push({
+      targetId: patch.targetId,
+      accepted: ok,
+      reason: ok
+        ? 'Accepted.'
+        : isMetadataOnlyRevisionTarget(target)
+          ? 'Rejected because metadata targets must return complete fenced metadata blocks only.'
+          : 'Rejected because tree targets must return plain subtree lines only.',
+    });
+    return ok;
   });
+  return { accepted, diagnostics };
 }
 
 function applyTargetedPatches(markdown: string, targets: MarkdownFixTarget[], patches: TargetedMarkdownPatch[]): string {
@@ -1033,13 +1092,14 @@ function shouldAcceptCandidateValidation(input: {
   const currentNodeCount = estimateNodeLineCount(input.currentMarkdown);
   const candidateNodeCount = estimateNodeLineCount(input.candidateMarkdown);
   const excessiveRemoval = isExcessiveNodeRemoval(currentNodeCount, candidateNodeCount);
+  const currentIntegrityIssues = assessDiagramIntegrity(input.currentMarkdown);
   const candidateIntegrityIssues = assessDiagramIntegrity(input.candidateMarkdown);
 
   if (excessiveRemoval) {
     return false;
   }
 
-  if (candidateIntegrityIssues.length) {
+  if (candidateIntegrityIssues.length > currentIntegrityIssues.length) {
     return false;
   }
 
@@ -1061,6 +1121,10 @@ function shouldAcceptCandidateValidation(input: {
     return true;
   }
   if (input.candidate.warnings.length > input.current.warnings.length) return false;
+
+  if (candidateIntegrityIssues.length < currentIntegrityIssues.length) {
+    return true;
+  }
 
   if (candidateNodeCount < currentNodeCount) return false;
   return true;
@@ -1686,7 +1750,12 @@ function buildPostSuccessContentAuditTargets(markdown: string): MarkdownFixTarge
   const overlapsExisting = (startLine: number, endLine: number) =>
     usedRanges.some((range) => !(endLine < range.startLine || startLine > range.endLine));
 
-  const addTarget = (range: { startLine: number; endLine: number }, reason: string, issueCode: string) => {
+  const addTarget = (
+    range: { startLine: number; endLine: number },
+    targetKind: 'tree' | 'metadata',
+    reason: string,
+    issueCode: string,
+  ) => {
     if (out.length >= MAX_DIAGRAM_FIX_TARGETS) return;
     const clamped = clampLineRange(range, lines.length);
     const overlapEnd = Math.max(clamped.endLine, clamped.startLine - 1);
@@ -1696,6 +1765,7 @@ function buildPostSuccessContentAuditTargets(markdown: string): MarkdownFixTarge
       id: `content-audit-${out.length + 1}`,
       startLine: clamped.startLine,
       endLine: clamped.endLine,
+      targetKind,
       reason: clipText(reason, 280),
       issueCodes: [issueCode],
       contextMarkdown: extractContextMarkdownForRange(lines, clamped.startLine, clamped.endLine),
@@ -1714,6 +1784,7 @@ function buildPostSuccessContentAuditTargets(markdown: string): MarkdownFixTarge
     const label = normalizeText(node.content) || normalizeText(node.rawContent) || node.id;
     addTarget(
       { startLine: subtree.start + 1, endLine: subtree.end + 1 },
+      'tree',
       [
         'Audit this #flow# subtree for concrete step structure, branching-vs-conditional correctness, and same-screen grouping.',
         `Root: ${label}.`,
@@ -1730,6 +1801,7 @@ function buildPostSuccessContentAuditTargets(markdown: string): MarkdownFixTarge
     if (metadataBlock) {
       addTarget(
         { startLine: metadataBlock.startLine, endLine: metadataBlock.endLine },
+        'metadata',
         `Audit expanded metadata for screen "${screen.label}" (expid:${screen.runningNumber}) so its primary object and layout metadata match the actual screen intent.`,
         'CONTENT_EXPANDED_METADATA',
       );
@@ -1738,6 +1810,7 @@ function buildPostSuccessContentAuditTargets(markdown: string): MarkdownFixTarge
     if (gridBlock) {
       addTarget(
         { startLine: gridBlock.startLine, endLine: gridBlock.endLine },
+        'metadata',
         `Audit expanded grid for screen "${screen.label}" (expid:${screen.runningNumber}). Fix vague or wrong UI content by adding structured sections/components, not by removing the screen.`,
         'CONTENT_EXPANDED_GRID',
       );
@@ -1751,6 +1824,7 @@ function buildPostSuccessContentAuditTargets(markdown: string): MarkdownFixTarge
     const label = normalizeText(root.content) || normalizeText(root.rawContent) || root.id;
     addTarget(
       { startLine: subtree.start + 1, endLine: subtree.end + 1 },
+      'tree',
       `Audit IA/root structure for "${label}". Group related screens/functions correctly and keep process/component detail out of plain IA nodes.`,
       'CONTENT_IA',
     );
@@ -1759,6 +1833,7 @@ function buildPostSuccessContentAuditTargets(markdown: string): MarkdownFixTarge
 
   addTarget(
     { startLine: metadataInsertStartLine, endLine: metadataInsertEndLine },
+    'metadata',
     'Add or update metadata blocks required by the content audit, including flow-nodes, process-node-type-N, process-single-screen-N, flow-connector-labels, expanded-metadata-N, or expanded-grid-N when the current tree requires them.',
     'CONTENT_METADATA',
   );
@@ -1816,6 +1891,324 @@ function summarizeCurrentDataObjects(markdown: string): string {
     .filter(Boolean)
     .join('\n')
     .slice(0, 4000);
+}
+
+type FlowRegistryEntry = {
+  runningNumber: number;
+  content: string;
+  parentPath: string[];
+  lineIndex: number;
+};
+
+function parseFlowRegistryBlock(markdown: string): { nextRunningNumber: number; entries: FlowRegistryEntry[] } {
+  const match = normalizeNewlines(markdown).match(/```flow-nodes\n([\s\S]*?)\n```/);
+  const parsed = match?.[1] ? parseJsonObject(match[1]) : null;
+  const entries = Array.isArray(parsed?.entries)
+    ? parsed.entries
+        .map((row) => (row && typeof row === 'object' ? (row as JsonRecord) : null))
+        .filter((row): row is JsonRecord => row !== null)
+        .map((row) => ({
+          runningNumber: Math.floor(Number(row.runningNumber || 0)),
+          content: normalizeText(row.content),
+          parentPath: Array.isArray(row.parentPath) ? row.parentPath.map((item) => normalizeText(item)).filter(Boolean) : [],
+          lineIndex: Math.floor(Number(row.lineIndex || -1)),
+        }))
+        .filter((entry) => Number.isFinite(entry.runningNumber) && entry.runningNumber > 0 && entry.lineIndex >= 0)
+    : [];
+  const maxRn = Math.max(0, ...entries.map((entry) => entry.runningNumber));
+  const nextRunningNumberRaw = Math.floor(Number(parsed?.nextRunningNumber || 0));
+  return {
+    nextRunningNumber: Math.max(1, nextRunningNumberRaw, maxRn + 1),
+    entries,
+  };
+}
+
+function parseProcessNodeTypeBlocks(markdown: string): Map<number, string> {
+  const out = new Map<number, string>();
+  const re = /```process-node-type-(\d+)\n([\s\S]*?)\n```/g;
+  let match: RegExpExecArray | null = null;
+  while ((match = re.exec(normalizeNewlines(markdown)))) {
+    const runningNumber = Number.parseInt(String(match[1] || ''), 10);
+    const parsed = parseJsonObject(String(match[2] || ''));
+    const type = normalizeText(parsed?.type);
+    if (!Number.isFinite(runningNumber) || runningNumber <= 0 || !type) continue;
+    out.set(runningNumber, type);
+  }
+  return out;
+}
+
+function parseProcessSingleScreenBlocks(markdown: string): Map<number, number> {
+  const out = new Map<number, number>();
+  const re = /```process-single-screen-(\d+)\n([\s\S]*?)\n```/g;
+  let match: RegExpExecArray | null = null;
+  while ((match = re.exec(normalizeNewlines(markdown)))) {
+    const startRunningNumber = Number.parseInt(String(match[1] || ''), 10);
+    const parsed = parseJsonObject(String(match[2] || ''));
+    const lastStepRunningNumber = Math.floor(Number(parsed?.lastStepRunningNumber || 0));
+    if (!Number.isFinite(startRunningNumber) || startRunningNumber <= 0) continue;
+    if (!Number.isFinite(lastStepRunningNumber) || lastStepRunningNumber <= 0) continue;
+    out.set(startRunningNumber, lastStepRunningNumber);
+  }
+  return out;
+}
+
+function parseProcessTargetBlocks(markdown: string, kind: 'process-goto' | 'process-loop'): Map<number, string> {
+  const out = new Map<number, string>();
+  const re = new RegExp(`^\\\`\\\`\\\`(${escapeRegExp(kind)})-(\\d+)\\n([\\s\\S]*?)\\n\\\`\\\`\\\`$`, 'gm');
+  let match: RegExpExecArray | null = null;
+  while ((match = re.exec(normalizeNewlines(markdown)))) {
+    const runningNumber = Number.parseInt(String(match[2] || ''), 10);
+    const parsed = parseJsonObject(String(match[3] || ''));
+    const targetId = normalizeText(parsed?.targetId);
+    if (!Number.isFinite(runningNumber) || runningNumber <= 0 || !targetId) continue;
+    out.set(runningNumber, targetId);
+  }
+  return out;
+}
+
+function parseConnectorLabelBlocks(markdown: string): Record<string, { label: string; color: string }> {
+  const match = normalizeNewlines(markdown).match(/```flow-connector-labels\n([\s\S]*?)\n```/);
+  const parsed = match?.[1] ? parseJsonObject(match[1]) : null;
+  const out: Record<string, { label: string; color: string }> = {};
+  if (!parsed) return out;
+  Object.entries(parsed).forEach(([key, value]) => {
+    if (!value || typeof value !== 'object') return;
+    const row = value as JsonRecord;
+    const label = String(row.label || '').trim();
+    if (!label) return;
+    const color = String(row.color || '#000000').trim() || '#000000';
+    out[key] = { label, color };
+  });
+  return out;
+}
+
+function removeMatchingFencedBlocks(markdown: string, predicate: (type: string) => boolean): string {
+  const lines = normalizeNewlines(markdown).split('\n');
+  const blocks = collectFencedBlockRanges(markdown)
+    .filter((block) => predicate(block.type))
+    .sort((a, b) => b.startLine - a.startLine);
+  if (!blocks.length) return normalizeNewlines(markdown).trimEnd() + '\n';
+  const next = [...lines];
+  blocks.forEach((block) => {
+    next.splice(block.startLine - 1, block.endLine - block.startLine + 1);
+  });
+  return next.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd() + '\n';
+}
+
+function deriveFlowNodeParentPath(
+  node: ReturnType<typeof parseNexusMarkdown>[number],
+  nodeMap: Map<string, ReturnType<typeof parseNexusMarkdown>[number]>,
+  roots: ReturnType<typeof parseNexusMarkdown>,
+): string[] {
+  return node.isCommon ? buildParentPath(node, nodeMap) : buildFlowNodeParentPath(node, nodeMap, roots);
+}
+
+function buildCurrentFlowRegistry(markdown: string): {
+  nodes: ReturnType<typeof parseNexusMarkdown>[number][];
+  entries: FlowRegistryEntry[];
+  runningNumberToNodeId: Map<number, string>;
+  nextRunningNumber: number;
+} {
+  const roots = parseNexusMarkdown(markdown);
+  const nodes = flattenNodes(roots);
+  const nodeById = new Map(nodes.map((node) => [node.id, node] as const));
+  const flowNodes = nodes.filter((node) => node.isFlowNode).sort((a, b) => a.lineIndex - b.lineIndex);
+  const existingRegistry = parseFlowRegistryBlock(markdown);
+  const usedEntryIndexes = new Set<number>();
+  const entries: FlowRegistryEntry[] = [];
+  const runningNumberToNodeId = new Map<number, string>();
+  let nextRunningNumber = Math.max(
+    1,
+    existingRegistry.nextRunningNumber,
+    ...existingRegistry.entries.map((entry) => entry.runningNumber + 1),
+  );
+
+  const findEntryIndex = (node: ReturnType<typeof parseNexusMarkdown>[number], parentPath: string[]) => {
+    const exactIndex = existingRegistry.entries.findIndex((entry, index) => {
+      if (usedEntryIndexes.has(index)) return false;
+      return (
+        entry.content === normalizeText(node.content) &&
+        entry.parentPath.length === parentPath.length &&
+        entry.parentPath.every((segment, idx) => segment === parentPath[idx])
+      );
+    });
+    if (exactIndex !== -1) return exactIndex;
+    return existingRegistry.entries.findIndex((entry, index) => {
+      if (usedEntryIndexes.has(index)) return false;
+      return entry.lineIndex === node.lineIndex && entry.content === normalizeText(node.content);
+    });
+  };
+
+  flowNodes.forEach((node) => {
+    const parentPath = deriveFlowNodeParentPath(node, nodeById, roots);
+    const entryIndex = findEntryIndex(node, parentPath);
+    let runningNumber = 0;
+    if (entryIndex !== -1) {
+      usedEntryIndexes.add(entryIndex);
+      runningNumber = existingRegistry.entries[entryIndex]!.runningNumber;
+    } else {
+      runningNumber = nextRunningNumber;
+      nextRunningNumber += 1;
+    }
+    entries.push({
+      runningNumber,
+      content: normalizeText(node.content) || normalizeText(node.rawContent) || node.id,
+      parentPath,
+      lineIndex: node.lineIndex,
+    });
+    runningNumberToNodeId.set(runningNumber, node.id);
+  });
+
+  entries.sort((a, b) => a.runningNumber - b.runningNumber);
+  return {
+    nodes,
+    entries,
+    runningNumberToNodeId,
+    nextRunningNumber: Math.max(nextRunningNumber, ...entries.map((entry) => entry.runningNumber + 1), 1),
+  };
+}
+
+function remapLegacyNodeIdToCurrentNodeId(input: {
+  legacyNodeId: string;
+  oldLineIndexToRunningNumber: Map<number, number>;
+  currentRunningNumberToNodeId: Map<number, string>;
+  currentNodeIds: Set<string>;
+}): string | null {
+  const legacyNodeId = normalizeText(input.legacyNodeId);
+  if (!legacyNodeId) return null;
+  if (input.currentNodeIds.has(legacyNodeId)) return legacyNodeId;
+  const match = legacyNodeId.match(/^node-(\d+)$/);
+  if (!match?.[1]) return null;
+  const lineIndex = Number.parseInt(match[1], 10);
+  if (!Number.isFinite(lineIndex) || lineIndex < 0) return null;
+  const runningNumber = input.oldLineIndexToRunningNumber.get(lineIndex);
+  if (typeof runningNumber !== 'number') return null;
+  return input.currentRunningNumberToNodeId.get(runningNumber) || null;
+}
+
+function syncDerivedFlowMetadata(markdown: string): string {
+  const normalized = sanitizeDiagramMarkdown(markdown);
+  const currentRegistry = buildCurrentFlowRegistry(normalized);
+  const validRunningNumbers = new Set(currentRegistry.entries.map((entry) => entry.runningNumber));
+  const explicitTypesByRunningNumber = parseProcessNodeTypeBlocks(normalized);
+  const singleScreenByRunningNumber = parseProcessSingleScreenBlocks(normalized);
+  const gotoTargetsByRunningNumber = parseProcessTargetBlocks(normalized, 'process-goto');
+  const loopTargetsByRunningNumber = parseProcessTargetBlocks(normalized, 'process-loop');
+  const connectorLabels = parseConnectorLabelBlocks(normalized);
+  const previousRegistry = parseFlowRegistryBlock(normalized);
+  const oldLineIndexToRunningNumber = new Map(
+    previousRegistry.entries.map((entry) => [entry.lineIndex, entry.runningNumber] as const),
+  );
+  const currentNodeIds = new Set(currentRegistry.nodes.map((node) => node.id));
+  const currentNodeById = new Map(currentRegistry.nodes.map((node) => [node.id, node] as const));
+
+  let next = removeMatchingFencedBlocks(normalized, (type) => {
+    if (type === 'flow-nodes' || type === 'flow-connector-labels') return true;
+    if (/^process-node-type-\d+$/.test(type)) return true;
+    if (/^process-single-screen-\d+$/.test(type)) return true;
+    if (/^process-goto-\d+$/.test(type)) return true;
+    if (/^process-loop-\d+$/.test(type)) return true;
+    const flowNodeMatch = type.match(/^flow-node-(\d+)$/);
+    if (!flowNodeMatch?.[1]) return false;
+    const runningNumber = Number.parseInt(flowNodeMatch[1], 10);
+    return !validRunningNumbers.has(runningNumber);
+  });
+
+  if (!currentRegistry.entries.length) {
+    return next;
+  }
+
+  next = upsertFencedJsonBlock(next, 'flow-nodes', {
+    nextRunningNumber: currentRegistry.nextRunningNumber,
+    entries: currentRegistry.entries,
+  });
+
+  Array.from(explicitTypesByRunningNumber.entries())
+    .filter(([runningNumber]) => validRunningNumbers.has(runningNumber))
+    .sort((a, b) => a[0] - b[0])
+    .forEach(([runningNumber, type]) => {
+      next = upsertFencedJsonBlock(next, `process-node-type-${runningNumber}`, {
+        type,
+        nodeId: currentRegistry.runningNumberToNodeId.get(runningNumber) || '',
+      });
+    });
+
+  Array.from(singleScreenByRunningNumber.entries())
+    .filter(
+      ([startRunningNumber, lastStepRunningNumber]) =>
+        validRunningNumbers.has(startRunningNumber) &&
+        validRunningNumbers.has(lastStepRunningNumber) &&
+        explicitTypesByRunningNumber.get(startRunningNumber) === 'single_screen_steps',
+    )
+    .sort((a, b) => a[0] - b[0])
+    .forEach(([startRunningNumber, lastStepRunningNumber]) => {
+      next = upsertFencedJsonBlock(next, `process-single-screen-${startRunningNumber}`, {
+        lastStepRunningNumber,
+      });
+    });
+
+  Array.from(gotoTargetsByRunningNumber.entries())
+    .filter(([runningNumber]) => validRunningNumbers.has(runningNumber) && explicitTypesByRunningNumber.get(runningNumber) === 'goto')
+    .sort((a, b) => a[0] - b[0])
+    .forEach(([runningNumber, targetId]) => {
+      const remappedTargetId = remapLegacyNodeIdToCurrentNodeId({
+        legacyNodeId: targetId,
+        oldLineIndexToRunningNumber,
+        currentRunningNumberToNodeId: currentRegistry.runningNumberToNodeId,
+        currentNodeIds,
+      });
+      if (!remappedTargetId) return;
+      next = upsertFencedJsonBlock(next, `process-goto-${runningNumber}`, {
+        targetId: remappedTargetId,
+      });
+    });
+
+  Array.from(loopTargetsByRunningNumber.entries())
+    .filter(([runningNumber]) => validRunningNumbers.has(runningNumber) && explicitTypesByRunningNumber.get(runningNumber) === 'loop')
+    .sort((a, b) => a[0] - b[0])
+    .forEach(([runningNumber, targetId]) => {
+      const remappedTargetId = remapLegacyNodeIdToCurrentNodeId({
+        legacyNodeId: targetId,
+        oldLineIndexToRunningNumber,
+        currentRunningNumberToNodeId: currentRegistry.runningNumberToNodeId,
+        currentNodeIds,
+      });
+      if (!remappedTargetId) return;
+      next = upsertFencedJsonBlock(next, `process-loop-${runningNumber}`, {
+        targetId: remappedTargetId,
+      });
+    });
+
+  const remappedConnectorLabels = Object.entries(connectorLabels).reduce<Record<string, { label: string; color: string }>>((acc, [key, value]) => {
+    const [legacyFromId, legacyToId] = key.split('__');
+    if (!legacyFromId || !legacyToId) return acc;
+    const fromId = remapLegacyNodeIdToCurrentNodeId({
+      legacyNodeId: legacyFromId,
+      oldLineIndexToRunningNumber,
+      currentRunningNumberToNodeId: currentRegistry.runningNumberToNodeId,
+      currentNodeIds,
+    });
+    const toId = remapLegacyNodeIdToCurrentNodeId({
+      legacyNodeId: legacyToId,
+      oldLineIndexToRunningNumber,
+      currentRunningNumberToNodeId: currentRegistry.runningNumberToNodeId,
+      currentNodeIds,
+    });
+    if (!fromId || !toId) return acc;
+    const parent = currentNodeById.get(fromId);
+    if (!parent?.children.some((child) => child.id === toId)) return acc;
+    acc[`${fromId}__${toId}`] = {
+      label: String(value.label || '').trim(),
+      color: String(value.color || '#000000').trim() || '#000000',
+    };
+    return acc;
+  }, {});
+
+  if (Object.keys(remappedConnectorLabels).length) {
+    next = upsertFencedJsonBlock(next, 'flow-connector-labels', remappedConnectorLabels);
+  }
+
+  return sanitizeDiagramMarkdown(next);
 }
 
 function extractDataObjectAttributeIdsFromLine(line: string): string[] {
@@ -1966,6 +2359,7 @@ function autoFixDeterministicValidationIssues(markdown: string, validation: Impo
     next = syncExpandedStatesBlock(next);
   }
 
+  next = syncDerivedFlowMetadata(next);
   return sanitizeDiagramMarkdown(next);
 }
 
@@ -2111,6 +2505,8 @@ async function progressivelyEnrichDiagramMarkdown(input: {
     await emit(`progressive_expanded_batch_${i + 1}`, markdown);
   }
 
+  markdown = syncDerivedFlowMetadata(markdown);
+  await emit('progressive_flow_metadata', markdown);
   return markdown;
 }
 
@@ -2581,20 +2977,25 @@ async function repairDiagramWithTargetedPatches(input: {
   generation: PipelineGenerationConfig;
   markdown: string;
   validation: ImportValidationResult;
+  integrityIssues?: string[];
 }): Promise<string | null> {
   const issues = [...input.validation.errors, ...input.validation.warnings].slice(0, MAX_DIAGRAM_FIX_ISSUES);
-  if (!issues.length) return input.markdown;
+  const integrityIssues = Array.from(new Set((input.integrityIssues || []).map((issue) => normalizeText(issue)).filter(Boolean)));
+  if (!issues.length && !integrityIssues.length) return input.markdown;
   const targets = buildMarkdownFixTargets(input.markdown, issues);
   if (!targets.length) return null;
 
   const issueDetails = issues
     .map((issue, idx) => `${idx + 1}. ${issue.code}: ${normalizeText(issue.message)}\n   Fix hint: ${fixInstructionForValidationIssue(issue)}`)
     .join('\n');
+  const integrityDetails = integrityIssues.map((issue, idx) => `${idx + 1}. ${issue}`).join('\n');
 
   const targetPayload = targets.map((target) => ({
     targetId: target.id,
     startLine: target.startLine,
     endLine: target.endLine,
+    targetKind: target.targetKind,
+    replacementFormat: describeTargetPatchFormat(target),
     reason: target.reason,
     issueCodes: target.issueCodes,
     originalMarkdown: target.originalMarkdown,
@@ -2615,6 +3016,8 @@ async function repairDiagramWithTargetedPatches(input: {
     '- Only patch targetIds listed below.',
     '- Do not add or leave triple-backtick fence lines unless explicitly required for a metadata block.',
     '- Preserve unaffected sections.',
+    '- For tree targets, return only replacement subtree lines.',
+    '- For metadata targets, return only complete fenced metadata blocks.',
     '- Keep Diregram node indentation valid (2 spaces per level).',
     '- Use the repository content checklist to build missing scope and detail.',
     '- Treat validator issues as technical repair signals only. Do not remove scope to silence errors.',
@@ -2627,7 +3030,10 @@ async function repairDiagramWithTargetedPatches(input: {
     input.validation.aiFriendlyReport,
     '',
     'Issues with fix hints:',
-    issueDetails,
+    issueDetails || '(none)',
+    '',
+    'Diagram integrity issues:',
+    integrityDetails || '(none)',
     '',
     'Patch targets:',
     JSON.stringify(targetPayload, null, 2),
@@ -2643,6 +3049,7 @@ async function repairDiagramWithTargetedPatches(input: {
       'Do not return markdown fences.',
       'Use the repository content checklist to preserve and build the diagram scope.',
       'Treat validator feedback as a technical repair gate, not as the definition of scope.',
+      'Treat diagram integrity issues as first-class repair signals and carry forward partially improved candidates.',
       'Do not shrink scope to pass validation; preserve generated node coverage and prefer additive fixes.',
     ].join('\n'),
     messages: [{ role: 'user', content: prompt }],
@@ -2710,6 +3117,8 @@ async function runPostSuccessContentAudit(input: {
       '- Promote true lifecycle or timeframe variants into conditional hubs when that better matches the content.',
       '- If adjacent #flow# tasks share one screen context, group them using single_screen_steps with matching process-single-screen metadata.',
       '- If a #flow# node branches, ensure metadata includes validation/branch typing and connector labels.',
+      '- For tree targets, return only replacement subtree lines.',
+      '- For metadata targets, return only complete fenced metadata blocks.',
       '- If no meaningful improvement is needed, return an empty patches array.',
       '',
       `Current markdown hash: ${hashMarkdown(baseMarkdown)}`,
@@ -2726,6 +3135,8 @@ async function runPostSuccessContentAudit(input: {
           targetId: target.id,
           startLine: target.startLine,
           endLine: target.endLine,
+          targetKind: target.targetKind,
+          replacementFormat: describeTargetPatchFormat(target),
           reason: target.reason,
           contextMarkdown: target.contextMarkdown,
           originalMarkdown: target.originalMarkdown,
@@ -2743,6 +3154,7 @@ async function runPostSuccessContentAudit(input: {
         'You are editing one existing Diregram markdown file after it already passed import validation.',
         'Do not rewrite the entire document.',
         'Return JSON only matching the requested schema.',
+        'Respect each target kind exactly: tree targets need plain subtree lines, metadata targets need full fenced blocks.',
         'Focus on improving content fidelity using the repository checklist: IA correctness, expanded-node quality, conditional-hub correctness, process flow typing, and single-screen grouping.',
         'Preserve coverage and prefer additive fixes.',
       ].join('\n'),
@@ -2805,6 +3217,7 @@ async function runPostSuccessContentAudit(input: {
         generation: input.generation,
         markdown: candidate,
         validation: candidateValidation,
+        integrityIssues: candidateIntegrityIssues,
       });
       if (targeted && targeted !== candidate) {
         const rebuiltTargeted = await progressivelyRestabilizeEditedDiagram({
@@ -3017,6 +3430,7 @@ async function generateSingleDiagram(input: {
       generation: input.generation,
       markdown,
       validation,
+      integrityIssues,
     });
     if (targeted && targeted !== markdown) {
       const targetedValidation = validateNexusMarkdownImport(targeted);
@@ -3040,6 +3454,7 @@ async function generateSingleDiagram(input: {
       ) {
         markdown = targeted;
         validation = targetedValidation;
+        integrityIssues = targetedIntegrityIssues;
       }
     }
 
@@ -3559,7 +3974,12 @@ function buildSwarmRecommendationTargets(markdown: string, agentOutputs: AgentOu
   const overlapsExisting = (startLine: number, endLine: number) =>
     usedRanges.some((range) => !(endLine < range.startLine || startLine > range.endLine));
 
-  const addTarget = (range: { startLine: number; endLine: number }, reason: string, issueCode: string) => {
+  const addTarget = (
+    range: { startLine: number; endLine: number },
+    targetKind: 'tree' | 'metadata',
+    reason: string,
+    issueCode: string,
+  ) => {
     if (out.length >= MAX_DIAGRAM_FIX_TARGETS) return;
     const clamped = clampLineRange(range, lines.length);
     const overlapEnd = Math.max(clamped.endLine, clamped.startLine - 1);
@@ -3569,6 +3989,7 @@ function buildSwarmRecommendationTargets(markdown: string, agentOutputs: AgentOu
       id: `swarm-revision-${out.length + 1}`,
       startLine: clamped.startLine,
       endLine: clamped.endLine,
+      targetKind,
       reason: clipText(reason, 280),
       issueCodes: [issueCode],
       contextMarkdown: extractContextMarkdownForRange(lines, clamped.startLine, clamped.endLine),
@@ -3586,6 +4007,7 @@ function buildSwarmRecommendationTargets(markdown: string, agentOutputs: AgentOu
       if (subtree) {
         addTarget(
           { startLine: subtree.start + 1, endLine: subtree.end + 1 },
+          'tree',
           `[${row.agent}] ${row.recommendation.title}: ${clipText(row.recommendation.detail, 220)}`,
           'SWARM_REVISION_TREE',
         );
@@ -3595,6 +4017,7 @@ function buildSwarmRecommendationTargets(markdown: string, agentOutputs: AgentOu
         if (metadataBlock) {
           addTarget(
             { startLine: metadataBlock.startLine, endLine: metadataBlock.endLine },
+            'metadata',
             `Update expanded metadata for ${ref.label} from swarm recommendation "${row.recommendation.title}".`,
             'SWARM_REVISION_EXPANDED_METADATA',
           );
@@ -3603,6 +4026,7 @@ function buildSwarmRecommendationTargets(markdown: string, agentOutputs: AgentOu
         if (gridBlock) {
           addTarget(
             { startLine: gridBlock.startLine, endLine: gridBlock.endLine },
+            'metadata',
             `Update expanded grid for ${ref.label} from swarm recommendation "${row.recommendation.title}".`,
             'SWARM_REVISION_EXPANDED_GRID',
           );
@@ -3615,6 +4039,7 @@ function buildSwarmRecommendationTargets(markdown: string, agentOutputs: AgentOu
 
   addTarget(
     { startLine: metadataInsertStartLine, endLine: metadataInsertEndLine },
+    'metadata',
     'Update metadata blocks required by the swarm-driven revision, including flow-nodes, process-node-type-N, process-single-screen-N, flow-connector-labels, expanded-metadata-N, expanded-grid-N, and related registries.',
     'SWARM_REVISION_METADATA',
   );
@@ -3684,6 +4109,8 @@ async function runSwarmDrivenDiagramRevision(input: {
       '- Convert recommendations into real diagram changes: tree structure, expanded grids, conditional hubs, process typing, connector labels, and single-screen grouping metadata.',
       '- If a recommendation is already satisfied, leave that target unchanged.',
       '- If the tree changes, also patch the metadata target so dependent registries stay aligned.',
+      '- For tree targets, return only replacement subtree lines.',
+      '- For metadata targets, return only complete fenced metadata blocks.',
       '- Keep the markdown technically import-valid.',
       '',
       `Current markdown hash: ${hashMarkdown(baseMarkdown)}`,
@@ -3703,6 +4130,8 @@ async function runSwarmDrivenDiagramRevision(input: {
           targetId: target.id,
           startLine: target.startLine,
           endLine: target.endLine,
+          targetKind: target.targetKind,
+          replacementFormat: describeTargetPatchFormat(target),
           reason: target.reason,
           contextMarkdown: target.contextMarkdown,
           originalMarkdown: target.originalMarkdown,
@@ -3720,13 +4149,22 @@ async function runSwarmDrivenDiagramRevision(input: {
         'You are editing an existing Diregram markdown file based on grounded swarm recommendations.',
         'Return JSON only matching the requested schema.',
         'Do not rewrite the entire document.',
+        'Respect each target kind exactly: tree targets need plain subtree lines, metadata targets need full fenced blocks.',
         'Convert recommendation text into actual diagram changes while preserving coverage.',
       ].join('\n'),
       messages: [{ role: 'user', content: prompt }],
     });
 
     const parsed = parseTargetedPatchResponse(out);
-    const safePatches = parsed ? filterSafeRevisionPatches(targets, parsed.patches) : [];
+    const safePatchEval = parsed ? evaluateSafeRevisionPatches(targets, parsed.patches) : { accepted: [], diagnostics: [] };
+    const safePatches = safePatchEval.accepted;
+    const rejectedPatchDiagnostics = safePatchEval.diagnostics.filter((item) => !item.accepted);
+    if (rejectedPatchDiagnostics.length) {
+      console.warn(
+        '[project-pipeline] swarm revision rejected patch candidates:',
+        rejectedPatchDiagnostics.map((item) => `${item.targetId}: ${item.reason}`).join(' | '),
+      );
+    }
     if (!safePatches.length) {
       await emit('swarm_revision_noop', baseMarkdown);
       return baseMarkdown;
@@ -3782,6 +4220,7 @@ async function runSwarmDrivenDiagramRevision(input: {
         generation: input.generation,
         markdown: candidate,
         validation: candidateValidation,
+        integrityIssues: candidateIntegrityIssues,
       });
       if (targeted && targeted !== candidate) {
         const rebuiltTargeted = await progressivelyRestabilizeEditedDiagram({
