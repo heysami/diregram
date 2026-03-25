@@ -1880,17 +1880,35 @@ function upsertExpandedGridBlock(markdown: string, runningNumber: number, nodes:
 }
 
 function summarizeCurrentDataObjects(markdown: string): string {
-  const match = normalizeNewlines(markdown).match(/```data-objects\n([\s\S]*?)\n```/);
-  if (!match?.[1]) return '(none)';
-  const obj = parseJsonObject(match[1]);
-  const rows = Array.isArray(obj?.objects) ? (obj!.objects as unknown[]) : [];
-  return rows
-    .map((item) => (item && typeof item === 'object' ? (item as JsonRecord) : null))
-    .filter((item): item is JsonRecord => item !== null)
-    .map((item) => `${normalizeText(item.id)}:${normalizeText(item.name)}`)
+  const store = parseDataObjectsStore(markdown);
+  if (!store.objects.length) return '(none)';
+  return store.objects
+    .map((item) => {
+      const data = item.data && typeof item.data === 'object' ? (item.data as JsonRecord) : null;
+      const attributeIds = Array.isArray(data?.attributes)
+        ? (data!.attributes as unknown[])
+            .map((attr) => (attr && typeof attr === 'object' ? normalizeText((attr as JsonRecord).id) : ''))
+            .filter(Boolean)
+            .slice(0, 5)
+        : [];
+      const relationLabels = Array.isArray(data?.relations)
+        ? (data!.relations as unknown[])
+            .map((rel) => (rel && typeof rel === 'object' ? normalizeText((rel as JsonRecord).name || (rel as JsonRecord).id) : ''))
+            .filter(Boolean)
+            .slice(0, 4)
+        : [];
+      return [
+        `${normalizeText(item.id)}:${normalizeText(item.name) || humanizeIdentifier(normalizeText(item.id))}`,
+        attributeIds.length ? `attrs=${attributeIds.join(',')}` : '',
+        relationLabels.length ? `relations=${relationLabels.join(',')}` : '',
+        normalizeText(item.annotation) ? `note=${clipText(item.annotation, 120)}` : '',
+      ]
+        .filter(Boolean)
+        .join(' | ');
+    })
     .filter(Boolean)
     .join('\n')
-    .slice(0, 4000);
+    .slice(0, 5000);
 }
 
 type FlowRegistryEntry = {
@@ -2232,24 +2250,494 @@ function humanizeIdentifier(input: string): string {
   return raw.replace(/\b\w/g, (m) => m.toUpperCase());
 }
 
-function buildDerivedDataObjectsStore(markdown: string): JsonRecord | null {
-  const existingMatch = normalizeNewlines(markdown).match(/```data-objects\n([\s\S]*?)\n```/);
-  const existingStore = existingMatch ? parseJsonObject(existingMatch[1]) : null;
-  const existingObjectsRaw = Array.isArray(existingStore?.objects) ? (existingStore.objects as unknown[]) : [];
-  const existingById = new Map(
-    existingObjectsRaw
-      .map((row) => (row && typeof row === 'object' ? (row as JsonRecord) : null))
+type ParsedDataObjectStore = {
+  nextId: number;
+  objects: JsonRecord[];
+  byId: Map<string, JsonRecord>;
+};
+
+type ScreenDataCoverageTarget = ProgressiveExpandedTarget & {
+  requiredPrimaryDataObjectId: string;
+  primaryDataObjectId: string | null;
+  currentMetadata: JsonRecord;
+  currentGrid: ExpandedGridNodeRuntime[];
+  currentObjectNodeCount: number;
+  currentAttributeIds: string[];
+  missingReasons: string[];
+};
+
+const SCREEN_DATA_OBJECT_ACTION_WORDS = new Set([
+  'accept',
+  'add',
+  'approve',
+  'archive',
+  'attach',
+  'authenticate',
+  'ban',
+  'block',
+  'browse',
+  'cancel',
+  'change',
+  'check',
+  'choose',
+  'clear',
+  'complete',
+  'confirm',
+  'connect',
+  'continue',
+  'copy',
+  'create',
+  'decline',
+  'delete',
+  'discover',
+  'download',
+  'edit',
+  'enter',
+  'explore',
+  'export',
+  'fill',
+  'filter',
+  'find',
+  'follow',
+  'forgot',
+  'issue',
+  'like',
+  'load',
+  'locate',
+  'log',
+  'login',
+  'logout',
+  'manage',
+  'mark',
+  'moderate',
+  'open',
+  'pay',
+  'post',
+  'preview',
+  'process',
+  'publish',
+  'react',
+  'receive',
+  'refresh',
+  'register',
+  'remove',
+  'report',
+  'request',
+  'resend',
+  'reset',
+  'restore',
+  'retry',
+  'review',
+  'save',
+  'search',
+  'select',
+  'send',
+  'set',
+  'share',
+  'show',
+  'sign',
+  'signup',
+  'signin',
+  'start',
+  'submit',
+  'subscribe',
+  'suspend',
+  'switch',
+  'toggle',
+  'track',
+  'unlock',
+  'unpublish',
+  'unread',
+  'update',
+  'upgrade',
+  'upload',
+  'verify',
+  'view',
+  'warn',
+]);
+
+const SCREEN_DATA_OBJECT_UI_WORDS = new Set([
+  'admin',
+  'alert',
+  'app',
+  'bar',
+  'center',
+  'centre',
+  'dialog',
+  'drawer',
+  'flow',
+  'grid',
+  'journey',
+  'landing',
+  'layout',
+  'list',
+  'menu',
+  'modal',
+  'navigation',
+  'page',
+  'panel',
+  'portal',
+  'public',
+  'screen',
+  'section',
+  'site',
+  'step',
+  'surface',
+  'tab',
+  'tutorial',
+  'view',
+  'wizard',
+]);
+
+function normalizeDataObjectToken(token: string): string {
+  let next = normalizeText(token)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+  if (!next) return '';
+  if (/^\d+$/.test(next)) return '';
+  if (next.endsWith('ies') && next.length > 4) next = `${next.slice(0, -3)}y`;
+  else if (next.endsWith('ses') && next.length > 4) next = next.slice(0, -2);
+  else if (next.endsWith('s') && !next.endsWith('ss') && next.length > 3) next = next.slice(0, -1);
+  return next;
+}
+
+function collectMeaningfulScreenTokens(text: string): string[] {
+  return normalizeText(text)
+    .split(/[^A-Za-z0-9]+/g)
+    .map((token) => normalizeDataObjectToken(token))
+    .filter((token) => token.length >= 2)
+    .filter((token) => !SCREEN_DATA_OBJECT_ACTION_WORDS.has(token))
+    .filter((token) => !SCREEN_DATA_OBJECT_UI_WORDS.has(token));
+}
+
+function deriveSharedDataObjectIdForScreen(input: {
+  label: string;
+  parentPath: string[];
+  runningNumber: number;
+  existingId?: string | null;
+}): string {
+  const existingId = normalizeText(input.existingId);
+  if (existingId) return existingId;
+
+  const labelTokens = collectMeaningfulScreenTokens(input.label);
+  const parentTokens = input.parentPath.flatMap((segment) => collectMeaningfulScreenTokens(segment));
+  const allTokens = Array.from(new Set([...labelTokens, ...parentTokens])).slice(0, 4);
+  if (!allTokens.length) return `do-screen-${input.runningNumber}`;
+  return `do-${allTokens.join('-')}`;
+}
+
+function normalizeDataObjectRows(input: unknown): JsonRecord[] {
+  if (Array.isArray(input)) {
+    return input
+      .map((row) => (row && typeof row === 'object' ? ({ ...(row as JsonRecord) } as JsonRecord) : null))
       .filter((row): row is JsonRecord => row !== null)
+      .filter((row) => Boolean(normalizeText(row.id)));
+  }
+  const body = input && typeof input === 'object' ? (input as JsonRecord) : null;
+  const rows = Array.isArray(body?.objects) ? (body!.objects as unknown[]) : [];
+  return rows
+    .map((row) => (row && typeof row === 'object' ? ({ ...(row as JsonRecord) } as JsonRecord) : null))
+    .filter((row): row is JsonRecord => row !== null)
+    .filter((row) => Boolean(normalizeText(row.id)));
+}
+
+function computeNextDataObjectStoreId(currentNextId: unknown, rows: JsonRecord[]): number {
+  let nextId = Math.max(1, Math.floor(Number(currentNextId || 1) || 1));
+  rows.forEach((row) => {
+    const m = normalizeText(row.id).match(/^do-(\d+)$/);
+    const n = m?.[1] ? Number.parseInt(m[1], 10) : NaN;
+    if (Number.isFinite(n)) nextId = Math.max(nextId, n + 1);
+  });
+  return nextId;
+}
+
+function parseDataObjectsStore(markdown: string): ParsedDataObjectStore {
+  const match = normalizeNewlines(markdown).match(/```data-objects\n([\s\S]*?)\n```/);
+  const parsed = match?.[1] ? parseJsonObject(match[1]) : null;
+  const objects = normalizeDataObjectRows(parsed);
+  const byId = new Map(
+    objects
       .map((row) => [normalizeText(row.id), row] as const)
       .filter(([id]) => Boolean(id)),
   );
+  return {
+    nextId: computeNextDataObjectStoreId(parsed?.nextId, objects),
+    objects: Array.from(byId.values()),
+    byId,
+  };
+}
+
+function mergeDataObjectsStoreIntoMarkdown(markdown: string, payload: unknown): string {
+  const incomingRows = normalizeDataObjectRows(payload);
+  if (!incomingRows.length) return markdown;
+
+  const existing = parseDataObjectsStore(markdown);
+  incomingRows.forEach((row) => {
+    const id = normalizeText(row.id);
+    if (!id) return;
+    existing.byId.set(id, row);
+  });
+
+  const objects = Array.from(existing.byId.values()).sort((a, b) => normalizeText(a.id).localeCompare(normalizeText(b.id)));
+  const nextId = computeNextDataObjectStoreId(
+    payload && typeof payload === 'object' ? (payload as JsonRecord).nextId : existing.nextId,
+    objects,
+  );
+  return upsertFencedJsonBlock(markdown, 'data-objects', {
+    nextId,
+    objects,
+  });
+}
+
+function parseExpandedMetadataPayload(markdown: string, runningNumber: number): JsonRecord {
+  const re = new RegExp(String.raw`\`\`\`expanded-metadata-${runningNumber}\n([\s\S]*?)\n\`\`\``);
+  const match = normalizeNewlines(markdown).match(re);
+  return match?.[1] ? parseJsonObject(match[1]) || {} : {};
+}
+
+function parseExpandedGridPayload(markdown: string, runningNumber: number): ExpandedGridNodeRuntime[] {
+  const re = new RegExp(String.raw`\`\`\`expanded-grid-${runningNumber}\n([\s\S]*?)\n\`\`\``);
+  const match = normalizeNewlines(markdown).match(re);
+  if (!match?.[1]) return [];
+  try {
+    const parsed = JSON.parse(match[1]);
+    return normalizeGeneratedGridNodes(Array.isArray(parsed) ? parsed : [], runningNumber);
+  } catch {
+    return [];
+  }
+}
+
+function collectGridNodeDataObjectAttributeIds(node: ExpandedGridNodeRuntime): string[] {
+  const out = new Set<string>();
+  const addIds = (raw: unknown) => {
+    if (!Array.isArray(raw)) return;
+    raw
+      .map((item) => normalizeText(item))
+      .filter(Boolean)
+      .forEach((id) => out.add(id));
+  };
+
+  addIds(node.dataObjectAttributeIds);
+  (node.uiTabs || []).forEach((tab) => {
+    addIds(tab.dataObjectAttributeIds);
+    (tab.items || []).forEach((item) => addIds(item.dataObjectAttributeIds));
+  });
+  (node.uiSections || []).forEach((section) => {
+    addIds(section.dataObjectAttributeIds);
+    (section.items || []).forEach((item) => addIds(item.dataObjectAttributeIds));
+  });
+  return Array.from(out);
+}
+
+function nodeHasAnyDataObjectBinding(node: ExpandedGridNodeRuntime): boolean {
+  if (normalizeText(node.dataObjectId)) return true;
+  const hasNested = (items: Array<{ dataObjectId?: string }> | undefined) =>
+    Array.isArray(items) && items.some((item) => Boolean(normalizeText(item.dataObjectId)));
+  return (
+    hasNested(node.uiTabs) ||
+    hasNested(node.uiSections) ||
+    (node.uiTabs || []).some((tab) => hasNested(tab.items)) ||
+    (node.uiSections || []).some((section) => hasNested(section.items))
+  );
+}
+
+function isConditionOrStepLabel(text: string): boolean {
+  const label = normalizeText(text).toLowerCase();
+  if (!label) return false;
+  if (/[?]$/.test(label)) return true;
+  if (/^(if|when|whether|step|next|back|retry|confirm|validate|check)\b/.test(label)) return true;
+  if (/^(success|failure|failed|error|warning|pending|complete|approved|declined|cancelled)\b/.test(label)) return true;
+  return false;
+}
+
+function isObjectBearingGridNode(node: ExpandedGridNodeRuntime): boolean {
+  if (!nodeHasAnyDataObjectBinding(node)) return false;
+  const uiType = normalizeText(node.uiType).toLowerCase();
+  if (uiType === 'button' || uiType === 'navout' || uiType === 'filter') return false;
+  if (isConditionOrStepLabel(node.content)) return false;
+  return true;
+}
+
+function pickDefaultAttributeIdsForObject(row: JsonRecord | null | undefined): string[] {
+  if (!row) return ['__objectName__'];
+  const data = row.data && typeof row.data === 'object' ? (row.data as JsonRecord) : null;
+  const attributes = Array.isArray(data?.attributes) ? (data!.attributes as unknown[]) : [];
+  const ids = attributes
+    .map((item) => (item && typeof item === 'object' ? normalizeText((item as JsonRecord).id) : ''))
+    .filter(Boolean)
+    .slice(0, 4);
+  return ids.length ? ids : ['__objectName__'];
+}
+
+function summarizeGridNodesForPrompt(nodes: ExpandedGridNodeRuntime[]): Array<Record<string, unknown>> {
+  return nodes.slice(0, 16).map((node) => ({
+    key: normalizeText(node.key) || normalizeText(node.id),
+    content: clipText(node.content, 120),
+    uiType: node.uiType || null,
+    dataObjectId: normalizeText(node.dataObjectId) || null,
+    dataObjectAttributeIds: Array.isArray(node.dataObjectAttributeIds) ? node.dataObjectAttributeIds.slice(0, 6) : [],
+    hasTabs: Boolean(node.uiTabs?.length),
+    hasSections: Boolean(node.uiSections?.length),
+    gridX: node.gridX,
+    gridY: node.gridY,
+    gridWidth: node.gridWidth,
+    gridHeight: node.gridHeight,
+  }));
+}
+
+function buildExpandedScreenCoverageTargets(
+  markdown: string,
+  scope?: ProgressiveEnrichmentScope,
+  options?: { onlyMissing?: boolean },
+): ScreenDataCoverageTarget[] {
+  const store = parseDataObjectsStore(markdown);
+  return extractProgressiveTargets(markdown, scope).expanded
+    .map((screen) => {
+      const currentMetadata = parseExpandedMetadataPayload(markdown, screen.runningNumber);
+      const currentGrid = parseExpandedGridPayload(markdown, screen.runningNumber);
+      const primaryDataObjectId =
+        normalizeText(currentMetadata.dataObjectId) || normalizeText(screen.dataObjectId) || null;
+      const requiredPrimaryDataObjectId = deriveSharedDataObjectIdForScreen({
+        label: screen.label,
+        parentPath: screen.parentPath,
+        runningNumber: screen.runningNumber,
+        existingId: primaryDataObjectId,
+      });
+      const currentAttributeIds = Array.from(
+        new Set(
+          [
+            ...(Array.isArray(currentMetadata.dataObjectAttributeIds) ? currentMetadata.dataObjectAttributeIds : []),
+            ...currentGrid.flatMap((node) => collectGridNodeDataObjectAttributeIds(node)),
+          ]
+            .map((id) => normalizeText(id))
+            .filter(Boolean),
+        ),
+      );
+      const currentObjectNodeCount = currentGrid.filter((node) => isObjectBearingGridNode(node)).length;
+      const missingReasons: string[] = [];
+      if (!primaryDataObjectId) missingReasons.push('missing_primary_data_object');
+      if (!store.byId.has(requiredPrimaryDataObjectId)) missingReasons.push('missing_data_object_record');
+      if (currentObjectNodeCount < 1) missingReasons.push('missing_object_bound_inner_nodes');
+      return {
+        ...screen,
+        requiredPrimaryDataObjectId,
+        primaryDataObjectId,
+        currentMetadata,
+        currentGrid,
+        currentObjectNodeCount,
+        currentAttributeIds,
+        missingReasons,
+      } satisfies ScreenDataCoverageTarget;
+    })
+    .filter((target) => !(options?.onlyMissing ?? false) || target.missingReasons.length > 0);
+}
+
+function ensureExpandedScreenDataObjectCoverage(markdown: string, scope?: ProgressiveEnrichmentScope): string {
+  let next = normalizeNewlines(markdown).trimEnd() + '\n';
+  const coverageTargets = buildExpandedScreenCoverageTargets(next, scope, { onlyMissing: true });
+  if (!coverageTargets.length) return next;
+
+  const store = parseDataObjectsStore(next);
+
+  const findBindableGridNode = (nodes: ExpandedGridNodeRuntime[]) =>
+    nodes.find((node) => {
+      const uiType = normalizeText(node.uiType).toLowerCase();
+      if (uiType === 'button' || uiType === 'navout' || uiType === 'filter') return false;
+      if (isConditionOrStepLabel(node.content)) return false;
+      return true;
+    }) || null;
+
+  coverageTargets.forEach((target) => {
+    const primaryDataObjectId = target.primaryDataObjectId || target.requiredPrimaryDataObjectId;
+    const currentRow = store.byId.get(primaryDataObjectId) || null;
+    const ensuredRow =
+      currentRow ||
+      ({
+        id: primaryDataObjectId,
+        name: humanizeIdentifier(primaryDataObjectId),
+        annotation: `Primary shared data object for screen "${target.label}".`,
+        data: {},
+      } satisfies JsonRecord);
+    store.byId.set(primaryDataObjectId, ensuredRow);
+
+    const metadata: JsonRecord = {
+      ...target.currentMetadata,
+      dataObjectId: primaryDataObjectId,
+    };
+    if (!Array.isArray(metadata.dataObjectAttributeIds) || !(metadata.dataObjectAttributeIds as unknown[]).length) {
+      const attrIds = target.currentAttributeIds.length ? target.currentAttributeIds.slice(0, 4) : pickDefaultAttributeIdsForObject(ensuredRow);
+      if (attrIds.length) metadata.dataObjectAttributeIds = attrIds;
+    }
+    next = upsertExpandedMetadataBlock(next, target.runningNumber, metadata);
+
+    if (target.currentObjectNodeCount > 0) return;
+
+    const grid = [...target.currentGrid];
+    const bindableNode = findBindableGridNode(grid);
+    const defaultAttrIds = target.currentAttributeIds.length ? target.currentAttributeIds.slice(0, 4) : pickDefaultAttributeIdsForObject(ensuredRow);
+
+    if (bindableNode) {
+      bindableNode.dataObjectId = normalizeText(bindableNode.dataObjectId) || primaryDataObjectId;
+      if (!Array.isArray(bindableNode.dataObjectAttributeIds) || !bindableNode.dataObjectAttributeIds.length) {
+        bindableNode.dataObjectAttributeIds = defaultAttrIds;
+      }
+      if (!bindableNode.dataObjectAttributeMode && bindableNode.dataObjectAttributeIds?.length) {
+        bindableNode.dataObjectAttributeMode = 'data';
+      }
+      next = upsertExpandedGridBlock(next, target.runningNumber, grid);
+      return;
+    }
+
+    const maxBottom = grid.reduce((max, node) => Math.max(max, node.gridY + node.gridHeight), 0);
+    grid.push({
+      id: `grid-${target.runningNumber}-auto-data`,
+      key: `grid-${target.runningNumber}-auto-data`,
+      content: `${humanizeIdentifier(primaryDataObjectId)} Details`,
+      uiType: 'content',
+      dataObjectId: primaryDataObjectId,
+      dataObjectAttributeIds: defaultAttrIds,
+      dataObjectAttributeMode: 'data',
+      relationKind: 'attribute',
+      relationCardinality: 'one',
+      gridX: 0,
+      gridY: maxBottom > 0 ? maxBottom : 0,
+      gridWidth: 4,
+      gridHeight: 2,
+    });
+    next = upsertExpandedGridBlock(next, target.runningNumber, grid);
+  });
+
+  next = mergeDataObjectsStoreIntoMarkdown(next, {
+    nextId: store.nextId,
+    objects: Array.from(store.byId.values()),
+  });
+  return sanitizeDiagramMarkdown(next);
+}
+
+function buildDerivedDataObjectsStore(markdown: string): JsonRecord | null {
+  const existingStore = parseDataObjectsStore(markdown);
+  const existingById = existingStore.byId;
 
   const roots = flattenNodes(parseNexusMarkdown(markdown));
   const nodeByLine = new Map(roots.map((node) => [node.lineIndex, node]));
   const lines = normalizeNewlines(markdown).split('\n');
   const separator = findSeparatorIndexOutsideFences(lines);
   const sectionEnd = separator === -1 ? lines.length : separator;
-  const refs = new Map<string, { name: string; attrIds: Set<string> }>();
+  const refs = new Map<string, { name: string; attrIds: Set<string>; screenLabels: Set<string> }>();
+
+  const getRef = (doId: string, fallbackName: string) => {
+    const normalizedId = normalizeText(doId);
+    if (!normalizedId) return null;
+    if (!refs.has(normalizedId)) {
+      refs.set(normalizedId, {
+        name: normalizeText(fallbackName) || humanizeIdentifier(normalizedId),
+        attrIds: new Set<string>(),
+        screenLabels: new Set<string>(),
+      });
+    }
+    return refs.get(normalizedId)!;
+  };
 
   let inFence = false;
   for (let lineIndex = 0; lineIndex < sectionEnd; lineIndex += 1) {
@@ -2265,15 +2753,22 @@ function buildDerivedDataObjectsStore(markdown: string): JsonRecord | null {
     if (!doId) continue;
     const node = nodeByLine.get(lineIndex);
     const label = normalizeText(node?.content) || normalizeText(node?.rawContent) || humanizeIdentifier(doId);
-    if (!refs.has(doId)) {
-      refs.set(doId, { name: label, attrIds: new Set<string>() });
-    }
-    extractDataObjectAttributeIdsFromLine(rawLine).forEach((attrId) => refs.get(doId)?.attrIds.add(attrId));
+    const ref = getRef(doId, label);
+    if (!ref) continue;
+    extractDataObjectAttributeIdsFromLine(rawLine).forEach((attrId) => ref.attrIds.add(attrId));
   }
+
+  buildExpandedScreenCoverageTargets(markdown).forEach((screen) => {
+    const doId = screen.primaryDataObjectId || screen.requiredPrimaryDataObjectId;
+    const ref = getRef(doId, humanizeIdentifier(doId));
+    if (!ref) return;
+    ref.screenLabels.add(screen.label);
+    screen.currentAttributeIds.forEach((attrId) => ref.attrIds.add(attrId));
+  });
 
   if (!refs.size && !existingById.size) return null;
 
-  let nextId = Number(existingStore?.nextId || 1);
+  let nextId = existingStore.nextId;
   refs.forEach((_value, doId) => {
     const m = doId.match(/^do-(\d+)$/);
     const n = m?.[1] ? Number.parseInt(m[1], 10) : NaN;
@@ -2310,7 +2805,12 @@ function buildDerivedDataObjectsStore(markdown: string): JsonRecord | null {
       id: doId,
       name: normalizeText(existing?.name) || ref?.name || humanizeIdentifier(doId),
       annotation:
-        normalizeText(existing?.annotation) || (ref?.name ? `Auto-synthesized from diagram reference "${ref.name}".` : undefined),
+        normalizeText(existing?.annotation) ||
+        (ref?.screenLabels?.size
+          ? `Shared data object used by screens: ${Array.from(ref.screenLabels).slice(0, 6).join(', ')}.`
+          : ref?.name
+            ? `Auto-synthesized from diagram reference "${ref.name}".`
+            : undefined),
       data: nextData,
     };
   });
@@ -2359,6 +2859,7 @@ function autoFixDeterministicValidationIssues(markdown: string, validation: Impo
     next = syncExpandedStatesBlock(next);
   }
 
+  next = ensureExpandedScreenDataObjectCoverage(next);
   next = syncDerivedFlowMetadata(next);
   return sanitizeDiagramMarkdown(next);
 }
@@ -2399,16 +2900,40 @@ async function progressivelyEnrichDiagramMarkdown(input: {
   }
 
   const targets = extractProgressiveTargets(markdown, input.scope);
-  if (targets.dataObjects.length) {
+  const screenCoverageTargets = buildExpandedScreenCoverageTargets(markdown, input.scope);
+  const coverageByRunningNumber = new Map(screenCoverageTargets.map((target) => [target.runningNumber, target] as const));
+
+  if (targets.dataObjects.length || screenCoverageTargets.length) {
     const doPrompt = [
       'Return JSON only for the body of a ```data-objects``` block.',
       'Do not return markdown fences.',
-      'Define every referenced do-* id exactly once. Avoid creating unreferenced extra objects.',
-      'Keep the payload compact but practical for the linked flows/screens.',
-      'Prefer data.attributes with stable attr ids and optional relations.',
+      'Define every referenced do-* id exactly once. Reuse the same data object when multiple screens are showing or editing the same entity.',
+      'Every listed screen must resolve to at least one shared data object.',
+      'Do not create pseudo-objects for buttons, conditions, steps, connectors, or navigation-only nodes.',
+      'Build concrete domain objects with practical fields, attributes, and relations for the linked screens and flows.',
+      'Prefer stable attr ids and meaningful relations over placeholder objects.',
       '',
-      'Referenced data object ids:',
+      'Explicit tree do:* references:',
       JSON.stringify(targets.dataObjects, null, 2),
+      '',
+      'Expanded screens that require shared data objects:',
+      JSON.stringify(
+        screenCoverageTargets.map((screen) => ({
+          runningNumber: screen.runningNumber,
+          label: screen.label,
+          parentPath: screen.parentPath,
+          requiredPrimaryDataObjectId: screen.requiredPrimaryDataObjectId,
+          existingPrimaryDataObjectId: screen.primaryDataObjectId,
+          currentObjectNodeCount: screen.currentObjectNodeCount,
+          currentAttributeIds: screen.currentAttributeIds,
+          missingReasons: screen.missingReasons,
+        })),
+        null,
+        2,
+      ),
+      '',
+      'Current data objects:',
+      summarizeCurrentDataObjects(markdown),
       '',
       'Current tree:',
       clipText(getTreeMarkdown(markdown), MAX_PROGRESSIVE_TREE_CHARS),
@@ -2419,19 +2944,20 @@ async function progressivelyEnrichDiagramMarkdown(input: {
 
     const out = await runPipelineGenerationText({
       generation: input.generation,
-      maxTokens: 3200,
+      maxTokens: 4200,
       temperature: 0.1,
       system: [
         'You are editing one existing Diregram markdown file progressively.',
         'Generate only the data-objects block body as strict JSON.',
         'This is a partial-file update, not a full-document rewrite.',
+        'Screen coverage is mandatory: every real screen should have one or more shared data objects, and multiple screens may reuse the same object.',
       ].join('\n'),
       messages: [{ role: 'user', content: doPrompt }],
     });
 
     const dataObjectsJson = parseJsonObject(out);
     if (dataObjectsJson) {
-      markdown = upsertFencedJsonBlock(markdown, 'data-objects', dataObjectsJson);
+      markdown = mergeDataObjectsStoreIntoMarkdown(markdown, dataObjectsJson);
       await emit('progressive_data_objects', markdown);
     }
   }
@@ -2450,7 +2976,9 @@ async function progressivelyEnrichDiagramMarkdown(input: {
       'Do not return markdown fences.',
       'Only include the requested running numbers.',
       'This is a partial-file update. You are filling expanded screen blocks only for the provided screens.',
-      'Use compact but concrete UI structure.',
+      'Every listed item is a real screen/surface. Each one must end with metadata.dataObjectId plus one or more inner grid nodes that bind to data objects.',
+      'Screens may reuse shared data objects. Do not satisfy this requirement using only buttons, nav nodes, or condition/step labels.',
+      'Prefer updating the current screen payload partially instead of replacing the whole screen structure.',
       '',
       'Known data objects:',
       summarizeCurrentDataObjects(markdown),
@@ -2462,7 +2990,11 @@ async function progressivelyEnrichDiagramMarkdown(input: {
           lineIndex: screen.lineIndex,
           label: screen.label,
           parentPath: screen.parentPath,
-          dataObjectId: screen.dataObjectId,
+          requiredPrimaryDataObjectId: coverageByRunningNumber.get(screen.runningNumber)?.requiredPrimaryDataObjectId || screen.dataObjectId,
+          existingPrimaryDataObjectId: coverageByRunningNumber.get(screen.runningNumber)?.primaryDataObjectId || null,
+          currentObjectNodeCount: coverageByRunningNumber.get(screen.runningNumber)?.currentObjectNodeCount || 0,
+          currentMetadata: coverageByRunningNumber.get(screen.runningNumber)?.currentMetadata || {},
+          currentGrid: summarizeGridNodesForPrompt(coverageByRunningNumber.get(screen.runningNumber)?.currentGrid || []),
           subtreeMarkdown: screen.subtreeMarkdown,
         })),
         null,
@@ -2478,12 +3010,13 @@ async function progressivelyEnrichDiagramMarkdown(input: {
 
     const out = await runPipelineGenerationText({
       generation: input.generation,
-      maxTokens: 3200,
+      maxTokens: 3800,
       temperature: 0.1,
       system: [
         'You are editing one existing Diregram markdown file progressively.',
         'Generate only expanded-metadata-N and expanded-grid-N payloads for the requested screens.',
         'Return strict JSON matching the requested schema.',
+        'Ensure every returned screen has a primary shared data object in metadata and at least one data-object-bound inner node in the grid.',
       ].join('\n'),
       messages: [{ role: 'user', content: batchPrompt }],
     });
@@ -2504,6 +3037,9 @@ async function progressivelyEnrichDiagramMarkdown(input: {
     markdown = sanitizeDiagramMarkdown(markdown);
     await emit(`progressive_expanded_batch_${i + 1}`, markdown);
   }
+
+  markdown = ensureExpandedScreenDataObjectCoverage(markdown, input.scope);
+  await emit('progressive_screen_data_coverage', markdown);
 
   markdown = syncDerivedFlowMetadata(markdown);
   await emit('progressive_flow_metadata', markdown);
