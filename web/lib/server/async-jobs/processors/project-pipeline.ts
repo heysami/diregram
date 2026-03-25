@@ -180,10 +180,10 @@ type PipelineUploadInput = {
 };
 
 type UploadExtractionSourceKind = 'text' | 'docling';
-type DoclingImageAssetKind = 'page' | 'picture' | 'table';
+type PipelineImageAssetKind = 'page' | 'picture' | 'table' | 'manual';
 
 type DoclingImageAsset = {
-  kind: DoclingImageAssetKind;
+  kind: PipelineImageAssetKind;
   objectPath: string;
   pageNo: number | null;
   index: number;
@@ -368,7 +368,7 @@ function parseDoclingImageAssets(input: unknown): DoclingImageAsset[] {
     .filter((row): row is JsonRecord => row !== null)
     .map((row, idx) => {
       const kindRaw = normalizeText(row.kind).toLowerCase();
-      const kind: DoclingImageAssetKind = kindRaw === 'picture' || kindRaw === 'table' ? (kindRaw as DoclingImageAssetKind) : 'page';
+      const kind: PipelineImageAssetKind = kindRaw === 'picture' || kindRaw === 'table' ? (kindRaw as PipelineImageAssetKind) : 'page';
       const width = Number(row.width || 0);
       const height = Number(row.height || 0);
       const pageNo = Number(row.pageNo || 0);
@@ -2662,7 +2662,7 @@ async function convertViaDocling(input: {
           originalFilename: input.originalFilename,
           jobId,
           outputFormat: 'markdown',
-          includeImages: true,
+          includeImages: false,
         }),
         signal: controller.signal,
       });
@@ -2721,11 +2721,28 @@ async function convertViaDocling(input: {
   };
 }
 
+function collectManualUploadImages(uploads: PipelineUploadInput[]): CollectedUploadImageAsset[] {
+  return uploads
+    .map((upload, index) => ({
+      kind: 'manual' as const,
+      objectPath: normalizeText(upload.objectPath),
+      pageNo: null,
+      index: index + 1,
+      width: null,
+      height: null,
+      bytes: Math.max(0, Math.floor(Number(upload.size || 0))),
+      label: safeFileName(upload.name),
+      sourceName: safeFileName(upload.name),
+      sourceObjectPath: normalizeText(upload.objectPath),
+    }))
+    .filter((asset) => Boolean(asset.objectPath) && Boolean(asset.sourceName));
+}
+
 function selectDoclingDiagramImages(assets: CollectedUploadImageAsset[]): CollectedUploadImageAsset[] {
   const eligible = assets.filter((asset) => asset.bytes >= MIN_DIAGRAM_IMAGE_BYTES || asset.kind !== 'page');
   const score = (asset: CollectedUploadImageAsset): number => {
     const base =
-      asset.kind === 'picture' ? 100 : asset.kind === 'table' ? 80 : 40;
+      asset.kind === 'picture' || asset.kind === 'manual' ? 100 : asset.kind === 'table' ? 80 : 40;
     const pageBoost = asset.kind === 'page' && asset.pageNo && asset.pageNo <= 2 ? 12 : 0;
     const sizeBoost = Math.min(24, Math.floor(asset.bytes / 40_000));
     const areaBoost = asset.width && asset.height ? Math.min(18, Math.floor((asset.width * asset.height) / 180_000)) : 0;
@@ -2772,7 +2789,7 @@ async function createSignedDoclingImageUrls(input: {
 function selectDoclingVisionImageCandidates(assets: CollectedUploadImageAsset[]): CollectedUploadImageAsset[] {
   const eligible = assets.filter((asset) => asset.kind !== 'table' && (asset.kind !== 'page' || asset.bytes >= MIN_DIAGRAM_IMAGE_BYTES));
   const score = (asset: CollectedUploadImageAsset): number => {
-    const base = asset.kind === 'picture' ? 120 : 72;
+    const base = asset.kind === 'picture' || asset.kind === 'manual' ? 120 : 72;
     const pageBoost = asset.kind === 'page' && asset.pageNo && asset.pageNo <= 4 ? 18 : 0;
     const sizeBoost = Math.min(24, Math.floor(asset.bytes / 35_000));
     const areaBoost = asset.width && asset.height ? Math.min(20, Math.floor((asset.width * asset.height) / 160_000)) : 0;
@@ -2801,12 +2818,15 @@ function selectDoclingVisionImageCandidates(assets: CollectedUploadImageAsset[])
 
 function fallbackVisionUiImages(images: SignedCollectedUploadImageAsset[]): ClassifiedVisionUiImage[] {
   return images
-    .filter((img) => img.kind === 'picture' || (img.kind === 'page' && (img.pageNo || 999) <= 3))
+    .filter((img) => img.kind === 'picture' || img.kind === 'manual' || (img.kind === 'page' && (img.pageNo || 999) <= 3))
     .slice(0, MAX_VISION_INPUT_IMAGES)
     .map((img) => ({
       ...img,
-      uiScore: img.kind === 'picture' ? 74 : 58,
-      rationale: img.kind === 'picture' ? 'Fallback-picked extracted picture as likely UI artifact.' : 'Fallback-picked early page image as possible UI screen.',
+      uiScore: img.kind === 'picture' || img.kind === 'manual' ? 74 : 58,
+      rationale:
+        img.kind === 'picture' || img.kind === 'manual'
+          ? 'Fallback-picked provided image as likely UI artifact.'
+          : 'Fallback-picked early page image as possible UI screen.',
     }));
 }
 
@@ -3291,7 +3311,7 @@ async function generateSingleDiagram(input: {
     name: string;
     signedUrl: string;
     sourceName: string;
-    kind: DoclingImageAssetKind;
+    kind: PipelineImageAssetKind;
     pageNo: number | null;
   }>;
   onMonitorUpdate?: (event: {
@@ -5351,6 +5371,7 @@ export async function runProjectPipelineJob(job: AsyncJobRow): Promise<Record<st
   const projectFolderId = normalizeText(input.projectFolderId || job.project_folder_id);
   const requesterUserId = normalizeText(input.requestedBy || job.requester_user_id || '');
   const uploadsRaw = Array.isArray(input.uploads) ? (input.uploads as unknown[]) : [];
+  const imageUploadsRaw = Array.isArray(input.imageUploads) ? (input.imageUploads as unknown[]) : [];
   const embeddingModel = normalizeText(input.embeddingModel) || undefined;
   const generationProvider = normalizeGenerationProvider(input.generationProvider);
   const claudeModel = normalizeText(input.claudeModel) || undefined;
@@ -5370,11 +5391,23 @@ export async function runProjectPipelineJob(job: AsyncJobRow): Promise<Record<st
     }))
     .filter((row) => Boolean(row.objectPath) && Boolean(row.name))
     .slice(0, MAX_UPLOADS);
+  const imageUploads: PipelineUploadInput[] = imageUploadsRaw
+    .map((row) => (row && typeof row === 'object' ? (row as JsonRecord) : null))
+    .filter((row): row is JsonRecord => row !== null)
+    .map((row) => ({
+      objectPath: normalizeText(row.objectPath),
+      name: normalizeText(row.name),
+      size: Number(row.size || 0),
+      mimeType: normalizeText(row.mimeType),
+    }))
+    .filter((row) => Boolean(row.objectPath) && Boolean(row.name))
+    .slice(0, MAX_UPLOADS);
 
   if (!uploads.length) throw new Error('No uploads were provided');
 
   pipelineLog(job.id, 'start', {
     uploadCount: uploads.length,
+    manualImageUploadCount: imageUploads.length,
     generationProvider,
     ownerId,
     projectFolderId,
@@ -5485,7 +5518,7 @@ export async function runProjectPipelineJob(job: AsyncJobRow): Promise<Record<st
   };
 
   await ensureNotCancelled();
-  await setStage('prepare_inputs', 3, { uploadCount: uploads.length, generationProvider });
+  await setStage('prepare_inputs', 3, { uploadCount: uploads.length, manualImageUploadCount: imageUploads.length, generationProvider });
 
   const uploadTexts = await collectUploadTexts({
     uploads,
@@ -5534,7 +5567,8 @@ export async function runProjectPipelineJob(job: AsyncJobRow): Promise<Record<st
 
   const usableUploadTexts = uploadTexts.filter((item) => !item.analysis.lowSignal);
   const blockedUploadTexts = uploadTexts.filter((item) => item.analysis.lowSignal);
-  const selectedDiagramImages = selectDoclingDiagramImages(usableUploadTexts.flatMap((item) => item.images));
+  const manualUploadImages = collectManualUploadImages(imageUploads);
+  const selectedDiagramImages = selectDoclingDiagramImages(usableUploadTexts.flatMap((item) => item.images).concat(manualUploadImages));
   const signedDiagramImages = await createSignedDoclingImageUrls({
     assets: selectedDiagramImages,
     admin,
@@ -5542,6 +5576,7 @@ export async function runProjectPipelineJob(job: AsyncJobRow): Promise<Record<st
   pipelineLog(job.id, 'prepare_inputs_complete', {
     usableCount: usableUploadTexts.length,
     blockedCount: blockedUploadTexts.length,
+    manualImageCount: manualUploadImages.length,
     selectedImageCount: signedDiagramImages.length,
     files: uploadTexts.map((item) => ({
       name: item.name,
@@ -5562,6 +5597,7 @@ export async function runProjectPipelineJob(job: AsyncJobRow): Promise<Record<st
         updatedAt: nowIso(),
         usableCount: usableUploadTexts.length,
         blockedCount: blockedUploadTexts.length,
+        manualImageCount: manualUploadImages.length,
         sources: uploadTexts.slice(0, 12).map((item) => ({
           name: item.name,
           sourceKind: item.sourceKind,
@@ -6006,7 +6042,9 @@ export async function runProjectPipelineJob(job: AsyncJobRow): Promise<Record<st
   await ensureNotCancelled();
   await setStage('generate_design_system_and_components', 70, { componentGapCount: synthesis.componentGaps.length });
 
-  const selectedVisionImageCandidates = selectDoclingVisionImageCandidates(usableUploadTexts.flatMap((item) => item.images));
+  const selectedVisionImageCandidates = selectDoclingVisionImageCandidates(
+    usableUploadTexts.flatMap((item) => item.images).concat(manualUploadImages),
+  );
   const signedVisionImageCandidates = await createSignedDoclingImageUrls({
     assets: selectedVisionImageCandidates,
     admin,

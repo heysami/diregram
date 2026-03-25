@@ -190,6 +190,7 @@ export default function PipelineClient({ projectId }: { projectId: string }) {
   const { supabase, user, ready } = useAuth();
   const asyncQueue = useAsyncJobQueue();
   const [files, setFiles] = useState<File[]>([]);
+  const [imageFiles, setImageFiles] = useState<File[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [runs, setRuns] = useState<PipelineRunRow[]>([]);
@@ -201,6 +202,7 @@ export default function PipelineClient({ projectId }: { projectId: string }) {
 
   const canRun = useMemo(() => Boolean(projectId) && files.length > 0 && !busy && !!supabase && !!user, [projectId, files.length, busy, supabase, user]);
   const selectedBytes = useMemo(() => files.reduce((sum, f) => sum + Number(f.size || 0), 0), [files]);
+  const selectedImageBytes = useMemo(() => imageFiles.reduce((sum, f) => sum + Number(f.size || 0), 0), [imageFiles]);
   const currentRun = useMemo(() => runs.find((run) => isRunActive(run.status)) || runs[0] || null, [runs]);
   const historyRuns = useMemo(() => (currentRun ? runs.filter((run) => run.id !== currentRun.id) : runs), [runs, currentRun]);
 
@@ -378,6 +380,10 @@ export default function PipelineClient({ projectId }: { projectId: string }) {
     setFiles((prev) => prev.filter((_, i) => i !== index));
   };
 
+  const removeImageFile = (index: number) => {
+    setImageFiles((prev) => prev.filter((_, i) => i !== index));
+  };
+
   const deleteRun = async (run: PipelineRunRow) => {
     if (!canDeleteRun(run.status) || deletingRunId) return;
     const confirmed = window.confirm(`Delete run ${run.id}? This only removes the failed/cancelled run record from history.`);
@@ -446,6 +452,7 @@ export default function PipelineClient({ projectId }: { projectId: string }) {
 
       const runUploadId = crypto.randomUUID();
       const uploads: Array<{ objectPath: string; name: string; size: number; mimeType: string }> = [];
+      const imageUploads: Array<{ objectPath: string; name: string; size: number; mimeType: string }> = [];
 
       for (const [index, file] of files.entries()) {
         const name = safeName(file.name || 'document');
@@ -456,6 +463,16 @@ export default function PipelineClient({ projectId }: { projectId: string }) {
         });
         if (uploadErr) throw new Error(uploadErr.message);
         uploads.push({ objectPath, name, size: Number(file.size || 0), mimeType: String(file.type || '') });
+      }
+      for (const [index, file] of imageFiles.entries()) {
+        const name = safeName(file.name || 'image');
+        const objectPath = `docling/${user.id}/pipeline/${runUploadId}/images/${String(index + 1).padStart(3, '0')}-${name}`;
+        const { error: uploadErr } = await supabase.storage.from('docling-files').upload(objectPath, file, {
+          upsert: true,
+          contentType: file.type || undefined,
+        });
+        if (uploadErr) throw new Error(uploadErr.message);
+        imageUploads.push({ objectPath, name, size: Number(file.size || 0), mimeType: String(file.type || '') });
       }
 
       const res = await fetch('/api/project-pipeline/runs', {
@@ -468,6 +485,7 @@ export default function PipelineClient({ projectId }: { projectId: string }) {
         body: JSON.stringify({
           projectFolderId: projectId,
           uploads,
+          imageUploads,
           generationProvider,
         }),
       });
@@ -483,6 +501,7 @@ export default function PipelineClient({ projectId }: { projectId: string }) {
       }
 
       setFiles([]);
+      setImageFiles([]);
       void loadRuns();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to start pipeline');
@@ -580,6 +599,62 @@ export default function PipelineClient({ projectId }: { projectId: string }) {
               <div>
                 <button type="button" className="mac-btn h-7" onClick={() => setFiles([])} disabled={busy}>
                   Clear all
+                </button>
+              </div>
+            </div>
+          ) : null}
+          <div className="space-y-1 pt-1">
+            <div className="text-xs font-semibold">Optional reference images</div>
+            <div className="text-[11px] opacity-70">
+              These are uploaded separately and used for diagram/vision grounding. Docling stays text-only.
+            </div>
+          </div>
+          <input
+            type="file"
+            accept="image/*"
+            multiple
+            className="text-xs"
+            onChange={(e) => {
+              const next = Array.from(e.target.files || []);
+              if (!next.length) return;
+              setImageFiles((prev) => {
+                const key = (f: File) => `${f.name}|${f.size}|${f.lastModified}`;
+                const seen = new Set(prev.map(key));
+                const merged = [...prev];
+                for (const file of next) {
+                  const k = key(file);
+                  if (seen.has(k)) continue;
+                  seen.add(k);
+                  merged.push(file);
+                }
+                return merged;
+              });
+              setError(null);
+              e.currentTarget.value = '';
+            }}
+            disabled={busy}
+          />
+          {imageFiles.length > 0 ? (
+            <div className="space-y-2">
+              <div className="text-xs opacity-80">
+                {imageFiles.length} image(s) selected · {formatBytes(selectedImageBytes)}
+              </div>
+              <div className="max-h-40 overflow-auto mac-double-outline p-2 space-y-1">
+                {imageFiles.map((file, index) => (
+                  <div key={`${file.name}-${file.size}-${file.lastModified}-${index}`} className="flex items-center justify-between gap-2 text-xs">
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate">{file.name}</div>
+                      <div className="opacity-60">{formatBytes(file.size)}</div>
+                    </div>
+                    <button type="button" className="mac-btn h-7" onClick={() => removeImageFile(index)} disabled={busy}>
+                      Remove
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <div>
+                <button type="button" className="mac-btn h-7" onClick={() => setImageFiles([])} disabled={busy}>
+                  Clear images
                 </button>
               </div>
             </div>

@@ -69,10 +69,11 @@ function parseUploads(input: unknown): PipelineUploadInput[] {
     .slice(0, 50);
 }
 
-function hashUploads(uploads: PipelineUploadInput[]): string {
+function hashUploadList(uploads: PipelineUploadInput[], prefix: string): string {
   const canonical = uploads
     .map((u) => `${u.objectPath}|${u.size}|${u.mimeType}`)
     .sort()
+    .map((row) => `${prefix}:${row}`)
     .join('\n');
   return createHash('sha256').update(canonical, 'utf8').digest('hex').slice(0, 24);
 }
@@ -93,6 +94,7 @@ export async function POST(request: Request) {
       | {
           projectFolderId?: unknown;
           uploads?: unknown;
+          imageUploads?: unknown;
           openaiApiKey?: unknown;
           claudeApiKey?: unknown;
           generationProvider?: unknown;
@@ -104,11 +106,17 @@ export async function POST(request: Request) {
 
     const uploads = parseUploads(body?.uploads);
     if (!uploads.length) return NextResponse.json({ error: 'Missing uploads' }, { status: 400 });
+    const imageUploads = parseUploads(body?.imageUploads);
 
     const requiredPrefix = `docling/${user.id}/pipeline/`;
     for (const item of uploads) {
       if (!item.objectPath.startsWith(requiredPrefix)) {
         return NextResponse.json({ error: `Upload path must start with ${requiredPrefix}` }, { status: 400 });
+      }
+    }
+    for (const item of imageUploads) {
+      if (!item.objectPath.startsWith(requiredPrefix)) {
+        return NextResponse.json({ error: `Image upload path must start with ${requiredPrefix}` }, { status: 400 });
       }
     }
 
@@ -144,7 +152,12 @@ export async function POST(request: Request) {
       claudeApiKey: claudeApiKey || null,
     });
 
-    const uploadHash = hashUploads(uploads);
+    const uploadHash = createHash('sha256')
+      .update(hashUploadList(uploads, 'doc'), 'utf8')
+      .update('\n', 'utf8')
+      .update(hashUploadList(imageUploads, 'img'), 'utf8')
+      .digest('hex')
+      .slice(0, 24);
     const { job, deduped } = await createAsyncJob(
       {
         kind: 'project_pipeline',
@@ -159,6 +172,7 @@ export async function POST(request: Request) {
           projectFolderId,
           requestedBy: user.id,
           uploads,
+          imageUploads,
           generationProvider,
           embeddingModel: clampText(body?.embeddingModel, 120) || null,
         },
