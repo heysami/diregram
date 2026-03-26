@@ -367,6 +367,31 @@ function parseJsonObject(text: string): JsonRecord | null {
   }
 }
 
+function summarizeDoclingErrorBody(status: number, rawBody: string, json: Record<string, unknown>): string {
+  const detail = normalizeText(json.detail || json.error || json.message);
+  if (detail) return clipText(detail, 600);
+
+  const raw = String(rawBody || '');
+  const looksLikeHtml = /<!doctype html/i.test(raw) || /<html[\s>]/i.test(raw);
+  const requestId = normalizeText(raw.match(/Request ID:\s*([A-Za-z0-9-]+)/i)?.[1] || '');
+
+  if (looksLikeHtml) {
+    const title = normalizeText(raw.match(/<title>\s*([^<]+)\s*<\/title>/i)?.[1] || '');
+    const heading = normalizeText(raw.match(/<h1[^>]*>\s*([^<]+)\s*<\/h1>/i)?.[1] || '');
+    const isRenderPage = /powered by render|render(?:’|')?s documentation|render\.com/i.test(raw);
+    const label = heading || title || `HTTP ${status}`;
+    if (isRenderPage && status === 502) {
+      return requestId
+        ? `Docling upstream returned Render 502 Bad Gateway (Request ID: ${requestId})`
+        : 'Docling upstream returned Render 502 Bad Gateway';
+    }
+    return requestId ? `Docling upstream returned ${label} (Request ID: ${requestId})` : `Docling upstream returned ${label}`;
+  }
+
+  const normalized = normalizeText(raw);
+  return normalized ? clipText(normalized, 600) : `Docling failed (${status})`;
+}
+
 function parseDoclingImageAssets(input: unknown): DoclingImageAsset[] {
   if (!Array.isArray(input)) return [];
   return input
@@ -3245,7 +3270,7 @@ async function convertViaDocling(input: {
       const rawBody = await res.text().catch(() => '');
       const json = (parseJsonObject(rawBody) || {}) as Record<string, unknown>;
       if (!res.ok) {
-        const detail = normalizeText(json.detail || json.error || rawBody);
+        const detail = summarizeDoclingErrorBody(res.status, rawBody, json);
         const error = new Error(detail || `Docling failed (${res.status})`) as Error & { status?: number };
         error.status = res.status;
         throw error;
@@ -3273,7 +3298,14 @@ async function convertViaDocling(input: {
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
       lastError = err;
-      if (attempt >= MAX_DOCLING_CONVERT_ATTEMPTS || !shouldRetryDoclingError(err)) {
+      const retryable = shouldRetryDoclingError(err);
+      if (attempt >= MAX_DOCLING_CONVERT_ATTEMPTS && retryable) {
+        const finalError = new Error(`${normalizeText(err.message)} after ${MAX_DOCLING_CONVERT_ATTEMPTS} attempts`) as Error & { status?: number };
+        const status = typeof (err as { status?: unknown })?.status === 'number' ? Number((err as { status?: unknown }).status) : NaN;
+        if (Number.isFinite(status)) finalError.status = status;
+        throw finalError;
+      }
+      if (!retryable) {
         throw err;
       }
       await input.onProgress?.(`convert_docling_retry_${attempt + 1}`);
