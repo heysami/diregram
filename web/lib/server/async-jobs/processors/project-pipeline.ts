@@ -2624,11 +2624,32 @@ function syncDerivedFlowMetadata(markdown: string): string {
 
 function collectSubtreeNodes(root: ReturnType<typeof parseNexusMarkdown>[number]): ReturnType<typeof parseNexusMarkdown>[number][] {
   const out: ReturnType<typeof parseNexusMarkdown>[number][] = [];
-  const visit = (node: ReturnType<typeof parseNexusMarkdown>[number]) => {
+  const visited = new Set<string>();
+  const stack: ReturnType<typeof parseNexusMarkdown>[number][] = [root];
+
+  while (stack.length) {
+    const node = stack.pop()!;
+    if (!node?.id || visited.has(node.id)) continue;
+    visited.add(node.id);
     out.push(node);
-    node.children.forEach(visit);
-  };
-  visit(root);
+
+    if (node.isHub && node.variants?.length) {
+      for (let index = node.variants.length - 1; index >= 0; index -= 1) {
+        const variant = node.variants[index];
+        if (!variant?.id || variant.id === node.id) continue;
+        for (let childIndex = variant.children.length - 1; childIndex >= 0; childIndex -= 1) {
+          stack.push(variant.children[childIndex]);
+        }
+        stack.push(variant);
+      }
+      continue;
+    }
+
+    for (let index = node.children.length - 1; index >= 0; index -= 1) {
+      stack.push(node.children[index]);
+    }
+  }
+
   return out;
 }
 
@@ -3681,18 +3702,32 @@ async function progressivelyRestabilizeEditedDiagram(input: {
 
 function flattenNodes(roots: ReturnType<typeof parseNexusMarkdown>) {
   const out: ReturnType<typeof parseNexusMarkdown>[number][] = [];
-  const visit = (node: ReturnType<typeof parseNexusMarkdown>[number]) => {
+  const visited = new Set<string>();
+  const stack = [...roots].reverse();
+
+  while (stack.length) {
+    const node = stack.pop()!;
+    if (!node?.id || visited.has(node.id)) continue;
+    visited.add(node.id);
     out.push(node);
-    if (node.isHub && node.variants) {
-      node.variants.forEach((variant) => {
-        out.push(variant);
-        variant.children.forEach(visit);
-      });
-      return;
+
+    if (node.isHub && node.variants?.length) {
+      for (let index = node.variants.length - 1; index >= 0; index -= 1) {
+        const variant = node.variants[index];
+        if (!variant?.id || variant.id === node.id) continue;
+        for (let childIndex = variant.children.length - 1; childIndex >= 0; childIndex -= 1) {
+          stack.push(variant.children[childIndex]);
+        }
+        stack.push(variant);
+      }
+      continue;
     }
-    node.children.forEach(visit);
-  };
-  roots.forEach(visit);
+
+    for (let index = node.children.length - 1; index >= 0; index -= 1) {
+      stack.push(node.children[index]);
+    }
+  }
+
   return out;
 }
 
