@@ -1,7 +1,7 @@
 import { getAdminSupabaseClient } from '@/lib/server/supabase-admin';
 import { updateAsyncJob, isAsyncJobCancelRequested } from '@/lib/server/async-jobs/repo';
 import type { AsyncJobRow } from '@/lib/server/async-jobs/types';
-import { runDoclingConvert } from '@/lib/server/docling-service-client';
+import { getDoclingConvertTimeoutMs, runDoclingConvert } from '@/lib/server/docling-service-client';
 
 function cleanBaseUrl(url: string) {
   return url.replace(/\/+$/, '');
@@ -51,7 +51,7 @@ export async function runDoclingConvertJob(job: AsyncJobRow): Promise<Record<str
   if (await isAsyncJobCancelRequested(job.id)) throw new Error('Job cancelled');
 
   const base = cleanBaseUrl(process.env.DOCLING_SERVICE_URL || 'http://127.0.0.1:8686');
-  const timeoutMs = Math.max(10_000, Math.min(295_000, Number(process.env.DOCLING_FETCH_TIMEOUT_MS || 240_000)));
+  const timeoutMs = getDoclingConvertTimeoutMs(originalFilename);
   const attempts = Math.max(1, Math.min(4, Number(process.env.DOCLING_FETCH_ATTEMPTS || 3)));
   const result = await runDoclingConvert({
     baseUrl: base,

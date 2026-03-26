@@ -8,12 +8,14 @@ Internal document conversion service used by the Diregram web app.
 - Runs Docling conversion
 - Uploads the result back to the same bucket under `docling/<userId>/out/...`
 
-PDF conversion runs in a conservative text-only mode:
+By default, PDF conversion uses Docling's standard `DocumentConverter()` behavior.
+
+If you set `DOCLING_PDF_CONVERTER_MODE=conservative`, PDF conversion switches to a more opinionated text-first pipeline:
 - OCR is disabled
 - picture extraction/classification/description is disabled
 - embedded text is preferred when available
 
-This prevents image-heavy PDFs from producing misleading extracted content. Image-only scanned PDFs may return little or no usable text.
+The conservative mode prevents image-heavy PDFs from producing misleading extracted content. Image-only scanned PDFs may return little or no usable text.
 
 ## API
 
@@ -51,6 +53,7 @@ Optional:
 
 - `PORT` (default: `8686`)
 - `DOCLING_JOB_STATUS_BUCKET` (default: `docling-files`; shared storage location for queued job status JSON)
+- `DOCLING_PDF_CONVERTER_MODE` (default: `default`; set to `conservative` to use the tuned text-first PDF path)
 - `DOCLING_MAX_INPUT_MB` (default: `25`; larger files return HTTP 413)
 - `DOCLING_IMAGE_SCALE` (default: `1.5`)
 - `DOCLING_IMAGE_MIN_EDGE_PX` (default: `220`)

@@ -73,6 +73,11 @@ def _build_docling_converter(suffix: str, include_images: bool):
     if suffix.lower() != ".pdf":
         return DocumentConverter()
 
+    pdf_mode = (os.getenv("DOCLING_PDF_CONVERTER_MODE") or "default").strip().lower()
+    if pdf_mode not in {"conservative", "tuned"}:
+        # Preserve the original PDF behavior unless the conservative path is explicitly requested.
+        return DocumentConverter()
+
     pipeline_options = PdfPipelineOptions()
     pipeline_options.do_ocr = False
     pipeline_options.do_picture_classification = False

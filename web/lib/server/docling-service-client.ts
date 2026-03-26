@@ -33,6 +33,11 @@ type DoclingConvertOptions = {
   pollIntervalMs?: number;
 };
 
+function clampTimeoutMs(input: number, fallback: number) {
+  if (!Number.isFinite(input)) return fallback;
+  return Math.max(10_000, Math.min(900_000, Math.floor(input)));
+}
+
 function cleanBaseUrl(url: string) {
   return String(url || '').replace(/\/+$/, '');
 }
@@ -206,6 +211,13 @@ function coerceResult(json: JsonRecord): DoclingConvertResult {
     imageManifestObjectPath: normalizeText(result.imageManifestObjectPath) || null,
     imageAssetCount: Number(result.imageAssetCount || 0) || 0,
   };
+}
+
+export function getDoclingConvertTimeoutMs(originalFilename: string): number {
+  const isPdf = /\.pdf$/i.test(normalizeText(originalFilename));
+  const fallbackMs = isPdf ? 600_000 : 240_000;
+  const raw = isPdf ? process.env.DOCLING_PDF_FETCH_TIMEOUT_MS || process.env.DOCLING_FETCH_TIMEOUT_MS : process.env.DOCLING_FETCH_TIMEOUT_MS;
+  return clampTimeoutMs(Number(raw || fallbackMs), fallbackMs);
 }
 
 export async function runDoclingConvert(options: DoclingConvertOptions): Promise<DoclingConvertResult> {

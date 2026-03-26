@@ -41,7 +41,7 @@ import { runClaudeMessagesText } from '@/lib/server/anthropic-messages';
 import { embedTextsOpenAI } from '@/lib/server/openai-embeddings';
 import { queryProjectKbContext, runOpenAIResponsesText } from '@/lib/server/openai-responses';
 import { getAdminSupabaseClient } from '@/lib/server/supabase-admin';
-import { runDoclingConvert } from '@/lib/server/docling-service-client';
+import { getDoclingConvertTimeoutMs, runDoclingConvert } from '@/lib/server/docling-service-client';
 import { decryptSecretPayload } from '@/lib/server/async-jobs/crypto';
 import { isAsyncJobCancelRequested, updateAsyncJob } from '@/lib/server/async-jobs/repo';
 import type { AsyncJobRow } from '@/lib/server/async-jobs/types';
@@ -133,7 +133,6 @@ const ASYNC_JOB_UPDATE_TIMEOUT_MS = 20_000;
 const STORAGE_DOWNLOAD_TIMEOUT_MS = 60_000;
 const STORAGE_TEXT_READ_TIMEOUT_MS = 30_000;
 const STORAGE_REMOVE_TIMEOUT_MS = 15_000;
-const DOCLING_REQUEST_TIMEOUT_MS = 180_000;
 
 const RN_RE = /<!--\s*rn:(\d+)\s*-->/;
 const PIPELINE_DIAGRAM_CONTENT_CHECKLIST = [
@@ -3189,7 +3188,7 @@ async function convertViaDocling(input: {
   await input.onProgress?.('convert_docling');
   const result = await runDoclingConvert({
     baseUrl: base,
-    timeoutMs: DOCLING_REQUEST_TIMEOUT_MS,
+    timeoutMs: getDoclingConvertTimeoutMs(input.originalFilename),
     payload: {
       userId: input.userId,
       bucketId: 'docling-files',
