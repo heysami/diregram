@@ -1,4 +1,8 @@
+import { getAdminSupabaseClient } from '@/lib/server/supabase-admin';
+
 type JsonRecord = Record<string, unknown>;
+const DOCLING_JOB_STATUS_BUCKET = String(process.env.DOCLING_JOB_STATUS_BUCKET || 'docling-files').trim() || 'docling-files';
+const DOCLING_JOB_STATUS_PREFIX = '_internal/docling-jobs';
 
 export type DoclingConvertPayload = {
   userId: string;
@@ -111,6 +115,28 @@ function isTransientMessage(message: string) {
   );
 }
 
+function jobStatusObjectPath(jobId: string) {
+  const safeJobId = normalizeText(jobId).replace(/[^A-Za-z0-9_.-]+/g, '_') || 'job';
+  return `${DOCLING_JOB_STATUS_PREFIX}/${safeJobId}.json`;
+}
+
+function isStorageNotFoundMessage(message: string) {
+  const normalized = normalizeText(message).toLowerCase();
+  return normalized.includes('not found') || normalized.includes('status code 404') || normalized === '404';
+}
+
+async function withTimeout<T>(label: string, timeoutMs: number, work: () => Promise<T>) {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const timeoutPromise = new Promise<T>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${Math.max(1, Math.floor(timeoutMs / 1000))}s`)), timeoutMs);
+  });
+  try {
+    return await Promise.race([work(), timeoutPromise]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number, label: string) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -130,6 +156,19 @@ async function readJsonResponse(res: Response) {
   const rawBody = await res.text().catch(() => '');
   const json = (parseJsonObject(rawBody) || {}) as JsonRecord;
   return { rawBody, json };
+}
+
+async function readJobStatusFromStorage(jobId: string, label: string, timeoutMs: number): Promise<JsonRecord | null> {
+  const admin = getAdminSupabaseClient();
+  const { data, error } = await withTimeout(label, timeoutMs, () =>
+    admin.storage.from(DOCLING_JOB_STATUS_BUCKET).download(jobStatusObjectPath(jobId)),
+  );
+  if (error) {
+    if (isStorageNotFoundMessage(error.message)) return null;
+    throw new Error(error.message);
+  }
+  const raw = await withTimeout(`${label} read`, timeoutMs, () => data.text());
+  return (parseJsonObject(raw) || {}) as JsonRecord;
 }
 
 async function runLegacySyncConvert(options: DoclingConvertOptions): Promise<DoclingConvertResult> {
@@ -229,27 +268,13 @@ export async function runDoclingConvert(options: DoclingConvertOptions): Promise
     }
     try {
       const requestTimeoutMs = Math.max(5_000, Math.min(20_000, remainingMs));
-      const res = await fetchWithTimeout(
-        `${baseUrl}/convert/jobs/${encodeURIComponent(jobId)}`,
-        { method: 'GET', headers: { accept: 'application/json' } },
-        requestTimeoutMs,
-        `Docling poll for ${options.payload.originalFilename}`,
-      );
-      const { rawBody, json } = await readJsonResponse(res);
-      if (res.status === 404 && notFoundCount < 4) {
+      const json = await readJobStatusFromStorage(jobId, `Docling status for ${options.payload.originalFilename}`, requestTimeoutMs);
+      if (!json && notFoundCount < 6) {
         notFoundCount += 1;
         await sleep(Math.min(pollIntervalMs, Math.max(250, remainingMs)));
         continue;
       }
-      if (!res.ok) {
-        const error = new Error(summarizeDoclingErrorBody(res.status, rawBody, json)) as Error & { status?: number };
-        error.status = res.status;
-        if (isTransientStatus(res.status)) {
-          await sleep(Math.min(pollIntervalMs, Math.max(250, remainingMs)));
-          continue;
-        }
-        throw error;
-      }
+      if (!json) throw new Error('Docling job status not found in shared storage');
 
       const status = normalizeText(json.status).toLowerCase();
       if (status === 'done') return coerceResult(json);
