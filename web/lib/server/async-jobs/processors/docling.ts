@@ -1,13 +1,10 @@
 import { getAdminSupabaseClient } from '@/lib/server/supabase-admin';
 import { updateAsyncJob, isAsyncJobCancelRequested } from '@/lib/server/async-jobs/repo';
 import type { AsyncJobRow } from '@/lib/server/async-jobs/types';
+import { runDoclingConvert } from '@/lib/server/docling-service-client';
 
 function cleanBaseUrl(url: string) {
   return url.replace(/\/+$/, '');
-}
-
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function safeName(name: string) {
@@ -24,41 +21,6 @@ function toMarkdownFilename(original: string) {
   return `${base}.md`;
 }
 
-async function fetchDoclingConvert(url: string, payload: Record<string, unknown>) {
-  const attempts = Math.max(1, Math.min(4, Number(process.env.DOCLING_FETCH_ATTEMPTS || 3)));
-  const timeoutMs = Math.max(10_000, Math.min(295_000, Number(process.env.DOCLING_FETCH_TIMEOUT_MS || 240_000)));
-  let lastErr: string | null = null;
-
-  for (let i = 0; i < attempts; i++) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(payload),
-        signal: controller.signal,
-      });
-      clearTimeout(timer);
-
-      if ([502, 503, 504].includes(res.status) && i + 1 < attempts) {
-        await sleep(1200 * (i + 1));
-        continue;
-      }
-      return res;
-    } catch (e) {
-      clearTimeout(timer);
-      const msg = e instanceof Error ? e.message : String(e);
-      lastErr = msg;
-      if (i + 1 < attempts) {
-        await sleep(1200 * (i + 1));
-        continue;
-      }
-    }
-  }
-
-  throw new Error(lastErr || 'Docling service request failed');
-}
 
 export async function runDoclingConvertJob(job: AsyncJobRow): Promise<Record<string, unknown>> {
   const admin = getAdminSupabaseClient();
@@ -89,32 +51,23 @@ export async function runDoclingConvertJob(job: AsyncJobRow): Promise<Record<str
   if (await isAsyncJobCancelRequested(job.id)) throw new Error('Job cancelled');
 
   const base = cleanBaseUrl(process.env.DOCLING_SERVICE_URL || 'http://127.0.0.1:8686');
-  const url = `${base}/convert`;
-  const res = await fetchDoclingConvert(url, {
-    userId,
-    bucketId,
-    objectPath: inputObjectPath,
-    originalFilename,
-    jobId,
-    outputFormat,
+  const timeoutMs = Math.max(10_000, Math.min(295_000, Number(process.env.DOCLING_FETCH_TIMEOUT_MS || 240_000)));
+  const attempts = Math.max(1, Math.min(4, Number(process.env.DOCLING_FETCH_ATTEMPTS || 3)));
+  const result = await runDoclingConvert({
+    baseUrl: base,
+    timeoutMs,
+    enqueueAttempts: attempts,
+    payload: {
+      userId,
+      bucketId,
+      objectPath: inputObjectPath,
+      originalFilename,
+      jobId,
+      outputFormat,
+    },
   });
 
-  const raw = await res.text().catch(() => '');
-  const json = (() => {
-    try {
-      return (raw ? JSON.parse(raw) : {}) as Record<string, unknown>;
-    } catch {
-      return {} as Record<string, unknown>;
-    }
-  })();
-
-  if (!res.ok) {
-    const detail = typeof json.detail === 'string' ? json.detail : '';
-    const msg = detail ? detail : raw.trim() ? raw.trim().slice(0, 600) : `Failed (HTTP ${res.status})`;
-    throw new Error(msg);
-  }
-
-  const outputObjectPath = String(json.outputObjectPath || '').trim();
+  const outputObjectPath = String(result.outputObjectPath || '').trim();
   if (!outputObjectPath) throw new Error('Docling service returned no outputObjectPath');
 
   await updateAsyncJob(job.id, {

@@ -15,6 +15,15 @@ PDF conversion runs in a conservative text-only mode:
 
 This prevents image-heavy PDFs from producing misleading extracted content. Image-only scanned PDFs may return little or no usable text.
 
+## API
+
+- `POST /convert`: synchronous conversion; returns the completed output payload.
+- `POST /convert/jobs`: queues a conversion job and returns `{ jobId, status }` immediately.
+- `GET /convert/jobs/{jobId}`: polls the queued job until it reaches `done` or `error`.
+
+The async job endpoints are the preferred path for hosted deployments because they avoid long-lived HTTP requests getting cut off by upstream proxies.
+Queued job status is stored in shared Supabase Storage so any service instance can answer poll requests consistently.
+
 When `includeImages=true` is sent to `/convert`, the service additionally:
 - exports page/picture/table images as separate `.png` files in Storage
 - writes an image manifest JSON alongside the markdown output
@@ -41,6 +50,7 @@ Set these env vars (server-only):
 Optional:
 
 - `PORT` (default: `8686`)
+- `DOCLING_JOB_STATUS_BUCKET` (default: `docling-files`; shared storage location for queued job status JSON)
 - `DOCLING_MAX_INPUT_MB` (default: `25`; larger files return HTTP 413)
 - `DOCLING_IMAGE_SCALE` (default: `1.5`)
 - `DOCLING_IMAGE_MIN_EDGE_PX` (default: `220`)

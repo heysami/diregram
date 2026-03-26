@@ -4,11 +4,12 @@ import json
 import os
 import re
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal, Optional
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from supabase import create_client
 
@@ -322,7 +323,155 @@ class ConvertResponse(BaseModel):
     imageAssetCount: int = 0
 
 
+ConvertJobStatus = Literal["queued", "processing", "done", "error"]
+
+
+class ConvertJobStatusResponse(BaseModel):
+    ok: bool = True
+    jobId: str
+    status: ConvertJobStatus
+    result: Optional[ConvertResponse] = None
+    detail: Optional[str] = None
+    statusCode: Optional[int] = None
+
+
 app = FastAPI(title="Diregram Docling Service")
+_JOB_STATUS_BUCKET = (os.getenv("DOCLING_JOB_STATUS_BUCKET") or "docling-files").strip() or "docling-files"
+_JOB_STATUS_PREFIX = "_internal/docling-jobs"
+
+
+def _resolve_service_config():
+    supabase_url = (os.getenv("SUPABASE_URL") or os.getenv("NEXT_PUBLIC_SUPABASE_URL") or "").strip()
+    supabase_key = (os.getenv("SUPABASE_SERVICE_ROLE_KEY") or "").strip()
+    if not supabase_url:
+        raise HTTPException(status_code=500, detail="Missing SUPABASE_URL (or NEXT_PUBLIC_SUPABASE_URL) env var")
+    if not supabase_key:
+        raise HTTPException(status_code=500, detail="Missing SUPABASE_SERVICE_ROLE_KEY env var")
+    return supabase_url, supabase_key
+
+
+def _create_supabase_client():
+    supabase_url, supabase_key = _resolve_service_config()
+    return create_client(supabase_url, supabase_key)
+
+
+def _normalize_request(req: ConvertRequest):
+    user_id = req.userId.strip()
+    bucket_id = req.bucketId.strip()
+    object_path = req.objectPath.strip().lstrip("/")
+    expected_prefix = f"docling/{user_id}/"
+    if not object_path.startswith(expected_prefix):
+        raise HTTPException(status_code=400, detail=f"objectPath must start with {expected_prefix!r}")
+    return user_id, bucket_id, object_path
+
+
+def _with_job_id(req: ConvertRequest, job_id: str) -> ConvertRequest:
+    if hasattr(req, "model_copy"):
+        return req.model_copy(update={"jobId": job_id})
+    return req.copy(update={"jobId": job_id})
+
+
+def _job_status_object_path(job_id: str) -> str:
+    safe_job_id = re.sub(r"[^A-Za-z0-9_.-]+", "_", (job_id or "").strip()) or uuid4().hex
+    return f"{_JOB_STATUS_PREFIX}/{safe_job_id}.json"
+
+
+def _is_storage_not_found_error(error: Exception) -> bool:
+    message = str(error or "").lower()
+    return "not found" in message or "status code 404" in message or "404" in message
+
+
+def _coerce_job_state(data: object) -> Optional[dict]:
+    if isinstance(data, dict):
+        return data
+    if isinstance(data, (bytes, bytearray)):
+        raw = bytes(data).decode("utf-8", errors="ignore").strip()
+    else:
+        raw = str(data or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _model_to_dict(model):
+    if hasattr(model, "model_dump"):
+        return model.model_dump()
+    if hasattr(model, "dict"):
+        return model.dict()
+    return dict(model)
+
+
+def _read_convert_job_state(supabase, job_id: str) -> Optional[dict]:
+    try:
+        data = supabase.storage.from_(_JOB_STATUS_BUCKET).download(_job_status_object_path(job_id))
+    except Exception as exc:
+        if _is_storage_not_found_error(exc):
+            return None
+        raise HTTPException(status_code=500, detail=f"Failed to load convert job status: {exc}")
+    return _coerce_job_state(data)
+
+
+def _load_convert_job(supabase, job_id: str) -> Optional[ConvertJobStatusResponse]:
+    state = _read_convert_job_state(supabase, job_id)
+    if not state:
+        return None
+
+    status = str(state.get("status") or "queued")
+    if status not in {"queued", "processing", "done", "error"}:
+        status = "error"
+    result = state.get("result")
+    parsed_result = ConvertResponse(**result) if isinstance(result, dict) else None
+    return ConvertJobStatusResponse(
+        jobId=job_id,
+        status=status,  # type: ignore[arg-type]
+        result=parsed_result,
+        detail=str(state.get("detail") or "").strip() or None,
+        statusCode=int(state["statusCode"]) if state.get("statusCode") is not None else None,
+    )
+
+
+def _write_convert_job(
+    supabase,
+    job_id: str,
+    *,
+    status: ConvertJobStatus,
+    result: Optional[ConvertResponse] = None,
+    detail: Optional[str] = None,
+    status_code: Optional[int] = None,
+):
+    now_iso = datetime.now(timezone.utc).isoformat()
+    existing_state = _read_convert_job_state(supabase, job_id) or {}
+    payload = {
+        "ok": True,
+        "jobId": job_id,
+        "status": status,
+        "result": _model_to_dict(result) if result is not None else None,
+        "detail": str(detail).strip() if detail else None,
+        "statusCode": int(status_code) if status_code is not None else None,
+        "createdAt": str(existing_state.get("createdAt") or existing_state.get("updatedAt") or now_iso).strip() or now_iso,
+        "updatedAt": now_iso,
+    }
+
+    try:
+        supabase.storage.from_(_JOB_STATUS_BUCKET).upload(
+            _job_status_object_path(job_id),
+            json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            file_options={"content-type": "application/json; charset=utf-8", "x-upsert": "true"},
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to update convert job status: {exc}")
+
+    return ConvertJobStatusResponse(
+        jobId=job_id,
+        status=status,
+        result=result,
+        detail=str(detail).strip() if detail else None,
+        statusCode=int(status_code) if status_code is not None else None,
+    )
 
 
 @app.get("/health")
@@ -330,26 +479,9 @@ def health():
     return {"ok": True}
 
 
-@app.post("/convert", response_model=ConvertResponse)
-def convert(req: ConvertRequest):
-    supabase_url = os.getenv("SUPABASE_URL") or os.getenv("NEXT_PUBLIC_SUPABASE_URL") or ""
-    supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or ""
-    supabase_url = supabase_url.strip()
-    supabase_key = supabase_key.strip()
-    if not supabase_url:
-        raise HTTPException(status_code=500, detail="Missing SUPABASE_URL (or NEXT_PUBLIC_SUPABASE_URL) env var")
-    if not supabase_key:
-        raise HTTPException(status_code=500, detail="Missing SUPABASE_SERVICE_ROLE_KEY env var")
-
-    user_id = req.userId.strip()
-    bucket_id = req.bucketId.strip()
-    object_path = req.objectPath.strip().lstrip("/")
-
-    # Safety: service-role bypasses Storage RLS; enforce the path is scoped to the user.
-    expected_prefix = f"docling/{user_id}/"
-    if not object_path.startswith(expected_prefix):
-        raise HTTPException(status_code=400, detail=f"objectPath must start with {expected_prefix!r}")
-
+def _convert_document(req: ConvertRequest) -> ConvertResponse:
+    supabase_url, supabase_key = _resolve_service_config()
+    user_id, bucket_id, object_path = _normalize_request(req)
     supabase = create_client(supabase_url, supabase_key)
 
     try:
@@ -437,3 +569,49 @@ def convert(req: ConvertRequest):
         imageManifestObjectPath=image_manifest_object_path,
         imageAssetCount=image_asset_count,
     )
+
+
+def _run_convert_job(job_id: str, req: ConvertRequest):
+    supabase = _create_supabase_client()
+    _write_convert_job(supabase, job_id, status="processing")
+    try:
+        result = _convert_document(req)
+    except HTTPException as exc:
+        detail = str(exc.detail).strip() or f"Failed (HTTP {exc.status_code})"
+        _write_convert_job(supabase, job_id, status="error", detail=detail, status_code=exc.status_code)
+        return
+    except Exception as exc:
+        _write_convert_job(supabase, job_id, status="error", detail=f"Conversion failed: {exc}", status_code=500)
+        return
+
+    _write_convert_job(supabase, job_id, status="done", result=result)
+
+
+@app.post("/convert", response_model=ConvertResponse)
+def convert(req: ConvertRequest):
+    return _convert_document(req)
+
+
+@app.post("/convert/jobs", response_model=ConvertJobStatusResponse, status_code=202)
+def enqueue_convert(req: ConvertRequest, background_tasks: BackgroundTasks):
+    supabase = _create_supabase_client()
+    _normalize_request(req)
+
+    job_id = (req.jobId or "").strip() or uuid4().hex
+    existing = _load_convert_job(supabase, job_id)
+    if existing:
+        return existing
+
+    job_req = _with_job_id(req, job_id)
+    _write_convert_job(supabase, job_id, status="queued")
+    background_tasks.add_task(_run_convert_job, job_id, job_req)
+    return ConvertJobStatusResponse(jobId=job_id, status="queued")
+
+
+@app.get("/convert/jobs/{job_id}", response_model=ConvertJobStatusResponse)
+def get_convert_job(job_id: str):
+    supabase = _create_supabase_client()
+    status = _load_convert_job(supabase, job_id.strip())
+    if not status:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return status
