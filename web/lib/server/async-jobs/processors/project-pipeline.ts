@@ -21,6 +21,7 @@ import { upsertHeader } from '@/lib/nexus-doc-header';
 import { parseNexusMarkdown } from '@/lib/nexus-parser';
 import { extractRunningNumbersFromMarkdown } from '@/lib/node-running-numbers';
 import { buildParentPath, extractExpandedIdsFromMarkdown } from '@/lib/expanded-state-storage';
+import { loadSystemFlowStateFromMarkdown, saveSystemFlowStateToMarkdown } from '@/lib/system-flow-storage';
 import {
   coerceVisionDesignSystem,
   defaultVisionDesignSystem,
@@ -1012,6 +1013,80 @@ function assessDiagramIntegrity(markdown: string): string[] {
   if (nodeLines.length >= 3 && jsonishCount / nodeLines.length >= 0.5) {
     issues.push('The tree section is dominated by JSON-like lines, which indicates metadata was promoted into the node tree.');
   }
+
+  try {
+    const roots = flattenNodes(parseNexusMarkdown(markdown));
+    const nodeById = new Map(roots.map((node) => [node.id, node] as const));
+
+    const flowRoots = roots.filter((node) => {
+      const metadata = node.metadata as JsonRecord | undefined;
+      if (!node.isFlowNode || metadata?.flowTab || metadata?.systemFlow) return false;
+      let current = node.parentId ? nodeById.get(node.parentId) : undefined;
+      while (current) {
+        const parentMeta = current.metadata as JsonRecord | undefined;
+        if (parentMeta?.flowTab || parentMeta?.systemFlow || current.isFlowNode) return false;
+        current = current.parentId ? nodeById.get(current.parentId) : undefined;
+      }
+      return true;
+    });
+    flowRoots.forEach((root) => {
+      const missingFlowDescendants = collectSubtreeNodes(root).filter((node) => node.id !== root.id && !node.isFlowNode);
+      if (missingFlowDescendants.length) {
+        issues.push(`Process flow "${normalizeText(root.content) || root.id}" has descendants that are not marked as #flow# steps.`);
+      }
+    });
+
+    const flowtabRoots = roots.filter((node) => !!((node.metadata as JsonRecord | undefined)?.flowTab));
+    flowtabRoots.forEach((root) => {
+      const fid = normalizeText((root.metadata as JsonRecord | undefined)?.fid);
+      if (!fid) {
+        issues.push(`Flowtab root "${normalizeText(root.content) || root.id}" is missing a stable fid.`);
+        return;
+      }
+      const match = normalizeNewlines(markdown).match(
+        new RegExp(`\\\`\\\`\\\`flowtab-swimlane-${escapeRegExp(fid)}\\n([\\s\\S]*?)\\n\\\`\\\`\\\``),
+      );
+      const parsed = match?.[1] ? parseJsonObject(match[1]) : null;
+      if (!parsed) {
+        issues.push(`Flowtab "${normalizeText(root.content) || root.id}" is missing its swimlane metadata block.`);
+        return;
+      }
+      const lanes = Array.isArray(parsed.lanes) ? parsed.lanes : [];
+      const stages = Array.isArray(parsed.stages) ? parsed.stages : [];
+      const placement = parsed.placement && typeof parsed.placement === 'object' ? (parsed.placement as Record<string, unknown>) : {};
+      if (!lanes.length || !stages.length || !Object.keys(placement).length) {
+        issues.push(`Flowtab "${normalizeText(root.content) || root.id}" does not have usable lane/stage placement metadata.`);
+      }
+      const distinctStages = new Set(
+        Object.values(placement)
+          .map((value) => Math.floor(Number((value as JsonRecord | undefined)?.stage ?? -1)))
+          .filter((value) => Number.isFinite(value) && value >= 0),
+      );
+      const subtreeSteps = collectSubtreeNodes(root).filter((node) => node.id !== root.id);
+      if (subtreeSteps.some((node) => !node.isFlowNode)) {
+        issues.push(`Flowtab "${normalizeText(root.content) || root.id}" still contains child nodes that are not in #flow# format.`);
+      }
+      if (subtreeSteps.length >= 4 && (stages.length < 2 || distinctStages.size < 2)) {
+        issues.push(`Flowtab "${normalizeText(root.content) || root.id}" is too long to remain in one undivided stage.`);
+      }
+    });
+
+    const systemRoots = roots.filter((node) => !!((node.metadata as JsonRecord | undefined)?.systemFlow));
+    systemRoots.forEach((root) => {
+      const sfid = normalizeText((root.metadata as JsonRecord | undefined)?.sfid);
+      if (!sfid) {
+        issues.push(`System flow "${normalizeText(root.content) || root.id}" is missing a stable sfid.`);
+        return;
+      }
+      const state = loadSystemFlowStateFromMarkdown(markdown, sfid);
+      if (!state.boxes.length) {
+        issues.push(`System flow "${normalizeText(root.content) || root.id}" has an empty systemflow block.`);
+      }
+    });
+  } catch {
+    // Parsing failures are covered elsewhere; integrity checks should stay best-effort.
+  }
+
   return issues;
 }
 
@@ -1533,6 +1608,287 @@ function buildDerivedTagStore(markdown: string): JsonRecord {
   };
 }
 
+function extractSingleActorTag(line: string): string | null {
+  return extractNodeTagsFromLine(line).find((tagId) => tagId.startsWith('actor-')) || null;
+}
+
+function humanizeActorTag(tagId: string): string {
+  const base = normalizeText(tagId).replace(/^actor-/, '').replace(/[-_]+/g, ' ').trim();
+  if (!base) return 'Primary Actor';
+  return base.replace(/\b\w/g, (match) => match.toUpperCase());
+}
+
+function inferActorTagFromText(text: string, fallback?: string | null): string {
+  const normalized = stripNodeSyntax(text).toLowerCase();
+  if (/\b(system|service|api|queue|worker|job|cron|webhook|backend|platform|database|db|gateway|notification)\b/.test(normalized)) {
+    return 'actor-system';
+  }
+  if (/\b(admin|staff|reviewer|approver|operator|ops|support|manager)\b/.test(normalized)) {
+    return 'actor-admin';
+  }
+  if (/\b(partner|vendor|merchant|provider|agency|broker)\b/.test(normalized)) {
+    return 'actor-partner';
+  }
+  if (/\b(customer|client|member|student|applicant|visitor|requester|user)\b/.test(normalized)) {
+    return 'actor-user';
+  }
+  return normalizeText(fallback) || 'actor-user';
+}
+
+function mergeTagsIntoLine(line: string, nextTags: string[]): string {
+  const unique = Array.from(new Set(nextTags.map((tag) => normalizeText(tag)).filter(Boolean)));
+  const tagComment = `<!-- tags:${unique.join(',')} -->`;
+  if (/<!--\s*tags:[^>]*\s*-->/.test(line)) {
+    return line.replace(/<!--\s*tags:[^>]*\s*-->/, tagComment);
+  }
+  return `${line.trimEnd()} ${tagComment}`;
+}
+
+function ensureMarkerOnLine(line: string, marker: '#flow#' | '#flowtab#' | '#systemflow#'): string {
+  if (line.includes(marker)) return line;
+  const trimmed = line.trimEnd();
+  const commentIndex = trimmed.indexOf('<!--');
+  if (commentIndex === -1) return `${trimmed} ${marker}`;
+  const before = trimmed.slice(0, commentIndex).trimEnd();
+  const after = trimmed.slice(commentIndex).trimStart();
+  return `${before} ${marker} ${after}`.trimEnd();
+}
+
+function upsertStableIdComment(line: string, kind: 'fid' | 'sfid', value: string): string {
+  const token = `<!-- ${kind}:${value} -->`;
+  const re = kind === 'fid' ? /<!--\s*fid:[^>]*\s*-->/ : /<!--\s*sfid:[^>]*\s*-->/;
+  if (re.test(line)) return line.replace(re, token);
+  return `${line.trimEnd()} ${token}`;
+}
+
+function leadingSpaceCount(line: string): number {
+  return (String(line || '').match(/^ */)?.[0].length || 0);
+}
+
+function shiftLineIndent(line: string, extraLevels: number): string {
+  if (!extraLevels) return line;
+  const leadingSpaces = leadingSpaceCount(line);
+  return `${' '.repeat(leadingSpaces + extraLevels * 2)}${line.slice(leadingSpaces)}`;
+}
+
+function computeNodeDepth(
+  node: ReturnType<typeof parseNexusMarkdown>[number],
+  nodeById: Map<string, ReturnType<typeof parseNexusMarkdown>[number]>,
+): number {
+  let depth = 0;
+  let current = node;
+  while (current.parentId) {
+    const parent = nodeById.get(current.parentId);
+    if (!parent) break;
+    depth += 1;
+    current = parent;
+  }
+  return depth;
+}
+
+function isNodeInSystemFlowContext(
+  node: ReturnType<typeof parseNexusMarkdown>[number],
+  nodeById: Map<string, ReturnType<typeof parseNexusMarkdown>[number]>,
+): boolean {
+  let current: ReturnType<typeof parseNexusMarkdown>[number] | undefined = node;
+  while (current) {
+    if ((current.metadata as JsonRecord | undefined)?.systemFlow) return true;
+    current = current.parentId ? nodeById.get(current.parentId) : undefined;
+  }
+  return false;
+}
+
+function isNodeInFlowContext(
+  node: ReturnType<typeof parseNexusMarkdown>[number],
+  nodeById: Map<string, ReturnType<typeof parseNexusMarkdown>[number]>,
+): boolean {
+  let current: ReturnType<typeof parseNexusMarkdown>[number] | undefined = node;
+  while (current) {
+    const metadata = current.metadata as JsonRecord | undefined;
+    if (metadata?.systemFlow) return false;
+    if (metadata?.flowTab || current.isFlowNode) return true;
+    current = current.parentId ? nodeById.get(current.parentId) : undefined;
+  }
+  return false;
+}
+
+function looksLikeDecisionLabel(label: string): boolean {
+  const normalized = normalizeText(label).toLowerCase();
+  if (!normalized) return false;
+  if (normalized.includes('?')) return true;
+  return /\b(if|whether|eligible|approved|rejected|accepted|declined|valid|invalid|success(?:ful)?|fail(?:ed|ure)?|error|available|required|exists?|match(?:ed)?|verified?|manual review|choose|select|pick|route)\b/.test(
+    normalized,
+  );
+}
+
+function looksLikeOutcomeLabel(label: string): boolean {
+  const normalized = normalizeText(label).toLowerCase();
+  if (!normalized) return false;
+  return /\b(yes|no|approved|rejected|accepted|declined|success(?:ful)?|failed|failure|error|retry|complete|completed|cancelled|canceled|eligible|ineligible|manual review|more info)\b/.test(
+    normalized,
+  );
+}
+
+function looksLikeHandoffOrWaitLabel(label: string): boolean {
+  const normalized = normalizeText(label).toLowerCase();
+  if (!normalized) return false;
+  return /\b(wait|await|queued|queue|pending|review|handoff|approve|reject|retry|offline|mail|email|sms|notify|verification|payment|callback|webhook)\b/.test(
+    normalized,
+  );
+}
+
+function looksLikeTechnicalLabel(label: string): boolean {
+  const normalized = normalizeText(label).toLowerCase();
+  if (!normalized) return false;
+  return /\b(api|service|worker|queue|topic|bus|gateway|database|db|cache|pipeline|provider|integration|backend|frontend|portal|app|system|storage|bucket|auth)\b/.test(
+    normalized,
+  );
+}
+
+function deriveBranchConnectorLabel(
+  childLabel: string,
+  childIndex: number,
+  childCount: number,
+): { label: string; color: string } {
+  const normalized = normalizeText(childLabel).toLowerCase();
+  if (/\b(yes|approved|accepted|eligible|valid|success(?:ful)?|complete(?:d)?)\b/.test(normalized)) {
+    return { label: 'If yes', color: '#16a34a' };
+  }
+  if (/\b(no|rejected|declined|invalid|failed|failure|error|retry|more info|manual review|ineligible)\b/.test(normalized)) {
+    return { label: 'If no', color: '#dc2626' };
+  }
+  if (childCount === 2) {
+    return childIndex === 0
+      ? { label: 'If yes', color: '#16a34a' }
+      : { label: 'If no', color: '#dc2626' };
+  }
+  return {
+    label: normalizeText(childLabel) || `Path ${childIndex + 1}`,
+    color: '#000000',
+  };
+}
+
+function ensureStableFlowAndSystemIds(markdown: string): string {
+  const lines = normalizeNewlines(markdown).split('\n');
+  const nodes = flattenNodes(parseNexusMarkdown(markdown));
+  const flowtabRoots = nodes.filter((node) => !!((node.metadata as JsonRecord | undefined)?.flowTab));
+  const systemRoots = nodes.filter((node) => !!((node.metadata as JsonRecord | undefined)?.systemFlow));
+
+  let nextFlowtabIndex = Math.max(
+    1,
+    ...flowtabRoots
+      .map((node) => String((node.metadata as JsonRecord | undefined)?.fid || '').match(/^flowtab-(\d+)$/))
+      .map((match) => (match?.[1] ? Number.parseInt(match[1], 10) + 1 : 1)),
+  );
+  let nextSystemIndex = Math.max(
+    1,
+    ...systemRoots
+      .map((node) => String((node.metadata as JsonRecord | undefined)?.sfid || '').match(/^systemflow-(\d+)$/))
+      .map((match) => (match?.[1] ? Number.parseInt(match[1], 10) + 1 : 1)),
+  );
+
+  flowtabRoots.forEach((node) => {
+    const metadata = node.metadata as JsonRecord | undefined;
+    const currentFid = normalizeText(metadata?.fid);
+    if (currentFid) return;
+    lines[node.lineIndex] = upsertStableIdComment(lines[node.lineIndex] || '', 'fid', `flowtab-${nextFlowtabIndex}`);
+    nextFlowtabIndex += 1;
+  });
+
+  systemRoots.forEach((node) => {
+    const metadata = node.metadata as JsonRecord | undefined;
+    const currentSfid = normalizeText(metadata?.sfid);
+    if (currentSfid) return;
+    lines[node.lineIndex] = upsertStableIdComment(lines[node.lineIndex] || '', 'sfid', `systemflow-${nextSystemIndex}`);
+    nextSystemIndex += 1;
+  });
+
+  return lines.join('\n');
+}
+
+function ensureFlowContextMarkersAndTags(markdown: string): string {
+  const lines = normalizeNewlines(markdown).split('\n');
+  const separatorIndex = findSeparatorIndexOutsideFences(lines);
+  const sectionEnd = separatorIndex === -1 ? lines.length : separatorIndex;
+  const nodes = flattenNodes(parseNexusMarkdown(markdown)).sort((a, b) => a.lineIndex - b.lineIndex);
+  const nodeById = new Map(nodes.map((node) => [node.id, node] as const));
+  const chosenActorTagByNodeId = new Map<string, string>();
+
+  nodes.forEach((node) => {
+    if (node.lineIndex < 0 || node.lineIndex >= sectionEnd) return;
+    if (isNodeInSystemFlowContext(node, nodeById)) return;
+    if (!isNodeInFlowContext(node, nodeById)) return;
+    const originalLine = lines[node.lineIndex] || '';
+    let nextLine = ensureMarkerOnLine(originalLine, '#flow#');
+    const existingActorTag = extractSingleActorTag(nextLine);
+    const inheritedActorTag = node.parentId ? chosenActorTagByNodeId.get(node.parentId) || null : null;
+    const chosenActorTag = existingActorTag || inferActorTagFromText(nextLine, inheritedActorTag);
+    const tags = extractNodeTagsFromLine(nextLine);
+    const nonActorTags = tags.filter((tagId) => !tagId.startsWith('actor-'));
+    nextLine = mergeTagsIntoLine(nextLine, [...nonActorTags, chosenActorTag]);
+    lines[node.lineIndex] = nextLine;
+    chosenActorTagByNodeId.set(node.id, chosenActorTag);
+  });
+
+  return lines.join('\n');
+}
+
+function shouldPreserveFlowBranch(
+  node: ReturnType<typeof parseNexusMarkdown>[number],
+  directChildren: ReturnType<typeof parseNexusMarkdown>[number][],
+  explicitType: string,
+): boolean {
+  if (explicitType === 'validation' || explicitType === 'branch') return true;
+  if (looksLikeDecisionLabel(node.content) || looksLikeDecisionLabel(node.rawContent)) return true;
+  if (directChildren.some((child) => looksLikeOutcomeLabel(child.content) || looksLikeOutcomeLabel(child.rawContent))) return true;
+  return false;
+}
+
+function linearizeSequentialFlowSubtrees(markdown: string): string {
+  const lines = normalizeNewlines(markdown).split('\n');
+  const nodes = flattenNodes(parseNexusMarkdown(markdown));
+  const nodeById = new Map(nodes.map((node) => [node.id, node] as const));
+  const currentRegistry = buildCurrentFlowRegistry(markdown);
+  const runningNumberByLineIndex = new Map(currentRegistry.entries.map((entry) => [entry.lineIndex, entry.runningNumber] as const));
+  const explicitTypesByRunningNumber = parseProcessNodeTypeBlocks(markdown);
+  const explicitTypeByLineIndex = new Map<number, string>();
+  runningNumberByLineIndex.forEach((runningNumber, lineIndex) => {
+    const type = explicitTypesByRunningNumber.get(runningNumber);
+    if (type) explicitTypeByLineIndex.set(lineIndex, type);
+  });
+
+  nodes
+    .filter((node) => !isNodeInSystemFlowContext(node, nodeById) && isNodeInFlowContext(node, nodeById))
+    .filter((node) => node.children.filter((child) => !isNodeInSystemFlowContext(child, nodeById)).length >= 2)
+    .sort((a, b) => {
+      const depthDiff = computeNodeDepth(b, nodeById) - computeNodeDepth(a, nodeById);
+      if (depthDiff !== 0) return depthDiff;
+      return b.lineIndex - a.lineIndex;
+    })
+    .forEach((node) => {
+      const directChildren = node.children.filter((child) => !isNodeInSystemFlowContext(child, nodeById));
+      if (directChildren.length < 2) return;
+      if (shouldPreserveFlowBranch(node, directChildren, explicitTypeByLineIndex.get(node.lineIndex) || '')) return;
+      directChildren.slice(1).forEach((child, childOffset) => {
+        const subtree = findSubtreeRange(lines, child.lineIndex);
+        if (!subtree) return;
+        for (let lineIndex = subtree.start; lineIndex <= subtree.end; lineIndex += 1) {
+          if (!String(lines[lineIndex] || '').trim()) continue;
+          lines[lineIndex] = shiftLineIndent(lines[lineIndex] || '', childOffset + 1);
+        }
+      });
+    });
+
+  return lines.join('\n');
+}
+
+function normalizeFlowStructure(markdown: string): string {
+  let next = ensureStableFlowAndSystemIds(markdown);
+  next = ensureFlowContextMarkersAndTags(next);
+  next = linearizeSequentialFlowSubtrees(next);
+  return sanitizeDiagramMarkdown(next);
+}
+
 type ProgressiveDataObjectTarget = {
   doId: string;
   lineIndex: number;
@@ -1834,7 +2190,7 @@ function buildPostSuccessContentAuditTargets(markdown: string): MarkdownFixTarge
   addTarget(
     { startLine: metadataInsertStartLine, endLine: metadataInsertEndLine },
     'metadata',
-    'Add or update metadata blocks required by the content audit, including flow-nodes, process-node-type-N, process-single-screen-N, flow-connector-labels, expanded-metadata-N, or expanded-grid-N when the current tree requires them.',
+    'Add or update metadata blocks required by the content audit, including flow-nodes, process-node-type-N, process-single-screen-N, flow-connector-labels, flowtab-swimlane-FID, systemflow-SFID, expanded-metadata-N, or expanded-grid-N when the current tree requires them.',
     'CONTENT_METADATA',
   );
 
@@ -2141,8 +2497,31 @@ function syncDerivedFlowMetadata(markdown: string): string {
     entries: currentRegistry.entries,
   });
 
-  Array.from(explicitTypesByRunningNumber.entries())
-    .filter(([runningNumber]) => validRunningNumbers.has(runningNumber))
+  const resolvedTypesByRunningNumber = new Map<number, string>();
+  currentRegistry.entries.forEach((entry) => {
+    const runningNumber = entry.runningNumber;
+    const nodeId = currentRegistry.runningNumberToNodeId.get(runningNumber);
+    if (!nodeId) return;
+    const node = currentNodeById.get(nodeId);
+    if (!node) return;
+    const explicitType = explicitTypesByRunningNumber.get(runningNumber) || '';
+    const flowChildren = node.children.filter((child) => child.isFlowNode);
+    let inferredType = explicitType || 'step';
+    if (explicitType === 'goto' || explicitType === 'loop' || explicitType === 'end' || explicitType === 'time' || explicitType === 'single_screen_steps') {
+      inferredType = explicitType;
+    } else if (flowChildren.length >= 2) {
+      inferredType = looksLikeDecisionLabel(node.content) || looksLikeDecisionLabel(node.rawContent) ? 'validation' : 'branch';
+    } else if (looksLikeDecisionLabel(node.content) || looksLikeDecisionLabel(node.rawContent)) {
+      inferredType = 'validation';
+    } else if (explicitType) {
+      inferredType = explicitType;
+    }
+    if (explicitType || inferredType !== 'step') {
+      resolvedTypesByRunningNumber.set(runningNumber, inferredType);
+    }
+  });
+
+  Array.from(resolvedTypesByRunningNumber.entries())
     .sort((a, b) => a[0] - b[0])
     .forEach(([runningNumber, type]) => {
       next = upsertFencedJsonBlock(next, `process-node-type-${runningNumber}`, {
@@ -2156,7 +2535,7 @@ function syncDerivedFlowMetadata(markdown: string): string {
       ([startRunningNumber, lastStepRunningNumber]) =>
         validRunningNumbers.has(startRunningNumber) &&
         validRunningNumbers.has(lastStepRunningNumber) &&
-        explicitTypesByRunningNumber.get(startRunningNumber) === 'single_screen_steps',
+        resolvedTypesByRunningNumber.get(startRunningNumber) === 'single_screen_steps',
     )
     .sort((a, b) => a[0] - b[0])
     .forEach(([startRunningNumber, lastStepRunningNumber]) => {
@@ -2166,7 +2545,7 @@ function syncDerivedFlowMetadata(markdown: string): string {
     });
 
   Array.from(gotoTargetsByRunningNumber.entries())
-    .filter(([runningNumber]) => validRunningNumbers.has(runningNumber) && explicitTypesByRunningNumber.get(runningNumber) === 'goto')
+    .filter(([runningNumber]) => validRunningNumbers.has(runningNumber) && resolvedTypesByRunningNumber.get(runningNumber) === 'goto')
     .sort((a, b) => a[0] - b[0])
     .forEach(([runningNumber, targetId]) => {
       const remappedTargetId = remapLegacyNodeIdToCurrentNodeId({
@@ -2182,7 +2561,7 @@ function syncDerivedFlowMetadata(markdown: string): string {
     });
 
   Array.from(loopTargetsByRunningNumber.entries())
-    .filter(([runningNumber]) => validRunningNumbers.has(runningNumber) && explicitTypesByRunningNumber.get(runningNumber) === 'loop')
+    .filter(([runningNumber]) => validRunningNumbers.has(runningNumber) && resolvedTypesByRunningNumber.get(runningNumber) === 'loop')
     .sort((a, b) => a[0] - b[0])
     .forEach(([runningNumber, targetId]) => {
       const remappedTargetId = remapLegacyNodeIdToCurrentNodeId({
@@ -2222,9 +2601,219 @@ function syncDerivedFlowMetadata(markdown: string): string {
     return acc;
   }, {});
 
+  resolvedTypesByRunningNumber.forEach((type, runningNumber) => {
+    if (type !== 'validation' && type !== 'branch') return;
+    const nodeId = currentRegistry.runningNumberToNodeId.get(runningNumber);
+    if (!nodeId) return;
+    const parent = currentNodeById.get(nodeId);
+    if (!parent) return;
+    const flowChildren = parent.children.filter((child) => child.isFlowNode);
+    flowChildren.forEach((child, childIndex) => {
+      const edgeKey = `${nodeId}__${child.id}`;
+      if (remappedConnectorLabels[edgeKey]) return;
+      remappedConnectorLabels[edgeKey] = deriveBranchConnectorLabel(child.content || child.rawContent || '', childIndex, flowChildren.length);
+    });
+  });
+
   if (Object.keys(remappedConnectorLabels).length) {
     next = upsertFencedJsonBlock(next, 'flow-connector-labels', remappedConnectorLabels);
   }
+
+  return sanitizeDiagramMarkdown(next);
+}
+
+function collectSubtreeNodes(root: ReturnType<typeof parseNexusMarkdown>[number]): ReturnType<typeof parseNexusMarkdown>[number][] {
+  const out: ReturnType<typeof parseNexusMarkdown>[number][] = [];
+  const visit = (node: ReturnType<typeof parseNexusMarkdown>[number]) => {
+    out.push(node);
+    node.children.forEach(visit);
+  };
+  visit(root);
+  return out;
+}
+
+function syncDerivedFlowTabMetadata(markdown: string): string {
+  const normalized = sanitizeDiagramMarkdown(markdown);
+  const roots = flattenNodes(parseNexusMarkdown(normalized));
+  const nodeById = new Map(roots.map((node) => [node.id, node] as const));
+  const flowtabRoots = roots.filter((node) => !!((node.metadata as JsonRecord | undefined)?.flowTab));
+  const activeFids = new Set(
+    flowtabRoots
+      .map((node) => normalizeText((node.metadata as JsonRecord | undefined)?.fid))
+      .filter(Boolean),
+  );
+
+  let next = removeMatchingFencedBlocks(normalized, (type) => {
+    const match = type.match(/^flowtab-swimlane-(.+)$/);
+    return !!match?.[1] && !activeFids.has(normalizeText(match[1]));
+  });
+
+  const lines = normalizeNewlines(next).split('\n');
+  flowtabRoots.forEach((root) => {
+    const fid = normalizeText((root.metadata as JsonRecord | undefined)?.fid);
+    if (!fid) return;
+    const existingMatch = normalizeNewlines(next).match(
+      new RegExp(`\\\`\\\`\\\`flowtab-swimlane-${escapeRegExp(fid)}\\n([\\s\\S]*?)\\n\\\`\\\`\\\``),
+    );
+    const existingBlock = existingMatch?.[1] ? parseJsonObject(existingMatch[1]) : null;
+    const subtreeNodes = collectSubtreeNodes(root).filter((node) => !isNodeInSystemFlowContext(node, nodeById));
+    if (!subtreeNodes.length) return;
+
+    const orderedNodes = subtreeNodes.slice().sort((a, b) => a.lineIndex - b.lineIndex);
+    const actorTagByNodeId = new Map<string, string>();
+    const laneTags: string[] = [];
+    orderedNodes.forEach((node) => {
+      const actorTag = extractSingleActorTag(lines[node.lineIndex] || '') || inferActorTagFromText(lines[node.lineIndex] || '');
+      actorTagByNodeId.set(node.id, actorTag);
+      if (!laneTags.includes(actorTag)) laneTags.push(actorTag);
+    });
+    if (!laneTags.length) laneTags.push('actor-user');
+
+    const lanes = laneTags.map((tagId, index) => ({
+      id: `branch-${index + 1}`,
+      label: humanizeActorTag(tagId),
+    }));
+    const laneIdByTag = new Map(laneTags.map((tagId, index) => [tagId, lanes[index]!.id] as const));
+
+    const stageNodes = orderedNodes.filter((node) => node.id !== root.id);
+    const stageGroups: Array<ReturnType<typeof parseNexusMarkdown>[number][]> = [];
+    stageNodes.forEach((node) => {
+      const currentGroup = stageGroups[stageGroups.length - 1];
+      if (!currentGroup) {
+        stageGroups.push([node]);
+        return;
+      }
+      const previousNode = currentGroup[currentGroup.length - 1]!;
+      const actorChanged = (actorTagByNodeId.get(node.id) || '') !== (actorTagByNodeId.get(previousNode.id) || '');
+      const shouldBreak =
+        currentGroup.length >= 3 ||
+        (currentGroup.length >= 1 && actorChanged) ||
+        looksLikeHandoffOrWaitLabel(node.content || node.rawContent || '') ||
+        (currentGroup.length >= 2 && looksLikeDecisionLabel(node.content || node.rawContent || ''));
+      if (shouldBreak) {
+        stageGroups.push([node]);
+      } else {
+        currentGroup.push(node);
+      }
+    });
+    if (!stageGroups.length) stageGroups.push([root]);
+
+    const stages = stageGroups.map((group, index) => {
+      const label = normalizeText(group[0]?.content || group[0]?.rawContent || '') || `Stage ${index + 1}`;
+      return {
+        id: `stage-${index + 1}`,
+        label: clipText(label, 48) || `Stage ${index + 1}`,
+      };
+    });
+
+    const stageByNodeId = new Map<string, number>();
+    stageGroups.forEach((group, index) => {
+      group.forEach((node) => stageByNodeId.set(node.id, index));
+    });
+    stageByNodeId.set(root.id, 0);
+
+    const placement = orderedNodes.reduce<Record<string, { laneId: string; stage: number }>>((acc, node) => {
+      const actorTag = actorTagByNodeId.get(node.id) || laneTags[0] || 'actor-user';
+      acc[node.id] = {
+        laneId: laneIdByTag.get(actorTag) || lanes[0]!.id,
+        stage: stageByNodeId.get(node.id) ?? 0,
+      };
+      return acc;
+    }, {});
+
+    next = upsertFencedJsonBlock(next, `flowtab-swimlane-${fid}`, {
+      fid,
+      lanes,
+      stages,
+      placement,
+      pinnedTagIds: Array.isArray(existingBlock?.pinnedTagIds)
+        ? existingBlock!.pinnedTagIds
+            .map((value) => normalizeText(value))
+            .filter(Boolean)
+        : [],
+    });
+  });
+
+  return sanitizeDiagramMarkdown(next);
+}
+
+function syncDerivedSystemFlowMetadata(markdown: string): string {
+  const normalized = sanitizeDiagramMarkdown(markdown);
+  const nodes = flattenNodes(parseNexusMarkdown(normalized));
+  const systemRoots = nodes.filter((node) => !!((node.metadata as JsonRecord | undefined)?.systemFlow));
+  const activeSfids = new Set(
+    systemRoots
+      .map((node) => normalizeText((node.metadata as JsonRecord | undefined)?.sfid))
+      .filter(Boolean),
+  );
+
+  let next = removeMatchingFencedBlocks(normalized, (type) => {
+    const match = type.match(/^systemflow-(.+)$/);
+    return !!match?.[1] && !activeSfids.has(normalizeText(match[1]));
+  });
+
+  systemRoots.forEach((root) => {
+    const sfid = normalizeText((root.metadata as JsonRecord | undefined)?.sfid);
+    if (!sfid) return;
+    const existingState = loadSystemFlowStateFromMarkdown(next, sfid);
+    if (existingState.boxes.length > 0) return;
+
+    const descendants = collectSubtreeNodes(root).filter((node) => node.id !== root.id);
+    const technicalLabels = Array.from(
+      new Set(
+        descendants
+          .map((node) => normalizeText(node.content) || normalizeText(node.rawContent))
+          .filter(Boolean)
+          .filter((label) => looksLikeTechnicalLabel(label)),
+      ),
+    );
+    const fallbackLabels =
+      technicalLabels.length >= 2
+        ? technicalLabels
+        : Array.from(
+            new Set(
+              descendants
+                .map((node) => normalizeText(node.content) || normalizeText(node.rawContent))
+                .filter(Boolean)
+                .slice(0, 3),
+            ),
+          );
+    const boxLabels = (fallbackLabels.length ? fallbackLabels : [normalizeText(root.content) || 'Tech Flow']).slice(0, 8);
+    const sequenceMode =
+      /\b(sequence|interaction|pipeline|workflow|message|request|response|integration)\b/i.test(root.content || root.rawContent || '') ||
+      boxLabels.length > 1;
+
+    const boxes = boxLabels.map((label, index) => ({
+      key: `sfbox-${index + 1}`,
+      name: label,
+      gridX: sequenceMode ? 2 + index * 3 : 2 + (index % 3) * 6,
+      gridY: sequenceMode ? 2 : 2 + Math.floor(index / 3) * 5,
+      gridWidth: sequenceMode ? 2 : 4,
+      gridHeight: sequenceMode ? 8 : 3,
+    }));
+
+    const links =
+      sequenceMode && boxes.length > 1
+        ? boxes.slice(1).map((box, index) => ({
+            id: `sflink-${index + 1}`,
+            fromKey: boxes[index]!.key,
+            toKey: box.key,
+            order: index + 1,
+            endShape: 'arrow' as const,
+          }))
+        : [];
+
+    const gridWidth = Math.max(24, ...boxes.map((box) => box.gridX + box.gridWidth + 2));
+    const gridHeight = Math.max(24, ...boxes.map((box) => box.gridY + box.gridHeight + 2));
+    next = saveSystemFlowStateToMarkdown(next, sfid, {
+      version: 1,
+      gridWidth,
+      gridHeight,
+      boxes,
+      zones: [],
+      links,
+    });
+  });
 
   return sanitizeDiagramMarkdown(next);
 }
@@ -2860,7 +3449,11 @@ function autoFixDeterministicValidationIssues(markdown: string, validation: Impo
   }
 
   next = ensureExpandedScreenDataObjectCoverage(next);
+  next = normalizeFlowStructure(next);
+  next = upsertFencedJsonBlock(next, 'tag-store', buildDerivedTagStore(next));
   next = syncDerivedFlowMetadata(next);
+  next = syncDerivedFlowTabMetadata(next);
+  next = syncDerivedSystemFlowMetadata(next);
   return sanitizeDiagramMarkdown(next);
 }
 
@@ -3041,8 +3634,22 @@ async function progressivelyEnrichDiagramMarkdown(input: {
   markdown = ensureExpandedScreenDataObjectCoverage(markdown, input.scope);
   await emit('progressive_screen_data_coverage', markdown);
 
+  markdown = normalizeFlowStructure(markdown);
+  await emit('progressive_flow_tree', markdown);
+
+  if (input.scope?.syncTagStore !== false) {
+    markdown = upsertFencedJsonBlock(markdown, 'tag-store', buildDerivedTagStore(markdown));
+    await emit('progressive_tag_store_refresh', markdown);
+  }
+
   markdown = syncDerivedFlowMetadata(markdown);
   await emit('progressive_flow_metadata', markdown);
+
+  markdown = syncDerivedFlowTabMetadata(markdown);
+  await emit('progressive_swimlane_metadata', markdown);
+
+  markdown = syncDerivedSystemFlowMetadata(markdown);
+  await emit('progressive_systemflow_metadata', markdown);
   return markdown;
 }
 
@@ -3655,8 +4262,11 @@ async function runPostSuccessContentAudit(input: {
       '- If you change the tree, also patch the metadata target so dependent registries stay aligned.',
       '- Fix wrong expanded-node content by making it screen-accurate and structured, not by removing the expanded node.',
       '- Promote true lifecycle or timeframe variants into conditional hubs when that better matches the content.',
+      '- If a node starts a process flow or sits inside a Flowtab journey, all of its step descendants must stay in #flow# format unless you intentionally move them out of the flow.',
       '- If adjacent #flow# tasks share one screen context, group them using single_screen_steps with matching process-single-screen metadata.',
-      '- If a #flow# node branches, ensure metadata includes validation/branch typing and connector labels.',
+      '- If a question/decision-like #flow# step branches, ensure metadata includes validation/branch typing and connector labels.',
+      '- Rebuild long Flowtab journeys so they have meaningful lane and stage separation, not one undivided chain.',
+      '- Ensure every #systemflow# root has a non-empty systemflow-SFID block with boxes so the Tech Flow tab does not render empty.',
       '- For tree targets, return only replacement subtree lines.',
       '- For metadata targets, return only complete fenced metadata blocks.',
       '- If no meaningful improvement is needed, return an empty patches array.',
@@ -3868,6 +4478,9 @@ async function generateSingleDiagram(input: {
     'In this first pass, output ONLY the node tree section of the file.',
     'Do not output the --- separator or any fenced JSON metadata blocks in the first pass.',
     'Preserve inline comments and anchors needed for later partial-file edits: tags, do links, expid, fid, sfid.',
+    'If a node starts a process flow or sits under a Flowtab root, all step descendants must remain in #flow# format.',
+    'Write decision/question steps so they can be typed as validation or branch nodes later.',
+    'Flowtab journeys must be splittable into meaningful lanes and stages, and Tech Flow roots must have enough technical structure to build a non-empty systemflow block later.',
     'Build missing structure/metadata when required; do not delete scope to satisfy technical validation.',
     '',
     PIPELINE_DIAGRAM_BUILD_CHECKLIST,
