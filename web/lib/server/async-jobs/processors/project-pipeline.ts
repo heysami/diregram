@@ -133,6 +133,8 @@ const STORAGE_DOWNLOAD_TIMEOUT_MS = 60_000;
 const STORAGE_TEXT_READ_TIMEOUT_MS = 30_000;
 const STORAGE_REMOVE_TIMEOUT_MS = 15_000;
 const DOCLING_REQUEST_TIMEOUT_MS = 180_000;
+const MAX_DOCLING_CONVERT_ATTEMPTS = 3;
+const DOCLING_RETRY_BASE_DELAY_MS = 1_500;
 
 const RN_RE = /<!--\s*rn:(\d+)\s*-->/;
 const PIPELINE_DIAGRAM_CONTENT_CHECKLIST = [
@@ -326,6 +328,10 @@ function clipText(input: unknown, maxChars: number): string {
   const t = normalizeText(input);
   if (t.length <= maxChars) return t;
   return t.slice(0, maxChars);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)));
 }
 
 async function withTimeout<T>(label: string, ms: number, work: () => Promise<T>): Promise<T> {
@@ -3182,56 +3188,101 @@ async function convertViaDocling(input: {
 }): Promise<{ text: string; images: DoclingImageAsset[]; imageManifestObjectPath: string }> {
   const base = String(process.env.DOCLING_SERVICE_URL || 'http://127.0.0.1:8686').replace(/\/+$/, '');
   const url = `${base}/convert`;
-  const jobId = randomUUID();
-  await input.onProgress?.('convert_docling');
-  const res = await withTimeout(`Docling convert for ${input.originalFilename}`, DOCLING_REQUEST_TIMEOUT_MS, async () => {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), DOCLING_REQUEST_TIMEOUT_MS);
-    try {
-      return await fetch(url, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          userId: input.userId,
-          bucketId: 'docling-files',
-          objectPath: input.objectPath,
-          originalFilename: input.originalFilename,
-          jobId,
-          outputFormat: 'markdown',
-          includeImages: false,
-        }),
-        signal: controller.signal,
-      });
-    } catch (error) {
-      if (controller.signal.aborted) {
-        throw new Error(`Docling convert for ${input.originalFilename} timed out after ${Math.max(1, Math.floor(DOCLING_REQUEST_TIMEOUT_MS / 1000))}s`);
-      }
-      throw error;
-    } finally {
-      clearTimeout(timer);
-    }
-  });
-  const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-  if (!res.ok) {
-    throw new Error(String(json.detail || json.error || `Docling failed (${res.status})`));
-  }
-  const outputObjectPath = normalizeText(json.outputObjectPath);
-  if (!outputObjectPath) throw new Error('Docling returned no output path');
-  const imageManifestObjectPath = normalizeText(json.imageManifestObjectPath);
+  let outputObjectPath = '';
+  let imageManifestObjectPath = '';
   let images: DoclingImageAsset[] = [];
-  if (imageManifestObjectPath) {
-    await input.onProgress?.('download_image_manifest');
-    const { data: manifestBlob, error: manifestError } = await withTimeout(
-      `Download image manifest for ${input.originalFilename}`,
-      STORAGE_DOWNLOAD_TIMEOUT_MS,
-      () => input.admin.storage.from('docling-files').download(imageManifestObjectPath),
+  let lastError: Error | null = null;
+
+  const shouldRetryDoclingError = (error: unknown): boolean => {
+    const status = typeof (error as { status?: unknown })?.status === 'number' ? Number((error as { status?: unknown }).status) : NaN;
+    if ([429, 502, 503, 504].includes(status)) return true;
+    const message = normalizeText((error as { message?: unknown })?.message).toLowerCase();
+    if (!message) return false;
+    return (
+      message.includes('fetch failed') ||
+      message.includes('timed out') ||
+      message.includes('econnreset') ||
+      message.includes('socket hang up') ||
+      message.includes('bad gateway') ||
+      message.includes('service unavailable') ||
+      message.includes('gateway timeout')
     );
-    if (manifestError) throw new Error(manifestError.message);
-    const manifestText = await withTimeout(`Read image manifest for ${input.originalFilename}`, STORAGE_TEXT_READ_TIMEOUT_MS, () =>
-      manifestBlob.text(),
-    );
-    const manifestJson = parseJsonObject(manifestText);
-    images = parseDoclingImageAssets(manifestJson?.images);
+  };
+
+  await input.onProgress?.('convert_docling');
+
+  for (let attempt = 1; attempt <= MAX_DOCLING_CONVERT_ATTEMPTS; attempt += 1) {
+    const jobId = randomUUID();
+    try {
+      const res = await withTimeout(`Docling convert for ${input.originalFilename}`, DOCLING_REQUEST_TIMEOUT_MS, async () => {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), DOCLING_REQUEST_TIMEOUT_MS);
+        try {
+          return await fetch(url, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              userId: input.userId,
+              bucketId: 'docling-files',
+              objectPath: input.objectPath,
+              originalFilename: input.originalFilename,
+              jobId,
+              outputFormat: 'markdown',
+              includeImages: false,
+            }),
+            signal: controller.signal,
+          });
+        } catch (error) {
+          if (controller.signal.aborted) {
+            throw new Error(`Docling convert for ${input.originalFilename} timed out after ${Math.max(1, Math.floor(DOCLING_REQUEST_TIMEOUT_MS / 1000))}s`);
+          }
+          throw error;
+        } finally {
+          clearTimeout(timer);
+        }
+      });
+
+      const rawBody = await res.text().catch(() => '');
+      const json = (parseJsonObject(rawBody) || {}) as Record<string, unknown>;
+      if (!res.ok) {
+        const detail = normalizeText(json.detail || json.error || rawBody);
+        const error = new Error(detail || `Docling failed (${res.status})`) as Error & { status?: number };
+        error.status = res.status;
+        throw error;
+      }
+
+      outputObjectPath = normalizeText(json.outputObjectPath);
+      if (!outputObjectPath) throw new Error('Docling returned no output path');
+      imageManifestObjectPath = normalizeText(json.imageManifestObjectPath);
+      images = [];
+      if (imageManifestObjectPath) {
+        await input.onProgress?.('download_image_manifest');
+        const { data: manifestBlob, error: manifestError } = await withTimeout(
+          `Download image manifest for ${input.originalFilename}`,
+          STORAGE_DOWNLOAD_TIMEOUT_MS,
+          () => input.admin.storage.from('docling-files').download(imageManifestObjectPath),
+        );
+        if (manifestError) throw new Error(manifestError.message);
+        const manifestText = await withTimeout(`Read image manifest for ${input.originalFilename}`, STORAGE_TEXT_READ_TIMEOUT_MS, () =>
+          manifestBlob.text(),
+        );
+        const manifestJson = parseJsonObject(manifestText);
+        images = parseDoclingImageAssets(manifestJson?.images);
+      }
+      break;
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      lastError = err;
+      if (attempt >= MAX_DOCLING_CONVERT_ATTEMPTS || !shouldRetryDoclingError(err)) {
+        throw err;
+      }
+      await input.onProgress?.(`convert_docling_retry_${attempt + 1}`);
+      await sleep(DOCLING_RETRY_BASE_DELAY_MS * attempt);
+    }
+  }
+
+  if (!outputObjectPath) {
+    throw lastError || new Error('Docling returned no output path');
   }
 
   await input.onProgress?.('download_converted');
