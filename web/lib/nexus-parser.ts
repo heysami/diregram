@@ -1,6 +1,7 @@
 import { NexusNode } from '@/types/nexus';
 import { normalizeMarkdownNewlines } from '@/lib/markdown-normalize';
 import { parseDoAttrsFromLine, stripDoAttrsFromLine } from '@/lib/node-data-object-attribute-links';
+import { stripKnownNodeLineComments } from '@/lib/node-line-comments';
 
 // Generate IDs based on ORIGINAL markdown line index for simplicity.
 // Note: IDs may change when lines are added/removed, but stable anchors (<!-- rn:N --> etc.) are used for persistence.
@@ -63,13 +64,11 @@ export function parseNexusMarkdown(text: string): NexusNode[] {
   const unwrapped = maybeUnwrapSingleOuterFence(text);
   const lines = normalizeMarkdownNewlines(unwrapped).split('\n');
   const separatorIndex = findSeparatorIndexOutsideFences(lines);
-  let contentLines = separatorIndex === -1 ? lines : lines.slice(0, separatorIndex);
+  const contentLines = separatorIndex === -1 ? lines : lines.slice(0, separatorIndex);
   
   // Filter out code blocks (custom-connections, flowjson, tablejson, etc.)
   const filteredLines: Array<{ line: string; originalIndex: number }> = [];
   let inCodeBlock = false;
-  let codeBlockType = '';
-  
   // IMPORTANT: keep ORIGINAL markdown line indices so editing operations can splice into the real text correctly.
   // contentLines is taken from the original `lines` array, so `i` is the original line index.
   for (let i = 0; i < contentLines.length; i++) {
@@ -80,11 +79,9 @@ export function parseNexusMarkdown(text: string): NexusNode[] {
       if (!inCodeBlock) {
         // Starting a code block
         inCodeBlock = true;
-        codeBlockType = codeBlockMatch[1] || '';
       } else {
         // Ending a code block
         inCodeBlock = false;
-        codeBlockType = '';
       }
       continue; // Skip the code block markers
     }
@@ -164,21 +161,9 @@ export function parseNexusMarkdown(text: string): NexusNode[] {
             .filter((s) => s.length > 0)
         : undefined;
 
-    // Remove annotation comments before parsing (these should never be visible as node content)
-    let cleanedLine = line.replace(/<!--\s*expanded:\d+\s*-->/, '');
-    cleanedLine = cleanedLine.replace(/<!--\s*desc:[^>]*\s*-->/, '');
-    cleanedLine = cleanedLine.replace(/<!--\s*ann:[^>]*\s*-->/, '');
-    cleanedLine = cleanedLine.replace(/<!--\s*rn:\d+\s*-->/, '');
-    cleanedLine = cleanedLine.replace(/<!--\s*expid:\d+\s*-->/, '');
-    cleanedLine = cleanedLine.replace(/<!--\s*icon:[\s\S]*?\s*-->/, '');
-    cleanedLine = cleanedLine.replace(/<!--\s*do:[^>]*\s*-->/, '');
-    cleanedLine = cleanedLine.replace(/<!--\s*dostatus:[^>]*\s*-->/i, '');
+    // Remove metadata comments before parsing so they never leak into visible node content.
+    let cleanedLine = stripKnownNodeLineComments(line);
     cleanedLine = stripDoAttrsFromLine(cleanedLine);
-    cleanedLine = cleanedLine.replace(/<!--\s*tags:[^>]*\s*-->/, '');
-    cleanedLine = cleanedLine.replace(/<!--\s*uiType:[^>]*\s*-->/, '');
-    cleanedLine = cleanedLine.replace(/<!--\s*fid:[^>]*\s*-->/, '');
-    cleanedLine = cleanedLine.replace(/<!--\s*sfid:[^>]*\s*-->/, '');
-    cleanedLine = cleanedLine.replace(/<!--\s*hubnote:\d+\s*-->/, '');
     
     // 2 spaces = 1 level
     const match = cleanedLine.match(/^(\s*)(.*)/);

@@ -1,5 +1,6 @@
 import * as Y from 'yjs';
 import { NexusNode } from '@/types/nexus';
+import { normalizeKnownNodeLineComments } from '@/lib/node-line-comments';
 
 export const RN_COMMENT_RE = /<!--\s*rn:(\d+)\s*-->/;
 
@@ -24,7 +25,7 @@ export function extractRnCommentsFromMarkdown(markdown: string): Map<number, num
 }
 
 export function stripRunningNumberComment(line: string): string {
-  return line.replace(/\s*<!--\s*rn:\d+\s*-->\s*/g, ' ').replace(/\s+$/g, '');
+  return normalizeKnownNodeLineComments(line).replace(/\s*<!--\s*rn:\d+\s*-->\s*/g, ' ').replace(/\s+$/g, '');
 }
 
 export function upsertRunningNumberComment(line: string, rn: number): string {
@@ -148,4 +149,3 @@ export function ensureRunningNumberTagsForNodes(opts: {
 
   return { didChange, assigned };
 }
-

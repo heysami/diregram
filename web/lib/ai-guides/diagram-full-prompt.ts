@@ -62,6 +62,10 @@ Every node line must have a clear intent. Use the RIGHT editor/diagram for the R
 1) Main Canvas “normal” nodes (NO #flow#, NO #flowtab#):
 - Purpose: Sitemap / information architecture.
 - Structure: main navigation → sub-navigation → screens → screen content → functions.
+- Sitemap-first rule (MUST):
+  - Build branches as navigation/section/screen/function first.
+  - Only introduce #flow# after the user has reached the concrete function/journey that needs step-by-step behavior.
+  - Do NOT let process steps replace the screen/navigation structure that leads to that function.
 - Multiple portals/surfaces rule (MUST):
   - If the product has multiple portals/surfaces (e.g. public site, self-service portal, operations/admin portal, partner/vendor portal), you MUST represent EACH portal as its OWN top-level IA root (indentation level 0).
   - Do NOT nest multiple portals under a single parent IA node (it breaks filtering/tagging and makes mixed-surface navigation ambiguous).
@@ -74,6 +78,7 @@ Every node line must have a clear intent. Use the RIGHT editor/diagram for the R
 - Linear-chain rule (CRITICAL MUST):
   - If step B happens after step A with no decision/split, step B MUST be a child of step A, not a sibling of step A.
   - Sibling children are reserved for true alternate outcomes/branches only.
+  - Navigation-only fan-out is NOT a conditional split. If children are just different screens/pages/routes and the parent is not a real choice/decision step, keep that structure in IA instead of forcing a conditional process node.
 - “Type” is NOT in the node line. If you need “validation” vs “branch” vs “step/action/time/end/goto”, you MUST encode it in metadata blocks (see process-node-type-* below).
 - UI-grounding rule (MUST):
   - Non-swimlane #flow# steps MUST be anchored to concrete UI and/or observable system actions.
@@ -229,6 +234,7 @@ IMPORTANT LIMITATION:
   - If you model a split in the tree (2+ sibling children) you should ALSO set an appropriate type:
     - "validation" when the split is a check/guard (valid vs invalid, eligible vs ineligible).
     - "branch" when the split is a choice/path selection (multiple user/system routes).
+    - If there is only one child path, or no real alternate outcome, do NOT type it as validation/branch.
     - Otherwise default to "step" / "action" / "time" / "end" as appropriate.
 
 4.2 Conditional / lifecycle flow (hubs + dimensions)

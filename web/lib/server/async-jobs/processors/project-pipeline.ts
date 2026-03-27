@@ -20,6 +20,7 @@ import { loadGridDoc, saveGridDoc, type GridDoc, type GridSheetV1 } from '@/lib/
 import { upsertHeader } from '@/lib/nexus-doc-header';
 import { parseNexusMarkdown } from '@/lib/nexus-parser';
 import { extractRunningNumbersFromMarkdown } from '@/lib/node-running-numbers';
+import { normalizeKnownNodeLineComments, stripKnownNodeLineComments } from '@/lib/node-line-comments';
 import { buildParentPath, extractExpandedIdsFromMarkdown } from '@/lib/expanded-state-storage';
 import { loadSystemFlowStateFromMarkdown, saveSystemFlowStateToMarkdown } from '@/lib/system-flow-storage';
 import {
@@ -1017,22 +1018,27 @@ function assessDiagramIntegrity(markdown: string): string[] {
   try {
     const roots = flattenNodes(parseNexusMarkdown(markdown));
     const nodeById = new Map(roots.map((node) => [node.id, node] as const));
-
-    const flowRoots = roots.filter((node) => {
-      const metadata = node.metadata as JsonRecord | undefined;
-      if (!node.isFlowNode || metadata?.flowTab || metadata?.systemFlow) return false;
-      let current = node.parentId ? nodeById.get(node.parentId) : undefined;
-      while (current) {
-        const parentMeta = current.metadata as JsonRecord | undefined;
-        if (parentMeta?.flowTab || parentMeta?.systemFlow || current.isFlowNode) return false;
-        current = current.parentId ? nodeById.get(current.parentId) : undefined;
-      }
-      return true;
+    const currentRegistry = buildCurrentFlowRegistry(markdown);
+    const typeByNodeId = new Map<string, string>();
+    parseProcessNodeTypeBlocks(markdown).forEach((type, runningNumber) => {
+      const nodeId = currentRegistry.runningNumberToNodeId.get(runningNumber);
+      if (nodeId) typeByNodeId.set(nodeId, type);
     });
+
+    const flowRoots = roots.filter((node) => isMainCanvasFlowRoot(node, nodeById));
     flowRoots.forEach((root) => {
       const missingFlowDescendants = collectSubtreeNodes(root).filter((node) => node.id !== root.id && !node.isFlowNode);
       if (missingFlowDescendants.length) {
         issues.push(`Process flow "${normalizeText(root.content) || root.id}" has descendants that are not marked as #flow# steps.`);
+      }
+    });
+
+    roots.forEach((node) => {
+      const type = typeByNodeId.get(node.id) || '';
+      if (type !== 'validation' && type !== 'branch') return;
+      const flowChildren = node.children.filter((child) => child.isFlowNode);
+      if (flowChildren.length < 2) {
+        issues.push(`Conditional flow node "${normalizeText(node.content) || node.id}" has fewer than two #flow# child paths and should not be typed as ${type}.`);
       }
     });
 
@@ -1306,7 +1312,11 @@ function ensureNodeLinkMarkers(markdown: string): string {
     }
     if (inFence || !trimmed) continue;
 
-    let nextLine = line.trimEnd();
+    let nextLine = normalizeKnownNodeLineComments(line).trimEnd();
+    if (!nextLine.trim()) {
+      lines[i] = '';
+      continue;
+    }
     const hasRn = RN_RE.test(nextLine);
 
     if (!hasRn) {
@@ -1318,6 +1328,26 @@ function ensureNodeLinkMarkers(markdown: string): string {
   }
 
   return lines.join('\n').trimEnd() + '\n';
+}
+
+function normalizeTreeLineComments(markdown: string): string {
+  const lines = normalizeNewlines(markdown).split('\n');
+  const separator = findSeparatorIndexOutsideFences(lines);
+  const sectionEnd = separator === -1 ? lines.length : separator;
+  let inFence = false;
+
+  for (let i = 0; i < sectionEnd; i += 1) {
+    const line = String(lines[i] || '');
+    const trimmed = line.trim();
+    if (/^```/.test(trimmed)) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence || !trimmed) continue;
+    lines[i] = normalizeKnownNodeLineComments(line);
+  }
+
+  return lines.join('\n');
 }
 
 function stripTrailingUnclosedMetadataFence(markdown: string): string {
@@ -1478,6 +1508,7 @@ function sanitizeDiagramMarkdown(raw: string): string {
   text = stripAssistantMarkdownChatter(text);
   if (!text) return makeStarterDiagramMarkdown();
   text = stripTrailingUnclosedMetadataFence(text);
+  text = normalizeTreeLineComments(text);
   text = ensureExpandedStatesBlock(text);
   return ensureNodeLinkMarkers(text);
 }
@@ -1838,9 +1869,9 @@ function shouldPreserveFlowBranch(
   directChildren: ReturnType<typeof parseNexusMarkdown>[number][],
   explicitType: string,
 ): boolean {
-  if (explicitType === 'validation' || explicitType === 'branch') return true;
   if (looksLikeDecisionLabel(node.content) || looksLikeDecisionLabel(node.rawContent)) return true;
   if (directChildren.some((child) => looksLikeOutcomeLabel(child.content) || looksLikeOutcomeLabel(child.rawContent))) return true;
+  if ((explicitType === 'validation' || explicitType === 'branch') && directChildren.length >= 3) return true;
   return false;
 }
 
@@ -2129,8 +2160,32 @@ function buildPostSuccessContentAuditTargets(markdown: string): MarkdownFixTarge
     });
   };
 
+  const iaRoots = roots
+    .filter((node) => {
+      const metadata = node.metadata as JsonRecord | undefined;
+      return !node.isFlowNode && !metadata?.flowTab && !metadata?.systemFlow;
+    })
+    .sort((a, b) => a.lineIndex - b.lineIndex);
+
+  for (const node of iaRoots) {
+    const subtree = findSubtreeRange(lines, node.lineIndex);
+    if (!subtree) continue;
+    const label = normalizeText(node.content) || normalizeText(node.rawContent) || node.id;
+    addTarget(
+      { startLine: subtree.start + 1, endLine: subtree.end + 1 },
+      'tree',
+      [
+        'Audit this IA subtree so it stays sitemap-first: navigation/sections/screens/functions first, then #flow# only where a concrete function actually becomes a process.',
+        `Root: ${label}.`,
+        'Do not turn plain navigation branching into conditional process nodes.',
+      ].join(' '),
+      'CONTENT_IA_STRUCTURE',
+    );
+    if (out.length >= Math.max(2, Math.floor(MAX_DIAGRAM_FIX_TARGETS / 3))) break;
+  }
+
   const flowCandidates = nodes
-    .filter((node) => /#flow#/.test(node.rawContent) && !/#flowtab#/.test(node.rawContent) && !/#systemflow#/.test(node.rawContent))
+    .filter((node) => isMainCanvasFlowRoot(node, nodeById))
     .sort((a, b) => (b.children.length - a.children.length) || (a.lineIndex - b.lineIndex));
 
   for (const node of flowCandidates) {
@@ -2146,6 +2201,7 @@ function buildPostSuccessContentAuditTargets(markdown: string): MarkdownFixTarge
         `Root: ${label}.`,
         `Parent path: ${parentPath.join(' > ') || '(root)'}.`,
         `Direct children: ${node.children.length}.`,
+        'Only keep validation/branch typing when the parent really represents a decision with two or more child outcomes.',
       ].join(' '),
       'CONTENT_PROCESS_FLOWS',
     );
@@ -2348,7 +2404,7 @@ function parseConnectorLabelBlocks(markdown: string): Record<string, { label: st
   Object.entries(parsed).forEach(([key, value]) => {
     if (!value || typeof value !== 'object') return;
     const row = value as JsonRecord;
-    const label = String(row.label || '').trim();
+    const label = stripKnownNodeLineComments(String(row.label || '')).trim();
     if (!label) return;
     const color = String(row.color || '#000000').trim() || '#000000';
     out[key] = { label, color };
@@ -2442,6 +2498,38 @@ function buildCurrentFlowRegistry(markdown: string): {
   };
 }
 
+function isMainCanvasFlowRoot(
+  node: ReturnType<typeof parseNexusMarkdown>[number],
+  nodeById: Map<string, ReturnType<typeof parseNexusMarkdown>[number]>,
+): boolean {
+  if (!node.isFlowNode) return false;
+  if (isNodeInSystemFlowContext(node, nodeById)) return false;
+  let current: ReturnType<typeof parseNexusMarkdown>[number] | undefined = node;
+  while (current) {
+    const metadata = current.metadata as JsonRecord | undefined;
+    if (metadata?.flowTab) return false;
+    const parent: ReturnType<typeof parseNexusMarkdown>[number] | undefined = current.parentId
+      ? nodeById.get(current.parentId)
+      : undefined;
+    if (!parent) return true;
+    if (parent.isFlowNode) return false;
+    current = parent;
+  }
+  return true;
+}
+
+function shouldRenderFlowNodeAsConditional(
+  node: ReturnType<typeof parseNexusMarkdown>[number],
+  flowChildren: ReturnType<typeof parseNexusMarkdown>[number][],
+  explicitType: string,
+): boolean {
+  if (flowChildren.length < 2) return false;
+  if (looksLikeDecisionLabel(node.content) || looksLikeDecisionLabel(node.rawContent)) return true;
+  if (flowChildren.some((child) => looksLikeOutcomeLabel(child.content) || looksLikeOutcomeLabel(child.rawContent))) return true;
+  if ((explicitType === 'validation' || explicitType === 'branch') && flowChildren.length >= 3) return true;
+  return false;
+}
+
 function remapLegacyNodeIdToCurrentNodeId(input: {
   legacyNodeId: string;
   oldLineIndexToRunningNumber: Map<number, number>;
@@ -2509,17 +2597,27 @@ function syncDerivedFlowMetadata(markdown: string): string {
     let inferredType = explicitType || 'step';
     if (explicitType === 'goto' || explicitType === 'loop' || explicitType === 'end' || explicitType === 'time' || explicitType === 'single_screen_steps') {
       inferredType = explicitType;
-    } else if (flowChildren.length >= 2) {
-      inferredType = looksLikeDecisionLabel(node.content) || looksLikeDecisionLabel(node.rawContent) ? 'validation' : 'branch';
-    } else if (looksLikeDecisionLabel(node.content) || looksLikeDecisionLabel(node.rawContent)) {
-      inferredType = 'validation';
+    } else if (shouldRenderFlowNodeAsConditional(node, flowChildren, explicitType)) {
+      inferredType = explicitType === 'branch' || explicitType === 'validation'
+        ? explicitType
+        : looksLikeDecisionLabel(node.content) || looksLikeDecisionLabel(node.rawContent)
+          ? 'validation'
+          : 'branch';
     } else if (explicitType) {
+      if (explicitType === 'validation' || explicitType === 'branch') return;
       inferredType = explicitType;
     }
     if (explicitType || inferredType !== 'step') {
       resolvedTypesByRunningNumber.set(runningNumber, inferredType);
     }
   });
+
+  const conditionalNodeIds = new Set(
+    Array.from(resolvedTypesByRunningNumber.entries())
+      .filter(([, type]) => type === 'validation' || type === 'branch')
+      .map(([runningNumber]) => currentRegistry.runningNumberToNodeId.get(runningNumber) || '')
+      .filter(Boolean),
+  );
 
   Array.from(resolvedTypesByRunningNumber.entries())
     .sort((a, b) => a[0] - b[0])
@@ -2592,6 +2690,7 @@ function syncDerivedFlowMetadata(markdown: string): string {
       currentNodeIds,
     });
     if (!fromId || !toId) return acc;
+    if (!conditionalNodeIds.has(fromId)) return acc;
     const parent = currentNodeById.get(fromId);
     if (!parent?.children.some((child) => child.id === toId)) return acc;
     acc[`${fromId}__${toId}`] = {
@@ -4294,11 +4393,14 @@ async function runPostSuccessContentAudit(input: {
       '- Preserve existing scope. Do not delete branches, screens, or processes to make the file look cleaner.',
       '- Prefer additive improvements: regroup, relabel, add missing metadata blocks, add missing structured UI content, and add process metadata when checklist-required.',
       '- The file is already technically clean. Focus on content correctness and structural fit.',
+      '- Keep the main canvas sitemap-first: navigation/sections/screens/functions should appear before process detail, and #flow# should appear only where a function or journey actually starts.',
+      '- Do not convert plain navigation branching or screen menus into validation/branch process nodes.',
       '- If you change the tree, also patch the metadata target so dependent registries stay aligned.',
       '- Fix wrong expanded-node content by making it screen-accurate and structured, not by removing the expanded node.',
       '- Promote true lifecycle or timeframe variants into conditional hubs when that better matches the content.',
       '- If a node starts a process flow or sits inside a Flowtab journey, all of its step descendants must stay in #flow# format unless you intentionally move them out of the flow.',
       '- If adjacent #flow# tasks share one screen context, group them using single_screen_steps with matching process-single-screen metadata.',
+      '- Only type a #flow# node as validation/branch when it has two or more real child paths; leaf questions, one-child questions, or detached yes/no labels are ordinary steps.',
       '- If a question/decision-like #flow# step branches, ensure metadata includes validation/branch typing and connector labels.',
       '- Rebuild long Flowtab journeys so they have meaningful lane and stage separation, not one undivided chain.',
       '- Ensure every #systemflow# root has a non-empty systemflow-SFID block with boxes so the Tech Flow tab does not render empty.',
@@ -4513,8 +4615,9 @@ async function generateSingleDiagram(input: {
     'In this first pass, output ONLY the node tree section of the file.',
     'Do not output the --- separator or any fenced JSON metadata blocks in the first pass.',
     'Preserve inline comments and anchors needed for later partial-file edits: tags, do links, expid, fid, sfid.',
+    'Build the main canvas sitemap-first: navigation/sections/screens/functions first, then let those branches end in #flow# subtrees only when step-by-step behavior is actually needed.',
     'If a node starts a process flow or sits under a Flowtab root, all step descendants must remain in #flow# format.',
-    'Write decision/question steps so they can be typed as validation or branch nodes later.',
+    'Write decision/question steps so they can be typed as validation or branch nodes later, but only when they truly fan out to two or more child outcomes.',
     'Flowtab journeys must be splittable into meaningful lanes and stages, and Tech Flow roots must have enough technical structure to build a non-empty systemflow block later.',
     'Build missing structure/metadata when required; do not delete scope to satisfy technical validation.',
     '',

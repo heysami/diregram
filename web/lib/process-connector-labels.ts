@@ -3,6 +3,7 @@
  */
 
 import * as Y from 'yjs';
+import { stripKnownNodeLineComments } from '@/lib/node-line-comments';
 
 export interface ConnectorLabel {
   label: string;
@@ -25,7 +26,16 @@ export function loadConnectorLabels(doc: Y.Doc): Record<string, ConnectorLabel> 
   if (labelMatch) {
     try {
       const parsed = JSON.parse(labelMatch[1]);
-      Object.assign(labels, parsed);
+      Object.entries(parsed || {}).forEach(([key, value]) => {
+        if (!value || typeof value !== 'object') return;
+        const row = value as ConnectorLabel;
+        const label = stripKnownNodeLineComments(String(row.label || '')).trim();
+        if (!label) return;
+        labels[key] = {
+          label,
+          color: String(row.color || '#000000').trim() || '#000000',
+        };
+      });
     } catch (e) {
       console.error('Failed to parse connector labels:', e);
     }
@@ -44,7 +54,16 @@ export function saveConnectorLabels(
 ): void {
   const yText = doc.getText('nexus');
   const currentText = yText.toString();
-  const dataBlock = `\`\`\`flow-connector-labels\n${JSON.stringify(labels, null, 2)}\n\`\`\``;
+  const cleanedLabels = Object.entries(labels).reduce<Record<string, ConnectorLabel>>((acc, [key, value]) => {
+    const label = stripKnownNodeLineComments(String(value?.label || '')).trim();
+    if (!label) return acc;
+    acc[key] = {
+      label,
+      color: String(value?.color || '#000000').trim() || '#000000',
+    };
+    return acc;
+  }, {});
+  const dataBlock = `\`\`\`flow-connector-labels\n${JSON.stringify(cleanedLabels, null, 2)}\n\`\`\``;
   
   const separatorIndex = currentText.indexOf('\n---\n');
   const existingMatch = currentText.match(/```flow-connector-labels\n[\s\S]*?\n```/);
